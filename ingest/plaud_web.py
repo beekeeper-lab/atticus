@@ -27,11 +27,16 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 SITE = "plaud"
+# `or`, not a get() default. systemd's EnvironmentFile sets a blank line as the
+# EMPTY STRING, not as unset — and ops/.env deliberately ships
+# `PLAUD_SESSION_ROOT=` blank so the default applies. With get(k, default) the
+# empty string wins, Path("") / "plaud" resolves to the *relative* path
+# `plaud`, and every pass dies with "no session at plaud" while an interactive
+# run (where the var is truly absent) works perfectly. Config.g() already uses
+# `or` for exactly this reason.
 SESSION_ROOT = Path(
-    os.environ.get(
-        "PLAUD_SESSION_ROOT",
-        Path.home() / ".local/share/claude-fetchers/sessions",
-    )
+    os.environ.get("PLAUD_SESSION_ROOT")
+    or Path.home() / ".local/share/claude-fetchers/sessions"
 )
 SESSION_DIR = SESSION_ROOT / SITE
 WEB_ORIGIN = "https://web.plaud.ai"
