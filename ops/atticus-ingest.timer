@@ -1,0 +1,21 @@
+[Unit]
+Description=Poll Plaud for new recordings every 5 minutes
+Documentation=https://github.com/beekeeper-lab/atticus/blob/main/docs/SPEC.md
+
+[Timer]
+# Five minutes. The spec originally said two, but a pass spins up a headless
+# browser and takes 60-90s, so a tighter interval mostly overlaps itself. The
+# real latency floor is device sync, which is minutes at best regardless.
+OnBootSec=3min
+OnUnitActiveSec=5min
+
+RandomizedDelaySec=30
+
+# Catch up after downtime instead of silently skipping the window. Without
+# this, a laptop suspend means recordings sit in the cloud unnoticed.
+Persistent=true
+
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

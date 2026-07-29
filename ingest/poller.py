@@ -26,6 +26,8 @@ Exit: 0 clean · 1 partial failure · 2 config error · 3 fetcher auth dead
 """
 import argparse
 import json
+import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -94,34 +96,54 @@ class Fetcher:
 #  ledger
 # ---------------------------------------------------------------------------
 
-def ledger_path(vault: Path) -> Path:
-    return vault / ".state/seen.jsonl"
+def host_id() -> str:
+    """Identifies which machine wrote a ledger entry. Override with
+    ATTICUS_HOST when the hostname is not stable or not meaningful."""
+    import socket
+    h = os.environ.get("ATTICUS_HOST") or socket.gethostname()
+    return re.sub(r"[^a-z0-9-]+", "-", h.lower().split(".")[0]) or "unknown"
+
+
+def ledger_path(vault: Path, host: str | None = None) -> Path:
+    """One ledger PER HOST.
+
+    Any machine may run ingest — for failover or because the pin is in range
+    of a different box. A single shared seen.jsonl would have every host
+    appending to the same file, conflicting on every rebase. Per-host files
+    are disjoint, so they never conflict, exactly like inbox/ vs processed/.
+
+    Reads take the union of all of them, so a recording pulled by one host is
+    never pulled again by another.
+    """
+    return vault / ".state" / f"seen-{host or host_id()}.jsonl"
 
 
 def load_seen(vault: Path) -> set:
-    p = ledger_path(vault)
-    if not p.is_file():
+    """Union of every host's ledger, plus the legacy single-file one."""
+    state = vault / ".state"
+    if not state.is_dir():
         return set()
     out = set()
-    for line in p.read_text().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            out.add(json.loads(line)["id"])
-        except (json.JSONDecodeError, KeyError):
-            continue
+    for p in sorted(state.glob("seen*.jsonl")):
+        for line in p.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.add(json.loads(line)["id"])
+            except (json.JSONDecodeError, KeyError):
+                continue
     return out
 
 
 def append_seen(vault: Path, rec_id: str, stem: str):
-    """Append-only. The ledger is the authority on 'already pulled', and it is
-    written *after* the audio is durable so a crash re-fetches rather than
-    silently skipping."""
+    """Append-only, to THIS host's ledger. Written *after* the audio is
+    durable, so a crash re-fetches rather than silently skipping."""
     p = ledger_path(vault)
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("a") as f:
-        f.write(json.dumps({"id": rec_id, "stem": stem, "at": utcnow()}) + "\n")
+        f.write(json.dumps({"id": rec_id, "stem": stem,
+                            "host": host_id(), "at": utcnow()}) + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +190,7 @@ def ingest_one(rec: dict, vault: Path, fetcher: Fetcher, log) -> dict:
         "duration_seconds": rec.get("duration_seconds"),
         "upstream_name": rec.get("name") or "",
         "upstream_md5": rec.get("md5"),
+        "ingested_by": host_id(),
         "status": "raw",
         "attempts": 0,
     }
@@ -210,6 +233,7 @@ def main():
     if args.status:
         seen = load_seen(vault)
         inbox = list((vault / "inbox").rglob("*.json")) if (vault / "inbox").is_dir() else []
+        print(f"host     {host_id()}")
         print(f"vault    {vault}")
         print(f"fetcher  {fetcher_path}"
               f"{'' if fetcher_path.exists() else '   ** MISSING **'}")
@@ -258,8 +282,18 @@ def main():
             log(f"  would pull {make_stem(r)}  {r.get('name','')[:40]}")
         return EXIT_OK
 
-    ok = failed = 0
+    ok = failed = skipped = 0
     for rec in fresh:
+        # Belt and braces. The ledger is the primary guard, but two hosts can
+        # both list a recording before either has pushed. If the pull brought
+        # the other host's metadata, honour it rather than downloading twice.
+        stem = make_stem(rec)
+        dt = datetime.fromisoformat(rec["created_at"].replace("Z", "+00:00"))
+        if (vault / "inbox" / dt.strftime("%Y/%m") / f"{stem}.json").exists():
+            log(f"  = {stem} already in the vault (another host) — recording locally")
+            append_seen(vault, rec["id"], stem)
+            skipped += 1
+            continue
         try:
             res = ingest_one(rec, vault, fetcher, log)
         except FetcherError as e:
@@ -275,7 +309,7 @@ def main():
             git.commit_push(f"ingest {res['stem']}")
         ok += 1
 
-    log(f"ingested {ok}, failed {failed}")
+    log(f"ingested {ok}, skipped {skipped}, failed {failed}")
     return EXIT_PARTIAL if failed else EXIT_OK
 
 

@@ -1,0 +1,39 @@
+[Unit]
+Description=Atticus ingest — pull new recordings into the vault
+Documentation=https://github.com/beekeeper-lab/atticus/blob/main/docs/SPEC.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# Adjust to the deployment path on WarDog.
+WorkingDirectory=%h/atticus
+
+# MUST be the fetchers venv, not system python. poller.py launches the
+# transport via sys.executable, and the Plaud web fetcher needs Playwright.
+ExecStart=%h/.local/share/claude-fetchers/venv/bin/python %h/atticus/ingest/poller.py
+
+EnvironmentFile=-%h/.config/ai/env
+EnvironmentFile=-%h/atticus/ops/.env
+
+# A pass downloads audio over a headless browser; give it room but not forever.
+TimeoutStartSec=1800
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+RestrictSUIDSGID=true
+
+# Needs write to: the vault, the Playwright session, and its browser cache.
+# install.sh appends the vault path here.
+ReadWritePaths=%h/atticus %h/.local/share/claude-fetchers %h/.cache
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=atticus-ingest
+
+[Install]
+WantedBy=default.target
