@@ -36,6 +36,22 @@ Environment="GIT_SSH_COMMAND=ssh -F %h/.ssh/config"
 # double-execute a record whose status has not been committed yet.
 TimeoutStartSec=3600
 
+# THE PLAUD CREDENTIAL MUST BE INVISIBLE HERE.
+#
+# ADR-003 put ingest on this host, so a live, authenticated Plaud browser
+# session now sits on the same box as an agent that executes text derived from
+# AMBIENT AUDIO. ProtectHome=read-only still permits reads, so without this
+# line the processor sandbox can read the session cookie jar — verified, 28 KB,
+# fully readable. That is the prompt-injection path in a single step: something
+# overheard near the pin becomes an instruction, and the credential is sitting
+# right there for it.
+#
+# The processor has no legitimate use for this directory; only ingest does.
+# Confirmed that this blinds the processor while the ingest unit still reads the
+# session normally. Do not remove it, and do not add the path to
+# ReadWritePaths "for convenience".
+InaccessiblePaths=%h/.local/share/claude-fetchers
+
 # Modest hardening. The agent needs network and needs to write the vault,
 # so this is a blast-radius reduction, not a sandbox.
 NoNewPrivileges=true
