@@ -96,28 +96,33 @@ Web fetcher (ADR-002), the iPhone drops out of the design entirely.
 talk to each other directly — they communicate only through commits to
 `atticus-vault`.
 
-| Host | Role | Needs | Always-on? |
-|------|------|-------|------------|
-| **WarDog** | Ingest only. Plaud Cloud → vault. | Python 3.11+, Playwright, git, seeded Plaud session | **Yes** — polling requires it |
+> **Revised 2026-07-29 by [ADR-003](decisions/ADR-003-ingest-on-the-agent-host.md).**
+> Roles are **capabilities**, not hostnames, and both now run on Forge. WarDog
+> owns the unsolved device→cloud transport problem instead (§2.1,
+> `transport-tests.md`). Task-table host columns below are kept as history.
+
+| Role | Job | Needs | Always-on? |
+|------|-----|-------|------------|
+| **ingest** | Plaud Cloud → `inbox/`. Owns `inbox/` + `.state/`. | Python 3.11+, Playwright, git, seeded Plaud session | **Yes** — polling requires it |
 | **GitHub** | The queue and the durable record | private repo | — |
-| **Forge** | Everything downstream of a committed recording | Python 3.11+, `requests`, `claude`, git | 24x7 Fedora, but tolerates downtime |
+| **processor** | Everything downstream of a committed recording. Owns `processed/` + `failures/`. | Python 3.11+, `requests`, `claude`, git | Tolerates downtime |
 
 Consequences worth stating:
 
-- **The Plaud credential lives on WarDog, not Forge.** The seeded browser
-  session never touches the AI server.
-- **Forge can be offline** without losing recordings. They accumulate in
-  `inbox/` and get processed when it returns. This is the main thing the split
-  buys.
-- **Both hosts push to the same repo.** They write disjoint paths
+- **The Plaud credential now lives on the same host as the agent.** This was
+  explicitly not the plan; ADR-003 records what that costs and why the
+  wake-phrase gate became load-bearing as a result.
+- **The processor can be offline** without losing recordings. They accumulate in
+  `inbox/` and get processed when it returns. This is the main thing keeping the
+  stages separately timed buys, and it survives them sharing a host.
+- **Both roles push to the same repo.** They write disjoint paths
   (`inbox/` + `.state/` vs `processed/`), so conflicts should be rare, but every
   push must be `pull --rebase` then retry. See §4.3.
-- **Two deploy keys**, one per host, both with write access. Revocable
-  independently.
+- **One deploy key per host**, write access, independently revocable.
 
-> **Assumption A3:** WarDog is always-on and has outbound internet. Ingest
-> polling depends on it. If WarDog sleeps, latency becomes "whenever WarDog is
-> awake" and the design needs revisiting — see T-24.
+> **Assumption A3 (retired).** This said WarDog must be always-on. The ingest
+> role still must be, but it now sits on the 24×7 machine, so the assumption is
+> satisfied by construction rather than by discipline.
 
 ### 2.1 Transport options
 
@@ -320,7 +325,9 @@ resumable and idempotent after a crash.
 
 ### 4.1 `ingest/` — Plaud → vault
 
-**Runs on WarDog** on a systemd timer (every 2 minutes).
+**Runs on the agent host** on a systemd timer (**every 15 minutes** — the
+interval is argued in `ingest/README.md`; the short version is that arrivals are
+human-triggered bursts hours apart, so a tighter poll buys nothing).
 
 1. `plaud_web.py list --days 2 --json` → candidate list
 2. Filter against `.state/seen.jsonl`
@@ -457,17 +464,18 @@ never retried.
 
 #### Deployment shape
 
-Session seeding is interactive; WarDog is headless. Same pattern the CLI's
-`tokens.json` would have used:
+Session seeding is interactive; the ingest host is headless. So seed on a
+machine with a display and copy the profile across:
 
 ```
-desktop:  plaud_web.py login          → ~/.local/share/claude-fetchers/sessions/plaud/
-          scp -r … wardog:…
-wardog:   plaud_web.py whoami         → confirms headless reuse (T-22)
+desktop:  plaud_web.py login   → ~/.local/share/claude-fetchers/sessions/plaud/
+          rsync -a … host:…
+host:     plaud_web.py whoami  → confirms headless reuse (T-22)
 ```
 
-Playwright on WarDog needs `chromium` plus its system deps — heavier than the
-Node CLI would have been, and worth confirming WarDog can carry it (T-26).
+Playwright needs `chromium` plus its system deps — heavier than the Node CLI
+would have been. Confirmed working headless, and confirmed working *inside the
+unit's sandbox*, at ~500 MB peak RSS per pass.
 
 > **Risk R1:** the fetcher depends on Plaud's web app, which can change
 > without notice. Mitigations: authenticate via Playwright but call the JSON
@@ -521,16 +529,23 @@ This is a real surface, not a theoretical one. Keep the blast radius small.
 
 ### 4.3 `ops/` — deployment
 
-Two deploy targets from one repo. `install.sh` takes a role:
+One repo, two roles, any number of hosts. `install.sh` takes a **capability**,
+not a machine name:
 
 ```
-./ops/install.sh wardog     # timer + ingest + Node/CLI checks
-./ops/install.sh forge      # timer + processor + whisper/claude checks
+./ops/install.sh ingest      # session/venv checks + atticus-ingest.timer  (15 min)
+./ops/install.sh processor   # claude/requests checks + atticus-processor.timer (5 min)
+./ops/install.sh all         # both, on one host
 ```
 
-systemd units: `atticus-ingest.timer` (WarDog), `atticus-processor.timer`
-(Forge). No containers for v1 — both are single trusted hosts, and a container
-adds a layer without removing a problem.
+`forge` and `wardog` still work as aliases. No containers for v1 — these are
+trusted single hosts, and a container adds a layer without removing a problem.
+
+**Both units must carry `Environment="GIT_SSH_COMMAND=ssh -F %h/.ssh/config"`.**
+Not hygiene — a requirement. The sandbox options put a systemd *user* unit in a
+user namespace where root-owned files read as `nobody`, so ssh rejects
+`/etc/ssh/ssh_config.d/*.conf` and every push fails. `-F` makes ssh skip the
+system config entirely.
 
 **Concurrent-push handling.** Both hosts commit to `atticus-vault`. Every push
 is wrapped:
@@ -539,12 +554,17 @@ is wrapped:
 git pull --rebase --autostash  →  push  →  on failure, retry (bounded)
 ```
 
-They write disjoint paths — WarDog owns `inbox/` and `.state/`, Forge owns
-`processed/` and `failures/` — so a rebase should apply cleanly. The one file
-both touch is a recording's metadata JSON, when Forge advances `status` on a
-record WarDog created. Forge only ever edits records already committed, so the
-rebase is a fast-forward in practice. Retry bounded at 3, then quarantine and
-notify rather than loop.
+They write disjoint paths — ingest owns `inbox/` and `.state/`, the processor
+owns `processed/` and `failures/` — so a rebase should apply cleanly. The one
+file both touch is a recording's metadata JSON, when the processor advances
+`status` on a record ingest created. The processor only ever edits records
+already committed, so the rebase is a fast-forward in practice. Retry bounded at
+3, then quarantine and notify rather than loop.
+
+**A failed push must never be quiet.** It leaves work committed locally and
+invisible to the other stage while the journal reads clean. `Git.commit_push()`
+logs git's own stderr on giving up, and ingest additionally alarms and exits
+non-zero so the timer's failure is visible.
 
 ### 4.4 `ios/` — contingent
 

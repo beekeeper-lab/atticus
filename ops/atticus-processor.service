@@ -16,6 +16,22 @@ ExecStart=/usr/bin/python3 %h/atticus/processor/pipeline.py
 EnvironmentFile=-%h/.config/ai/env
 EnvironmentFile=-%h/atticus/ops/.env
 
+# systemd USER units run with PATH=/usr/local/bin:/usr/bin, which does not
+# include ~/.local/bin — where the `claude` CLI lives. Without this the
+# execute stage dies with "claude binary not found" while an interactive
+# shell finds it fine, so the installer's preflight passes and the unit
+# still cannot launch the agent.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+# REQUIRED, not hygiene. Every sandbox option below that needs a mount
+# namespace puts a *user* unit in a user namespace where root-owned files
+# appear as nobody:nobody. ssh then refuses to read
+# /etc/ssh/ssh_config.d/*.conf ("Bad owner or permissions") and every push to
+# the vault fails — silently, because git's stderr goes nowhere useful.
+# `ssh -F <file>` suppresses /etc/ssh/ssh_config and its includes outright,
+# which is the whole fix. Confirmed on Fedora 43 against a namespaced unit.
+Environment="GIT_SSH_COMMAND=ssh -F %h/.ssh/config"
+
 # One pass at a time. Overlapping runs would fight over git and could
 # double-execute a record whose status has not been committed yet.
 TimeoutStartSec=3600
@@ -33,8 +49,11 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 RemoveIPC=true
 
-# ReadWritePaths must also include the vault. Uncomment and set:
-# ReadWritePaths=%h/atticus %h/.claude %h/.cache %h/atticus-vault
+# The vault must be on that line too. install.sh appends it from
+# ATTICUS_VAULT_PATH. Do NOT add a commented example containing a vault path —
+# the installer's idempotency guard used to match the comment, conclude its
+# work was done, and leave the active line without the vault. The unit then
+# ran with a read-only vault and every commit failed.
 
 StandardOutput=journal
 StandardError=journal

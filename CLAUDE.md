@@ -9,60 +9,67 @@ task breakdown, and open questions. This file is orientation only.
 
 ## Current state
 
-Spec drafted. Fetcher contract + recon tool written. Hardware not yet in hand.
+**Cloud → vault → agent output works end to end on real recordings.** Both
+timers run on Forge. The pipeline has transcribed real audio, held the
+wake-phrase gate on overheard speech, and published a 74 KB research report.
 
 **The official Plaud CLI is paywalled** — we use a Plaud Web fetcher instead.
-See [ADR-002](docs/decisions/ADR-002-plaud-web-fetcher.md).
-
-**Recon is done** (T-06, 2026-07-28). A new Plaud account seeds three demo
-files, which was enough to observe the API without a device:
+See [ADR-002](docs/decisions/ADR-002-plaud-web-fetcher.md). What recon
+(T-06/T-07) settled, all now implemented in `ingest/plaud_web.py`:
 
 - Auth is `Authorization: Bearer <workspace_token>`, harvested off a live
   request rather than reimplementing Plaud's three-step token dance. **The
   browser refreshes the token for us** — practical session life is the 30-day
   refresh window, not 24h.
 - List: `GET /file/simple/web?skip&limit&is_trash=0&sort_by=start_time&is_desc=true`
+- Audio: `GET /file/temp-url/{id}` → presigned S3 URL. Fetch it **without** an
+  Authorization header. Prefer `temp_url` (MP3); `temp_url_opus` is often absent.
+- **`ori_ready` is not a download gate** — it is `false` on files that fetch
+  fine. An earlier revision refused to download on it, which was wrong.
 - `_normalize()` is where Plaud's vocabulary stops. `duration` and `start_time`
   are **milliseconds** — the obvious trap.
 - Application errors arrive as **HTTP 200** with non-zero `status`.
+- Plaud seeds every account with three marketing files; `serial_number`
+  starting `welcome_` is the reliable discriminator.
 
-`ingest/plaud_web.py` implements auth, `list`, and `whoami`, unit-tested against
-captured payloads. **`audio_url()` deliberately raises** — the download path was
-never observed because the account has nothing exportable.
+**The open problem is upstream of all of this:** getting audio off the pin
+without a deliberate act. Sync requires the Plaud app foregrounded — see
+`docs/transport-tests.md` for the matrix and the verdict. That work lives on
+WarDog now (ADR-003).
 
-Arrival day, in order:
-
-1. **Q5 / T-30, T-32** — do sub-30-second recordings exist and export at all?
-   Stop everything if not; the design is wrong.
-2. **T-06b** — re-run `ingest/plaud_discover.py` against a real recording and
-   **export its original audio**. Every demo file had `ori_ready: false`, so
-   the original probably needs server-side preparation.
-3. **T-07b** — implement `audio_url()` from that report. Do not guess: a
-   fetcher that downloads a not-ready object writes truncated files that look
-   successful, and the ledger then never retries them.
-4. **Q2 / T-22** — does the session work headless on WarDog?
+Known open defects, from `docs/deploy/forge-2026-07-29.md`: the agent writes
+deliverables straight into the vault instead of scratch (#2), and it runs
+without web access (#3). Both need a maintainer decision, not a patch.
 
 ## Shape of the system
 
 ```
-NotePin S ──wifi/BLE──► Plaud Cloud ──poll──► WARDOG ──► atticus-vault (git)
-                                              ingest          │
-                                                              │ git pull
-                                                              ▼
-                                                            FORGE
-                                              transcribe → route → execute
-                                                              │
-                                                              ▼
-                                                     atticus-vault (git)
+NotePin S ──BLE (app foregrounded)──► Plaud Cloud
+                                           │  poll, every 15 min
+                                           ▼
+                                     FORGE  ingest ──► atticus-vault (git)
+                                           │                    │
+                                           │  git pull          │
+                                           ▼                    │
+                                     FORGE  processor ◄─────────┘
+                                     transcribe → route → execute
+                                           │
+                                           ▼
+                                  atticus-vault (git)
 ```
 
-**Git is the queue, not just storage.** The two halves never talk directly —
-only through commits.
+**Git is the queue, not just storage.** The two stages never talk directly —
+only through commits — and that holds even now that they share a host.
 
-| Host | Role | Holds |
-|------|------|-------|
-| **WarDog** | Ingest. Plaud Cloud → vault. Must be always-on. | `~/.plaud/tokens.json` |
-| **Forge** | Everything downstream. Can be offline; work waits in git. | whisper, `claude` |
+| Role | Job | Timer |
+|------|-----|-------|
+| **ingest** | Plaud Cloud → `inbox/`. Owns `inbox/` + `.state/`. | 15 min |
+| **processor** | `inbox/` → transcribe → route → execute → `processed/`. Owns `processed/` + `failures/`. | 5 min |
+
+**Both roles run on Forge** as of 2026-07-29 ([ADR-003](docs/decisions/ADR-003-ingest-on-the-agent-host.md)).
+WarDog keeps the unsolved device→cloud transport problem, which is a separate
+project (`docs/transport-tests.md`). Roles are capabilities, not hostnames:
+`./ops/install.sh {ingest|processor|all}`.
 
 Two repos: `atticus` (this, code) and `atticus-vault` (private, audio + output).
 Two deploy keys, one per host, both with write access.
@@ -96,14 +103,36 @@ Two deploy keys, one per host, both with write access.
   copies and commits. No deploy key in its environment.
 - **`ios/` is a plain directory, not a submodule.** Split it out later if it
   ever ships independently.
-- **Poll, don't wait for webhooks.** Twice over: WarDog polls Plaud (no webhook
-  documented for personal accounts) and Forge polls git (a GitHub webhook would
-  mean exposing an inbound endpoint on the box that runs an autonomous agent).
-  2-minute intervals; device sync latency dominates anyway.
-- **The Plaud credential never touches Forge.** `tokens.json` lives on WarDog.
-- **Both hosts push to one repo.** Every push is `pull --rebase` + bounded
-  retry. They own disjoint paths — WarDog `inbox/` + `.state/`, Forge
+- **Poll, don't wait for webhooks.** Twice over: ingest polls Plaud (no webhook
+  documented for personal accounts) and the processor polls git (a GitHub
+  webhook would mean exposing an inbound endpoint on the box that runs an
+  autonomous agent).
+- **Ingest polls every 15 minutes, and tightening that is not an improvement.**
+  Audio only reaches Plaud Cloud while the Plaud app is *foregrounded*
+  (`docs/transport-tests.md`), so arrivals are human-triggered bursts hours
+  apart. Against that, 5 vs 15 minutes moves mean detection lag by 5 minutes
+  and triples the daily headless-Chromium launches against an API we don't own.
+  `PLAUD_POLL_DAYS` + the ledger make a missed window free. Revisit only if the
+  transport becomes hands-off.
+- **The Plaud credential lives on the ingest host, which is now also the agent
+  host.** This reverses an earlier decision; the cost and the mitigation are
+  spelled out in [ADR-003](docs/decisions/ADR-003-ingest-on-the-agent-host.md).
+  The upshot: **the wake-phrase gate is load-bearing for credential safety now,
+  not just for avoiding stray agent runs.** Do not disable it here.
+- **Both roles push to one repo.** Every push is `pull --rebase` + bounded
+  retry. They own disjoint paths — ingest `inbox/` + `.state/`, processor
   `processed/` + `failures/`.
+- **A silent failure is the worst failure.** A dead Plaud session is
+  indistinguishable from a quiet weekend: both are "0 new recordings" forever,
+  while audio piles up in the cloud. Ingest alarms on it through
+  `ATTICUS_NOTIFY_URL`, throttled to one message per condition per 6h. A failed
+  push is the same shape and is logged loudly for the same reason.
+- **Sandbox options on systemd *user* units break ssh, and therefore break
+  every push.** `ProtectSystem`/`ProtectHome`/`PrivateTmp` put the unit in a
+  user namespace where root-owned files read as `nobody`, so ssh rejects
+  `/etc/ssh/ssh_config.d/*.conf`. Both units carry
+  `Environment="GIT_SSH_COMMAND=ssh -F %h/.ssh/config"`, which makes ssh skip
+  the system config entirely. Don't remove it.
 
 ## Git workflow — read before committing
 

@@ -46,6 +46,9 @@ class Config:
         self.vault = Path(g("ATTICUS_VAULT_PATH", str(REPO / ".scratch-vault"))).expanduser()
         self.log_level = g("ATTICUS_LOG_LEVEL", "INFO")
         self.notify_url = g("ATTICUS_NOTIFY_URL", "") or None
+        # A recurring condition (dead Plaud session) is rediscovered every
+        # tick. One alarm per window per condition, or you learn to ignore it.
+        self.alarm_throttle_hours = float(g("ATTICUS_ALARM_THROTTLE_HOURS", "6"))
         self.push_retries = int(g("ATTICUS_PUSH_RETRIES", "3"))
         self.git_name = g("ATTICUS_GIT_AUTHOR_NAME", "Atticus Processor")
         self.git_email = g("ATTICUS_GIT_AUTHOR_EMAIL", "atticus@localhost")

@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import Config                                    # noqa: E402
 import execute as ex                                         # noqa: E402
 import transcribe as stt                                     # noqa: E402
+from notify import notify as _notify                          # noqa: E402
 from vault import (                                          # noqa: E402
     EXECUTED, FAILED, PUBLISHED, RAW, ROUTED, TRANSCRIBED,
     Git, load_records, write_atomic,
@@ -47,13 +48,7 @@ class Log:
 
 
 def notify(cfg, text, log):
-    if not cfg.notify_url:
-        return
-    try:
-        import requests
-        requests.post(cfg.notify_url, data=text.encode(), timeout=10)
-    except Exception as e:
-        log.warn(f"notification failed: {type(e).__name__}")
+    _notify(cfg, text, log=log.warn, title="Atticus processor")
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +179,8 @@ def main():
         return cmd_status(cfg, log)
 
     log.debug(f"config: {json.dumps(cfg.redacted(), indent=2)}")
-    git = Git(cfg.vault, cfg.git_name, cfg.git_email, cfg.push_retries)
+    git = Git(cfg.vault, cfg.git_name, cfg.git_email, cfg.push_retries,
+              log=log.warn)
 
     if not args.no_pull:
         git.pull()
