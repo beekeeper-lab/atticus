@@ -88,4 +88,7 @@ ok "squash-merged"
 git checkout -q "$BASE"
 git pull -q --rebase origin "$BASE"
 git branch -q -D "$BRANCH" 2>/dev/null || true
+# --delete-branch removes it on the remote, but the local tracking ref lingers
+# and accumulates one stale entry per PR. Prune it.
+git fetch -q --prune
 ok "back on $BASE at $(git rev-parse --short HEAD)"
