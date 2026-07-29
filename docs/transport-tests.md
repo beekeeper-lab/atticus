@@ -121,9 +121,25 @@ misled us once already.
 | 07-29 | E1 | locked, 1 ft | background | no | no sync | — |
 | 07-29 | E2 | locked, other room | background | no | no sync | — |
 | 07-29 | E3 | present | *unrecorded* | no | synced | seconds |
-| | T1 | | | | | |
-| | T2 | | | | | |
-| | T3 | | | | | |
+| 07-29 | **T1** | in room, locked | background | **yes** | ❌ **no sync** | — |
+| 07-29 | **T2** | unlocked, using Facebook | background | no | ❌ **no sync** | — |
+| 07-29 | **T3** | unlocked, **Plaud opened** | **foreground** | no | ✅ **synced** | seconds |
+
+### Verdict
+
+**Sync requires the Plaud app in the foreground.** Neither charging nor an
+unlocked phone is sufficient. T1 and T2 both failed; T3 succeeded immediately.
+
+This is the answer to the question the project has been assuming since day one,
+and it is the unfavourable one.
+
+> **Instrument failure worth recording.** A watcher script reported
+> "CHARGER/WIFI SYNC WORKS" during T1. It was wrong — the label was hard-coded
+> into the detector, so it asserted a cause for *any* new recording. The
+> operator had briefly foregrounded Plaud while waking the phone, which is what
+> actually triggered the sync. **A test instrument must report what it
+> observed, not what it assumed.** The operator's direct observation overruled
+> it.
 
 ---
 
