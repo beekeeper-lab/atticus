@@ -75,7 +75,7 @@ Web fetcher (ADR-002), the iPhone drops out of the design entirely.
                                        ┌─────────────────┐
                                        │ FORGE           │  AI server
                                        │                 │
-                                       │  transcribe     │  gpt-4o-mini-transcribe
+                                       │  transcribe     │  gpt-4o-transcribe
                                        │     ↓           │
                                        │  route          │  transcript → task
                                        │     ↓           │
