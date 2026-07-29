@@ -51,6 +51,83 @@ def notify(cfg, text, log):
     _notify(cfg, text, log=log.warn, title="Atticus processor")
 
 
+def primary_doc(outdir: Path) -> Path | None:
+    """The deliverable a human should be pointed at.
+
+    Same rule the vault browser uses to pick a recording's page — index.html if
+    present, otherwise the largest HTML file. Deliberately scans the vault
+    directory rather than trusting the execute stage's file list, because the
+    agent currently writes straight into the vault (deploy report defect #2) and
+    that list can be just the salvaged response.md stub.
+    """
+    if not outdir.is_dir():
+        return None
+    htmls = sorted(outdir.glob("*.html"))
+    if not htmls:
+        return None
+    return next((h for h in htmls if h.name == "index.html"),
+                max(htmls, key=lambda p: p.stat().st_size))
+
+
+def doc_url(cfg, rec, doc: Path | None) -> str:
+    """Public URL for a recording's page, or "" when no site is configured.
+
+    Mirrors the browser's published layout: docs/<stem>/<filename>.
+    """
+    if not (cfg.site_base_url and doc):
+        return ""
+    return f"{cfg.site_base_url}/docs/{rec.stem}/{doc.name}"
+
+
+def notify_result(cfg, rec, log):
+    """Push the outcome of a recording, with a link to what it produced.
+
+    This is the payoff of the whole pipeline, so it is worth getting right: a
+    lock-screen message should say what came back and be tappable.
+    """
+    url = getattr(cfg, "result_notify_url", None)
+    if not url:
+        return
+    executed = bool(rec.data.get("executed", True))
+    if not executed and not cfg.notify_notes:
+        return
+
+    # What was asked for, in the operator's own words — far more recognisable on
+    # a lock screen than a timestamp stem.
+    said = ""
+    try:
+        said = rec.transcript_path(cfg.vault).read_text().strip()
+    except OSError:
+        pass
+    said = (said[:180] + "…") if len(said) > 180 else said
+
+    if executed:
+        doc = primary_doc(rec.outdir(cfg.vault))
+        link = doc_url(cfg, rec, doc)
+        title, tags, priority = "Atticus finished", "white_check_mark", "default"
+        body = said or rec.stem
+        if link:
+            body += f"\n\n{link}"
+        elif doc:
+            # No site configured; name the file so it is still findable.
+            body += f"\n\n{doc.name}"
+    else:
+        title, tags, priority = "Atticus filed a note", "memo", "low"
+        body = f"{said or rec.stem}\n\nNot executed — {rec.data.get('gate_reason', 'gated')}"
+
+    if _notify(_ResultTarget(cfg), body, log=log.warn, title=title,
+               tags=tags, priority=priority):
+        log.info("  → notified" + (" with link" if executed and link else ""))
+
+
+class _ResultTarget:
+    """Lets notify() post to the result topic without mutating cfg."""
+
+    def __init__(self, cfg):
+        self.notify_url = cfg.result_notify_url
+        self.alarm_throttle_hours = getattr(cfg, "alarm_throttle_hours", 6)
+
+
 # ---------------------------------------------------------------------------
 #  stages
 # ---------------------------------------------------------------------------
@@ -107,6 +184,7 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
         if rec.status == TRANSCRIBED:
             if not stage_route(rec, cfg, log):
                 git.commit_push(f"note (ungated) {rec.stem}")
+                notify_result(cfg, rec, log)
                 return True
             git.commit_push(f"route {rec.stem}")
 
@@ -114,9 +192,13 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
             stage_execute(rec, cfg, log, dry_run)
 
         if rec.status == EXECUTED:
-            rec.advance(PUBLISHED)
+            # Explicit, rather than letting absence imply it. The gated path
+            # writes executed=False, so "no key" used to mean "executed" — a
+            # default that is easy to read the wrong way round.
+            rec.advance(PUBLISHED, executed=True)
             git.commit_push(f"publish {rec.stem}")
             log.info(f"  ✓ published → {rec.outdir(cfg.vault).relative_to(cfg.vault)}")
+            notify_result(cfg, rec, log)
             return True
 
     except (stt.TranscriptionError, ex.ExecutionError) as e:
