@@ -54,7 +54,8 @@ def clear(key: str):
 
 
 def notify(cfg, text: str, log=None, key: str | None = None,
-           title: str = "Atticus") -> bool:
+           title: str = "Atticus", tags: str = "warning",
+           priority: str = "high") -> bool:
     """Returns True if a message was actually sent.
 
     `Title`/`Priority`/`Tags` are ntfy's conventions — without a title the
@@ -80,10 +81,11 @@ def notify(cfg, text: str, log=None, key: str | None = None,
                 # punctuation. Force ASCII here and let the body carry the
                 # typography, since the body is sent as bytes.
                 "Title": _ascii(title),
-                # These alarms only fire when something is already broken and
-                # unattended. There is no such thing as an FYI here.
-                "Priority": "high",
-                "Tags": "warning",
+                # Alarms default to high: they only fire when something is
+                # already broken and unattended. Results pass a lower priority —
+                # a finished report is good news, not an emergency.
+                "Priority": priority,
+                "Tags": _ascii(tags),
             })
         with urllib.request.urlopen(req, timeout=10):
             pass
