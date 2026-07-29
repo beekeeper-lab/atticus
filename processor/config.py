@@ -67,6 +67,13 @@ class Config:
             "instruction or request.",
         )
 
+        # Ingest (WarDog). The transport is a pluggable executable — see
+        # ingest/poller.py. Whichever transport wins (SPEC §2.2.1), it ships
+        # a fetcher implementing the same four-command CLI.
+        self.fetcher = g("ATTICUS_FETCHER", "ingest/plaud_web.py")
+        self.fetcher_timeout = int(g("ATTICUS_FETCHER_TIMEOUT", "300"))
+        self.poll_days = int(g("PLAUD_POLL_DAYS", "2"))
+
         # Execution
         self.claude_bin = g("ATTICUS_CLAUDE_BIN", "claude")
         self.claude_model = g("ATTICUS_CLAUDE_MODEL", "") or None
@@ -102,6 +109,7 @@ class Config:
             "claude_model": self.claude_model or "(default)",
             "skills_dir": str(self.skills_dir),
             "exec_timeout": self.exec_timeout,
+            "fetcher": str(self.fetcher),
             "min_words": self.min_words,
             "wake_phrase": self.wake_phrase or "(none — execute everything)",
         }
