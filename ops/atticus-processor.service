@@ -1,6 +1,6 @@
 [Unit]
 Description=Atticus processor — transcribe, route, execute, publish
-Documentation=https://github.com/OWNER/atticus/blob/main/docs/SPEC.md
+Documentation=https://github.com/beekeeper-lab/atticus/blob/main/docs/SPEC.md
 After=network-online.target
 Wants=network-online.target
 

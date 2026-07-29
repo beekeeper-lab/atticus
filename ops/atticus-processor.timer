@@ -1,6 +1,6 @@
 [Unit]
 Description=Run the Atticus processor every 5 minutes
-Documentation=https://github.com/OWNER/atticus/blob/main/docs/SPEC.md
+Documentation=https://github.com/beekeeper-lab/atticus/blob/main/docs/SPEC.md
 
 [Timer]
 # Five minutes, not two. These jobs take minutes of agent time, so a tighter

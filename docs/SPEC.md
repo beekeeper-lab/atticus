@@ -236,7 +236,7 @@ optional wake phrase — rather than model confidence. See §4.2.
 
 Two repos. Code and bulk binary data do not belong in the same history.
 
-### 3.1 `atticus` — this repo (private)
+### 3.1 `beekeeper-lab/atticus` — this repo
 
 ```
 atticus/
@@ -258,7 +258,7 @@ costs a detached-HEAD footgun on every clone. If the app ever ships
 independently, split it then — that is a cheap operation and an expensive
 premature one.
 
-### 3.2 `atticus-vault` — data repo (private)
+### 3.2 `beekeeper-lab/atticus-vault` — data repo (**must be private**)
 
 ```
 atticus-vault/
@@ -278,6 +278,16 @@ atticus-vault/
 
 Audio stays in the vault permanently. Git is the durability story; no separate
 backup tier for v1.
+
+> **The vault must be private, and this is the one repo setting that is not a
+> preference.** It accumulates every recording the pin makes — ambient audio
+> from a wearable, including whatever was said near it that was never meant for
+> Atticus. Every other repo under `beekeeper-lab` is currently public, so the
+> default is wrong here. Verify with `gh repo view beekeeper-lab/atticus-vault
+> --json visibility` after creating it.
+>
+> The code repo can be public; there are no credentials in it, and `ops/.env`
+> plus `docs/recon/` are gitignored.
 
 > **Assumption A2:** Volume is low enough that plain git (no LFS) is fine.
 > A 1-minute MP3 at 64 kbps is ~500 KB. At 10/day that is ~1.8 GB/year. Acceptable.
@@ -559,7 +569,7 @@ device, accounts, credentials, judgment calls) · **CG** = paired
 |----|------|-------|------|-----|------------|
 | T-01 | Project structure, CLAUDE.md, README, this spec | C | — | — | — |
 | T-02 | ADR-001 (no iPhone app in v1) | C | — | — | T-01 |
-| T-03 | Create private GitHub repos `atticus` + `atticus-vault` | G | — | — | — |
+| T-03 | Create `beekeeper-lab/atticus` (public ok) + `beekeeper-lab/atticus-vault` (**private, non-negotiable**) | G | — | — | — |
 | T-04 | Push repo; add **two** deploy keys to vault (WarDog, Forge) | G | — | — | T-01, T-03 |
 
 ### W1 — Device enablement *(blocked on hardware arrival)*
