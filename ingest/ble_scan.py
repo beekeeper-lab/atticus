@@ -10,8 +10,8 @@ client at a time, and we want to see how an unbound device behaves.
 What we're looking for (see docs/decisions/ble-protocol-notes.md):
 
     service        0x1910   ← the command/data channel
-    characteristic 0x2BB0   write
-    characteristic 0x2BB1   notify
+    characteristic 0x2BB0   TX — device transmits; we subscribe (notify)
+    characteristic 0x2BB1   RX — device receives;  we write
     service        0x180F   battery (standard)
 
 If those are advertised and connectable from Linux, direct BLE ingest is live
@@ -28,8 +28,10 @@ except ImportError:
 
 TARGET = {
     "1910": "★ Plaud command/data service",
-    "2bb0": "★ write characteristic",
-    "2bb1": "★ notify characteristic",
+    # TX/RX are named from the DEVICE's point of view, so they invert for us:
+    # the device transmits on 2BB0 (we subscribe) and receives on 2BB1 (we write).
+    "2bb0": "★ TX — device→us, SUBSCRIBE here",
+    "2bb1": "★ RX — us→device, WRITE here",
     "180f": "battery service",
     "2a19": "battery level",
     "2902": "CCCD (notify enable)",
