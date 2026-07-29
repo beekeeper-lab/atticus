@@ -17,39 +17,43 @@ Nobody touched a keyboard.
 ┌──────────────┐
 │  NotePin S   │  you speak, you stop. that is the entire interaction.
 └──────┬───────┘
-       │  wi-fi (while charging) or BLE
+       │  BLE → Plaud app → Plaud Cloud
        ▼
 ┌──────────────┐
-│   WARDOG     │  ingest — pull new recordings, commit them
-│  always-on   │
+│   ingest     │  poll Plaud every 15 min, download, commit
 └──────┬───────┘
        │  git push
        ▼
 ┌──────────────────────────┐
-│  atticus-vault (private) │  ← the queue, not just storage
-│    inbox/                │
+│   your vault (private)   │  ← the queue, not just storage
+│     inbox/               │
 └──────┬───────────────────┘
        │  git pull, every 5 min
        ▼
 ┌──────────────┐
-│    FORGE     │  transcribe → route → execute → publish
-│  AI server   │
+│  processor   │  transcribe → route → execute → publish
 └──────┬───────┘
        │  git push
        ▼
    processed/2026/07/…/agentic-harness.html
 ```
 
-**Git is the boundary.** The two halves never talk directly — every handoff is a
+**Git is the boundary.** The two stages never talk directly — every handoff is a
 commit. That gives durability (a recording is in version control before anything
-processes it), a complete audit trail, and independent failure: Forge can be
-down for a day and the work simply waits.
+processes it), a complete audit trail, and independent failure: the processor can
+be down for a day and the work simply waits. They are separately timed and
+separately resumable whether they run on one host or two.
 
 ## The four ideas worth knowing
 
-**1. The recorder does not need a phone.** The NotePin S has its own 2.4 GHz
-Wi-Fi and uploads while charging. An iPhone app was the original plan and turned
-out to be unnecessary — see [ADR-001](docs/decisions/ADR-001-no-iphone-app-v1.md).
+**1. Everything downstream of the cloud is solved; the pin is the hard part.**
+The design assumed the NotePin S would upload over its own Wi-Fi while charging,
+making the phone optional. **Testing disproved that** — sync only happens with
+the Plaud app *foregrounded*, not while charging and not merely with the phone
+unlocked. The matrix and verdict are in
+[`docs/transport-tests.md`](docs/transport-tests.md). Everything from Plaud Cloud
+onward is deterministic and works; getting audio off the pin without a deliberate
+act is the open problem.
 
 **2. Routing is the model's job.** `claude -p` runs with `skills/` mounted and
 picks a matching skill from its description. **Adding a capability means adding
@@ -70,8 +74,8 @@ commits on its behalf.
 |------|------|
 | [`docs/SPEC.md`](docs/SPEC.md) | **Source of truth.** Architecture, full task breakdown, open questions. |
 | `docs/decisions/` | ADRs, plus reverse-engineering notes on the device's BLE protocol |
-| `ingest/` | WarDog: poller + transport fetchers + BLE scanner |
-| `processor/` | Forge: transcribe → route → execute → publish |
+| `ingest/` | Poller + transport fetchers + BLE scanner |
+| `processor/` | transcribe → route → execute → publish |
 | `skills/` | Voice-command capabilities |
 | `ops/` | systemd units, env template, installer |
 | `ios/` | Empty by design — see ADR-001 |
@@ -84,29 +88,49 @@ same history.
 
 | | |
 |---|---|
-| **Forge half** | ✅ Built and tested end to end — speech in, HTML report out |
-| **WarDog half** | Poller done and tested against a mock transport; **the real transport is undecided** |
-| **Device** | Not yet in hand |
+| **Cloud → vault** | ✅ Working on real recordings. Fetcher, poller, ledger, 15-min timer. |
+| **Vault → output** | ✅ Working end to end — speech in, HTML report out |
+| **Pin → cloud** | ⚠️ **Needs the Plaud app foregrounded.** The one unsolved link. |
 
-The open question is how audio gets from the pin to WarDog. Four candidates,
-one interface — see [SPEC §2.2.1](docs/SPEC.md). The official Plaud CLI turned
-out to be paywalled ([ADR-002](docs/decisions/ADR-002-plaud-web-fetcher.md)), so
-the leading option is now talking to the device directly over Bluetooth, using a
-protocol mapped from Plaud's own published Android SDK.
+The official Plaud CLI turned out to be paywalled
+([ADR-002](docs/decisions/ADR-002-plaud-web-fetcher.md)), so ingest authenticates
+with a Playwright browser session and calls Plaud's JSON API directly.
+
+The remaining work is upstream of all of it: making the pin sync without a
+deliberate act. Candidates are Wi-Fi provisioning, direct BLE (a protocol mapped
+from Plaud's own published Android SDK), or the contingent iOS app of
+[ADR-001](docs/decisions/ADR-001-no-iphone-app-v1.md). Until one lands, the
+workflow is genuinely asynchronous rather than hands-off — which the design
+tolerates, because nothing waits on a human.
 
 ## Running it
 
-**Forge** (processing):
+**The vault is yours, not ours.** Nothing in this repo names a particular vault.
+Scaffold your own, make the repo private, give the host a deploy key with write
+access, and point `ATTICUS_VAULT_PATH` at your checkout:
+
+```bash
+./ops/init-vault.sh ~/my-vault    # creates inbox/ processed/ failures/ .state/
+```
 
 ```bash
 git clone https://github.com/beekeeper-lab/atticus.git ~/atticus
 cd ~/atticus && cp ops/.env.example ops/.env && chmod 600 ops/.env
-#   set ATTICUS_VAULT_PATH to your atticus-vault checkout
-./ops/install.sh forge
+#   set ATTICUS_VAULT_PATH to YOUR vault checkout
+#   set ATTICUS_NOTIFY_URL — a dead pipeline is otherwise silent
+
+./ops/install.sh processor   # transcribe/route/execute
+./ops/install.sh ingest      # Plaud → vault  (needs a seeded Plaud session)
+./ops/install.sh all         # both on one host
 ```
 
 The installer preflights python, `requests`, the `claude` CLI,
-`~/.config/ai/env`, and the vault before touching systemd.
+`~/.config/ai/env`, Playwright/Chromium, and — importantly — a
+`git push --dry-run` against your vault, before touching systemd.
+
+Ingest additionally needs a one-time interactive `plaud_web.py login`, which
+wants a display; on a headless host, seed it elsewhere and copy the profile
+directory across. See [`ingest/README.md`](ingest/README.md).
 
 **Try it without hardware** — synthesises speech, so the real transcription and
 agent paths both run:

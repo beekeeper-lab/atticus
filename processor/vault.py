@@ -119,9 +119,22 @@ def load_records(vault: Path, status: str | None = None) -> list[Record]:
 #  git
 # ---------------------------------------------------------------------------
 
+def _tail(proc, n: int = 300) -> str:
+    """The last of git's own complaint, for a log line."""
+    if proc is None:
+        return "(no output)"
+    return ((proc.stderr or proc.stdout or "").strip() or "(no output)")[-n:]
+
+
 class Git:
-    def __init__(self, vault: Path, name: str, email: str, retries: int = 3):
+    def __init__(self, vault: Path, name: str, email: str, retries: int = 3,
+                 log=None):
         self.vault, self.retries = vault, retries
+        # A failed push used to be entirely silent: commit_push() returned
+        # False and every caller ignored it, so work sat committed-but-local
+        # while the journal said the pass succeeded. Anything that gives up
+        # now says so, with git's own stderr attached.
+        self.log = log or (lambda m: print(m, flush=True))
         self.env = {
             **os.environ,
             "GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email,
@@ -195,6 +208,7 @@ class Git:
         if self._resolve_benign():
             return True
         self._run("rebase", "--abort", check=False)
+        self.log(f"git pull failed: {_tail(r)}")
         return False
 
     def commit_push(self, message: str) -> bool:
@@ -212,12 +226,17 @@ class Git:
         self._run("commit", "-m", message, check=False)
         if not self.has_remote():
             return True  # local-only vault (tests) — commit is enough
+        last = None
         for attempt in range(1, self.retries + 1):
-            if self._run("push", check=False).returncode == 0:
+            last = self._run("push", check=False)
+            if last.returncode == 0:
                 return True
             # Another host pushed between our pull and our push. Rebase onto
             # it, auto-resolving only the benign ingest collisions.
             if not self.pull():
+                self.log(f"push abandoned — unresolved conflict: {_tail(last)}")
                 return False        # a real conflict — do not loop on it
             time.sleep(min(2 ** attempt, 8))
+        self.log(f"push failed after {self.retries} attempt(s); the commit is "
+                 f"local only: {_tail(last)}")
         return False

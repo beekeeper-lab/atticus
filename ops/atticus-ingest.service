@@ -17,6 +17,23 @@ ExecStart=%h/.local/share/claude-fetchers/venv/bin/python %h/atticus/ingest/poll
 EnvironmentFile=-%h/.config/ai/env
 EnvironmentFile=-%h/atticus/ops/.env
 
+# systemd USER units run with PATH=/usr/local/bin:/usr/bin — no ~/.local/bin.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+# REQUIRED, not hygiene. Every sandbox option below that needs a mount
+# namespace puts a *user* unit in a user namespace where root-owned files
+# appear as nobody:nobody. ssh then refuses to read
+# /etc/ssh/ssh_config.d/*.conf ("Bad owner or permissions") and every push to
+# the vault fails — silently, because git's stderr goes nowhere useful.
+# `ssh -F <file>` suppresses /etc/ssh/ssh_config and its includes outright,
+# which is the whole fix. Confirmed on Fedora 43 against a namespaced unit.
+Environment="GIT_SSH_COMMAND=ssh -F %h/.ssh/config"
+
+# Both roles can run on one host now, sharing one ops/.env. Override the
+# author here so the vault history still says which half wrote each commit.
+# Must come after EnvironmentFile= — later definitions win.
+Environment="ATTICUS_GIT_AUTHOR_NAME=Atticus Ingest"
+
 # A pass downloads audio over a headless browser; give it room but not forever.
 TimeoutStartSec=1800
 

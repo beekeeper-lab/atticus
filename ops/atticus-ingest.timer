@@ -1,15 +1,29 @@
 [Unit]
-Description=Poll Plaud for new recordings every 5 minutes
+Description=Poll Plaud for new recordings every 15 minutes
 Documentation=https://github.com/beekeeper-lab/atticus/blob/main/docs/SPEC.md
 
 [Timer]
-# Five minutes. The spec originally said two, but a pass spins up a headless
-# browser and takes 60-90s, so a tighter interval mostly overlaps itself. The
-# real latency floor is device sync, which is minutes at best regardless.
+# FIFTEEN minutes, and the reasoning matters because the obvious instinct is
+# wrong. docs/transport-tests.md settled it: audio only reaches Plaud Cloud
+# while the Plaud iOS app is FOREGROUNDED. Not while charging (T1), not merely
+# with the phone unlocked (T2). So recordings do not trickle in — they arrive
+# in bursts whenever the operator happens to open the app, potentially hours
+# apart.
+#
+# Against a sync lag measured in hours, polling every 5 minutes instead of 15
+# moves mean detection lag from 2.5min to 7.5min: invisible. What it does cost
+# is 288 headless-Chromium launches a day instead of 96, against an API we do
+# not own.
+#
+# PLAUD_POLL_DAYS (default 2) plus the seen ledger means a missed window is
+# free — the next pass picks it up. Revisit this if the transport ever becomes
+# hands-off (Wi-Fi-while-charging or direct BLE); then latency is ours to own.
 OnBootSec=3min
-OnUnitActiveSec=5min
+OnUnitActiveSec=15min
 
-RandomizedDelaySec=30
+# Wider than the processor's, to keep 96 daily browser launches from landing
+# on the same second as anything else.
+RandomizedDelaySec=120
 
 # Catch up after downtime instead of silently skipping the window. Without
 # this, a laptop suspend means recordings sit in the cloud unnoticed.
