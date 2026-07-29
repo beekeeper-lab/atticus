@@ -154,15 +154,29 @@ class PlaudAPI:
             ).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             "duration_seconds": round((rec.get("duration") or 0) / 1000),
             # Operationally significant extras:
-            "ori_ready": rec.get("ori_ready"),      # original audio prepared?
-            "filetype": rec.get("filetype"),        # e.g. "audio/mp3"
+            "ori_ready": rec.get("ori_ready"),      # NOT a download gate — see audio_url()
+            "filetype": rec.get("filetype"),        # "" on device recordings
             "filesize": rec.get("filesize"),
             "md5": rec.get("file_md5"),
+            "serial_number": rec.get("serial_number"),
+            "scene": rec.get("scene"),
         }
 
+    @staticmethod
+    def _is_demo(rec) -> bool:
+        """Plaud seeds every new account with three marketing files — a
+        welcome clip, a how-to, and 81 minutes of a Steve Jobs conversation.
+
+        They are indistinguishable from real recordings by duration or name,
+        and ingesting them would burn transcription budget on vendor content.
+        `serial_number` is the reliable discriminator: real recordings carry
+        the pin's serial, demos carry `welcome_*`. (`edit_from` is not
+        reliable — the Steve Jobs file reports `ios`.)"""
+        return str(rec.get("serial_number") or "").startswith("welcome_")
+
     # -- E3: list recordings (answered: skip/limit pagination) ------------
-    def list_recordings(self, since=None):
-        out, skip = [], 0
+    def list_recordings(self, since=None, include_demos=False):
+        out, skip, demos = [], 0, 0
         while True:
             body = self._get(EP_LIST, {
                 "skip": skip, "limit": PAGE_SIZE, "is_trash": 0,
@@ -173,7 +187,11 @@ class PlaudAPI:
             batch = body["data_file_list"]
             if not batch:
                 break
-            out.extend(self._normalize(r) for r in batch)
+            for r in batch:
+                if not include_demos and self._is_demo(r):
+                    demos += 1
+                    continue
+                out.append(self._normalize(r))
             total = body.get("data_file_total")
             skip += len(batch)
             if total is not None and skip >= total:
@@ -181,50 +199,68 @@ class PlaudAPI:
         if since is not None:
             cutoff = since.isoformat().replace("+00:00", "Z")
             out = [r for r in out if r["created_at"] >= cutoff]
+        if demos:
+            print(f"(skipped {demos} Plaud demo file(s))", file=sys.stderr)
         return out
 
-    # -- E4/E5: STILL UNKNOWN ---------------------------------------------
-    def audio_url(self, recording_id):
-        """TODO(T-06b): return a fetchable URL for the original audio.
+    # -- E4/E5: resolved 2026-07-29 ---------------------------------------
+    def audio_url(self, recording_id, prefer_opus=False):
+        """Return a presigned S3 URL for the recording's audio.
 
-        Recon did NOT capture this — the account had no exportable recording,
-        so the download was never triggered. What recon *did* reveal is the
-        shape of the problem:
+        `GET /file/temp-url/{id}` → {"temp_url": …mp3, "temp_url_opus": …opus}
 
-          - Every record carries `ori_ready` (bool). On the demo files it was
-            **false**. This is E5 made concrete: the original audio is not
-            necessarily sitting there ready to fetch, and something has to
-            prepare it.
-          - `fullname` is "<id>.mp3" and `filetype` is "audio/mp3", so the
-            object is named predictably once it exists.
+        Found by extracting the API surface from the web app's own JS chunks
+        rather than by guessing endpoints. Verified end to end against a real
+        13-second recording: 55,952 bytes, 13.84s, 40 kbps 16 kHz mono MP3.
 
-        Implement by re-running plaud_discover.py against a real recording and
-        clicking "export original audio". Watch for: the endpoint that flips
-        `ori_ready`, any polling the app does, and whether the final URL is a
-        presigned CDN link or a stream from api.plaud.ai.
+        Notes from that verification:
 
-        Do NOT guess. A fetcher that downloads a not-ready object will produce
-        truncated files that look successful to the ingest ledger.
+        - `temp_url_opus` is frequently **absent** even though the device
+          records Opus (`fullname` ends `.opus`). Plaud transcodes server-side
+          and only reliably exposes the MP3. Prefer MP3; treat Opus as a bonus.
+        - **`ori_ready` is not a gate.** It is `false` on files that download
+          fine, including Plaud's own demos. An earlier revision of this file
+          assumed it meant "audio not yet prepared" and refused to download —
+          that was wrong.
+        - The URL is presigned. It carries its own credentials in the query
+          string and must be fetched **without** an Authorization header.
         """
-        raise NotImplementedError(
-            "audio download path not yet observed — re-run plaud_discover.py "
-            "with a real recording and export its original audio (T-06b)"
-        )
+        body = self._get(f"{API}/file/temp-url/{recording_id}")
+        order = ("temp_url_opus", "temp_url") if prefer_opus else ("temp_url", "temp_url_opus")
+        for key in order:
+            if body.get(key):
+                return body[key]
+        raise UpstreamChanged(
+            f"no temp_url in response for {recording_id} — keys: {list(body)}")
 
     def download_audio(self, recording_id, dest: Path):
-        """Stream audio_url() to `dest`, atomically.
+        """Fetch the audio to `dest`, atomically.
 
-        Writes to a .part file and renames on success, so a crash mid-download
-        can never look like a complete file to the ingest ledger.
+        Writes a .part file and renames on success, so a crash mid-download can
+        never leave something the ingest ledger mistakes for a complete file.
         """
         url = self.audio_url(recording_id)
-        part = dest.with_suffix(dest.suffix + ".part")
-        resp = self.ctx.request.get(url, headers={"Authorization": self._bearer()})
+        # Presigned: sending our bearer alongside the S3 signature can be
+        # rejected as a conflicting auth method. Send no Authorization header.
+        resp = self.ctx.request.get(url)
+        if resp.status in (401, 403):
+            raise AuthError(f"{resp.status} on presigned URL — it likely expired")
         if resp.status != 200:
             raise TransientError(f"{resp.status} downloading {recording_id}")
-        part.write_bytes(resp.body())
+        data = resp.body()
+        if not data:
+            raise TransientError(f"empty body for {recording_id}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        part = dest.with_suffix(dest.suffix + ".part")
+        part.write_bytes(data)
         part.replace(dest)
         return dest
+
+    def detail(self, recording_id):
+        """`GET /file/detail/{id}` — presigned URLs for transcript, summary and
+        outline. Plaud transcribes even 9-second clips, so its transcript is a
+        free fallback if our own STT ever fails."""
+        return self._get(f"{API}/file/detail/{recording_id}")
 
     # -- Session health ---------------------------------------------------
     def whoami(self):
@@ -314,7 +350,8 @@ def cmd_list(args):
     since = datetime.now(timezone.utc) - timedelta(days=args.days)
     p, ctx = launch(headless=not args.headed)
     try:
-        recs = PlaudAPI(ctx).list_recordings(since=since)
+        recs = PlaudAPI(ctx).list_recordings(
+            since=since, include_demos=getattr(args, "include_demos", False))
     finally:
         close(p, ctx)
 
@@ -355,6 +392,8 @@ def main():
     ls = sub.add_parser("list", help="list recordings")
     ls.add_argument("--days", type=int, default=2)
     ls.add_argument("--json", action="store_true")
+    ls.add_argument("--include-demos", action="store_true",
+                    help="also list Plaud's seeded marketing files")
 
     au = sub.add_parser("audio", help="download original audio")
     au.add_argument("id")

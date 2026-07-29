@@ -140,10 +140,62 @@ class Git:
     def has_remote(self) -> bool:
         return bool(self._run("remote", check=False).stdout.strip())
 
-    def pull(self):
+    # Paths where a conflict is benign: both sides describe the same
+    # recording and differ only in ingest bookkeeping (ingested_at, which
+    # host pulled it). Anything outside this set must never auto-resolve.
+    BENIGN = ("inbox/", ".state/seen")
+
+    def _resolve_benign(self) -> bool:
+        """Auto-resolve an in-progress rebase iff every conflicted path is one
+        where either version is correct.
+
+        This happens when two hosts ingest the same recording before either
+        has pushed. The audio is byte-identical; only the metadata differs.
+        Resolution is "first push wins" — take the upstream side, which during
+        a rebase is --ours.
+
+        Returns False if anything else conflicted, leaving the rebase for a
+        human. Silently resolving a real conflict would be far worse than
+        stopping.
+        """
+        r = self._run("diff", "--name-only", "--diff-filter=U", check=False)
+        files = [f for f in r.stdout.split() if f]
+        if not files or not all(f.startswith(self.BENIGN) for f in files):
+            return False
+        for f in files:
+            if "/seen" in f and f.endswith(".jsonl"):
+                # A ledger is an append-only log. Taking one side would DISCARD
+                # the other host's entries, which then re-downloads what it
+                # already has. Union both sides, preserving order and dropping
+                # exact duplicates.
+                lines, seen = [], set()
+                for stage in (2, 3):        # 2 = ours/upstream, 3 = theirs/local
+                    blob = self._run("show", f":{stage}:{f}", check=False).stdout
+                    for line in blob.splitlines():
+                        if line.strip() and line not in seen:
+                            seen.add(line)
+                            lines.append(line)
+                (self.vault / f).write_text("\n".join(lines) + "\n" if lines else "")
+            else:
+                # Metadata describing the same recording; first push wins.
+                self._run("checkout", "--ours", "--", f, check=False)
+            self._run("add", "--", f, check=False)
+        env = {**self.env, "GIT_EDITOR": "true"}
+        done = subprocess.run(
+            ["git", "-C", str(self.vault), "rebase", "--continue"],
+            capture_output=True, text=True, env=env)
+        return done.returncode == 0
+
+    def pull(self) -> bool:
         if not (self.is_repo() and self.has_remote()):
-            return
-        self._run("pull", "--rebase", "--autostash", check=False)
+            return True
+        r = self._run("pull", "--rebase", "--autostash", check=False)
+        if r.returncode == 0:
+            return True
+        if self._resolve_benign():
+            return True
+        self._run("rebase", "--abort", check=False)
+        return False
 
     def commit_push(self, message: str) -> bool:
         """Stage everything, commit, push with bounded retry.
@@ -163,6 +215,9 @@ class Git:
         for attempt in range(1, self.retries + 1):
             if self._run("push", check=False).returncode == 0:
                 return True
-            self._run("pull", "--rebase", "--autostash", check=False)
+            # Another host pushed between our pull and our push. Rebase onto
+            # it, auto-resolving only the benign ingest collisions.
+            if not self.pull():
+                return False        # a real conflict — do not loop on it
             time.sleep(min(2 ** attempt, 8))
         return False

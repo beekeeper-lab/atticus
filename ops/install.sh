@@ -88,17 +88,46 @@ if [[ "$ROLE" == forge ]]; then
   systemctl --user list-timers atticus-processor.timer --no-pager 2>/dev/null | head -3
 
 else
-  warn "wardog ingest is not implemented yet — blocked on the Plaud transport"
-  warn "decision (SPEC §2.2.1): direct BLE, Android bridge, or the web fetcher"
-  exit 0
+  VENV="$HOME/.local/share/claude-fetchers/venv/bin/python"
+  [[ -x "$VENV" ]] && ok "fetchers venv" || die "missing $VENV (Playwright lives here)"
+  "$VENV" -c 'import playwright' 2>/dev/null && ok "playwright" || die "playwright not in the fetchers venv"
+
+  SESS="$HOME/.local/share/claude-fetchers/sessions/plaud"
+  if [[ -d "$SESS" ]] && [[ -n "$(ls -A "$SESS" 2>/dev/null)" ]]; then
+    ok "Plaud session seeded"
+  else
+    warn "no Plaud session at $SESS — seed it with:"
+    warn "    $VENV $REPO/ingest/plaud_web.py login"
+  fi
+
+  mkdir -p "$UNITS"
+  for u in atticus-ingest.service atticus-ingest.timer; do
+    sed "s|%h/atticus|$REPO|g" "$REPO/ops/$u" > "$UNITS/$u"
+    ok "installed $u"
+  done
+
+  if [[ -n "${VAULT:-}" ]]; then
+    if ! grep -q "ReadWritePaths=.*$VAULT" "$UNITS/atticus-ingest.service"; then
+      sed -i "s|^ReadWritePaths=\(.*\)$|ReadWritePaths=\1 $VAULT|" "$UNITS/atticus-ingest.service"
+      ok "granted the unit write access to the vault"
+    fi
+  else
+    warn "vault path unknown — edit ReadWritePaths in $UNITS/atticus-ingest.service by hand"
+  fi
+
+  systemctl --user daemon-reload
+  systemctl --user enable --now atticus-ingest.timer
+  ok "timer enabled (every 5 min)"
+  echo
+  systemctl --user list-timers atticus-ingest.timer --no-pager 2>/dev/null | head -3
 fi
 
 cat <<EOF
 
 Done.
 
-  status   systemctl --user status atticus-processor.service
-  logs     journalctl --user -u atticus-processor -f
+  status   systemctl --user status atticus-${ROLE/wardog/ingest}.service 2>/dev/null || true
+  logs     journalctl --user -u atticus-${ROLE/wardog/ingest} -f
   queue    python3 $REPO/processor/pipeline.py --status
-  run now  systemctl --user start atticus-processor.service
+  ledger   python3 $REPO/ingest/poller.py --status
 EOF
