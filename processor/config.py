@@ -49,6 +49,21 @@ class Config:
         # A recurring condition (dead Plaud session) is rediscovered every
         # tick. One alarm per window per condition, or you learn to ignore it.
         self.alarm_throttle_hours = float(g("ATTICUS_ALARM_THROTTLE_HOURS", "6"))
+
+        # Results. A finished voice command is the whole point of the system, so
+        # it gets a push carrying a link to the page it produced. Separate knob
+        # from the alarm URL so results and alarms can be split onto different
+        # topics later; falls back to the alarm URL when unset.
+        self.result_notify_url = (g("ATTICUS_RESULT_NOTIFY_URL", "")
+                                  or self.notify_url)
+        # Public base URL of the vault browser. Blank = no links in
+        # notifications, which is correct for anyone without a published site.
+        self.site_base_url = (g("ATTICUS_SITE_BASE_URL", "") or "").rstrip("/")
+        # Gated notes are the common case (a wearable overhears a lot), so they
+        # are silent by default. Turn on to catch a misheard wake word — the
+        # failure where a real command is silently filed as a note.
+        self.notify_notes = (g("ATTICUS_NOTIFY_NOTES", "false").lower()
+                             in ("1", "true", "yes", "on"))
         self.push_retries = int(g("ATTICUS_PUSH_RETRIES", "3"))
         self.git_name = g("ATTICUS_GIT_AUTHOR_NAME", "Atticus Processor")
         self.git_email = g("ATTICUS_GIT_AUTHOR_EMAIL", "atticus@localhost")
