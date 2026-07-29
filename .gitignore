@@ -1,0 +1,29 @@
+.env
+*.env
+!.env.example
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+node_modules/
+
+*.mp3
+*.wav
+*.m4a
+
+.DS_Store
+*.swp
+
+# Xcode (W8, contingent)
+ios/**/xcuserdata/
+ios/**/build/
+ios/**/DerivedData/
+*.xcuserstate
+
+# recon reports — redacted of tokens, but contain account identifiers
+docs/recon/
+
+# local test vault produced by processor/mkfixture.py
+.scratch-vault/

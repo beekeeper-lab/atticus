@@ -1,0 +1,20 @@
+[Unit]
+Description=Run the Atticus processor every 5 minutes
+Documentation=https://github.com/OWNER/atticus/blob/main/docs/SPEC.md
+
+[Timer]
+# Five minutes, not two. These jobs take minutes of agent time, so a tighter
+# interval mostly finds work already in progress and wastes a git pull.
+OnBootSec=2min
+OnUnitActiveSec=5min
+
+# Spread load if several timers land together.
+RandomizedDelaySec=30
+
+# Catch up after downtime rather than silently skipping a window.
+Persistent=true
+
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

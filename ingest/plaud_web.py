@@ -1,0 +1,386 @@
+#!/home/gregg/.local/share/claude-fetchers/venv/bin/python
+"""Plaud Web fetcher — the CLI replacement (ADR-002).
+
+    plaud_web.py login                    seed the session (interactive, once)
+    plaud_web.py whoami [--json]          session health check
+    plaud_web.py list [--days N] [--json] recordings, newest first
+    plaud_web.py audio <id> -o <path>     download original audio
+
+STATUS: the contract above is committed and implemented. The endpoint layer
+(class PlaudAPI) is STUBBED — Plaud gates audio import behind a bound device,
+so the web API could not be observed before the hardware arrived. Run
+`plaud_discover.py` (T-06), then fill in the four TODO(T-06) methods. Nothing
+outside PlaudAPI should need to change.
+
+Exit codes — ingest depends on these:
+    0  success
+    2  usage error
+    3  session expired / auth failed   ← alarm loudly, needs re-seeding
+    4  network or transient upstream error
+    5  unexpected: upstream probably changed, re-run recon
+"""
+import argparse
+import json
+import os
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+SITE = "plaud"
+SESSION_ROOT = Path(
+    os.environ.get(
+        "PLAUD_SESSION_ROOT",
+        Path.home() / ".local/share/claude-fetchers/sessions",
+    )
+)
+SESSION_DIR = SESSION_ROOT / SITE
+WEB_ORIGIN = "https://web.plaud.ai"
+
+EXIT_OK, EXIT_USAGE, EXIT_AUTH, EXIT_NET, EXIT_UNEXPECTED = 0, 2, 3, 4, 5
+
+
+class AuthError(RuntimeError):
+    """Session missing, expired, or rejected."""
+
+
+class TransientError(RuntimeError):
+    """Network blip or upstream 5xx. Safe to retry next tick."""
+
+
+class UpstreamChanged(RuntimeError):
+    """Response did not look the way we expect. Recon is stale."""
+
+
+# ─────────────────────────────────────────────────────────────────────────
+#  Endpoint layer — derived from recon (T-06, 2026-07-28)
+# ─────────────────────────────────────────────────────────────────────────
+
+API = "https://api.plaud.ai"
+EP_LIST = f"{API}/file/simple/web"
+EP_ME = f"{API}/user/me"
+PAGE_SIZE = 100
+HARVEST_TIMEOUT_S = 60
+
+
+class PlaudAPI:
+    """Adapter over Plaud's web API.
+
+    Auth (E1, answered): `Authorization: Bearer <workspace_token>`. The token is
+    workspace-scoped, obtained by the web app via
+    POST /user-app/auth/workspace/token/<ws_id>, and lives 24h with a 30-day
+    refresh token.
+
+    Rather than reimplement that dance, we let the app do it and harvest the
+    header off a live request. That means **the browser handles token refresh
+    for us** — so the practical session lifetime is the 30-day refresh window,
+    not 24 hours.
+
+    Transport (E2, answered): Playwright's APIRequestContext. Shares the
+    browser's cookie jar and TLS fingerprint, and needs no extra dependency —
+    `requests` is not in the fetchers venv.
+    """
+
+    def __init__(self, ctx):
+        self.ctx = ctx
+        self._page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        self._token = None
+
+    # -- E1: harvest the bearer off a live request ------------------------
+    def _bearer(self):
+        if self._token:
+            return self._token
+        import time as _t
+        found = {}
+
+        def on_request(req):
+            if found or "api.plaud.ai" not in req.url:
+                return
+            auth = (req.headers or {}).get("authorization")
+            if auth and auth.lower().startswith("bearer "):
+                found["v"] = auth
+
+        self.ctx.on("request", on_request)
+        try:
+            self._page.goto(WEB_ORIGIN, wait_until="domcontentloaded")
+            deadline = _t.time() + HARVEST_TIMEOUT_S
+            while _t.time() < deadline and "v" not in found:
+                self._page.wait_for_timeout(250)
+        finally:
+            try:
+                self.ctx.remove_listener("request", on_request)
+            except Exception:
+                pass
+
+        if "v" not in found:
+            raise AuthError(
+                "no Authorization header seen — session expired or login "
+                "changed. Re-seed with `plaud_web.py login`."
+            )
+        self._token = found["v"]
+        return self._token
+
+    def _get(self, url, params=None):
+        resp = self.ctx.request.get(
+            url, params=params or {},
+            headers={"Authorization": self._bearer(), "Accept": "application/json"},
+        )
+        if resp.status in (401, 403):
+            raise AuthError(f"{resp.status} from {url} — session rejected")
+        if resp.status >= 500:
+            raise TransientError(f"{resp.status} from {url}")
+        if resp.status != 200:
+            raise UpstreamChanged(f"{resp.status} from {url}")
+        try:
+            body = resp.json()
+        except Exception as e:
+            raise UpstreamChanged(f"non-JSON from {url}: {e}") from e
+        # Plaud signals application-level errors in-band with HTTP 200.
+        if isinstance(body, dict) and body.get("status") not in (0, None):
+            raise UpstreamChanged(
+                f"api status={body.get('status')} msg={body.get('msg')!r}"
+            )
+        return body
+
+    @staticmethod
+    def _normalize(rec):
+        """Plaud's vocabulary stops here. Nothing downstream sees these names."""
+        ms = rec.get("start_time") or rec.get("version_ms") or 0
+        return {
+            "id": rec["id"],
+            "name": rec.get("filename") or rec.get("fullname") or "",
+            # Second precision — this feeds vault filenames, so no microseconds.
+            "created_at": datetime.fromtimestamp(
+                ms / 1000, tz=timezone.utc
+            ).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "duration_seconds": round((rec.get("duration") or 0) / 1000),
+            # Operationally significant extras:
+            "ori_ready": rec.get("ori_ready"),      # original audio prepared?
+            "filetype": rec.get("filetype"),        # e.g. "audio/mp3"
+            "filesize": rec.get("filesize"),
+            "md5": rec.get("file_md5"),
+        }
+
+    # -- E3: list recordings (answered: skip/limit pagination) ------------
+    def list_recordings(self, since=None):
+        out, skip = [], 0
+        while True:
+            body = self._get(EP_LIST, {
+                "skip": skip, "limit": PAGE_SIZE, "is_trash": 0,
+                "sort_by": "start_time", "is_desc": "true",
+            })
+            if "data_file_list" not in body:
+                raise UpstreamChanged("no data_file_list in response")
+            batch = body["data_file_list"]
+            if not batch:
+                break
+            out.extend(self._normalize(r) for r in batch)
+            total = body.get("data_file_total")
+            skip += len(batch)
+            if total is not None and skip >= total:
+                break
+        if since is not None:
+            cutoff = since.isoformat().replace("+00:00", "Z")
+            out = [r for r in out if r["created_at"] >= cutoff]
+        return out
+
+    # -- E4/E5: STILL UNKNOWN ---------------------------------------------
+    def audio_url(self, recording_id):
+        """TODO(T-06b): return a fetchable URL for the original audio.
+
+        Recon did NOT capture this — the account had no exportable recording,
+        so the download was never triggered. What recon *did* reveal is the
+        shape of the problem:
+
+          - Every record carries `ori_ready` (bool). On the demo files it was
+            **false**. This is E5 made concrete: the original audio is not
+            necessarily sitting there ready to fetch, and something has to
+            prepare it.
+          - `fullname` is "<id>.mp3" and `filetype` is "audio/mp3", so the
+            object is named predictably once it exists.
+
+        Implement by re-running plaud_discover.py against a real recording and
+        clicking "export original audio". Watch for: the endpoint that flips
+        `ori_ready`, any polling the app does, and whether the final URL is a
+        presigned CDN link or a stream from api.plaud.ai.
+
+        Do NOT guess. A fetcher that downloads a not-ready object will produce
+        truncated files that look successful to the ingest ledger.
+        """
+        raise NotImplementedError(
+            "audio download path not yet observed — re-run plaud_discover.py "
+            "with a real recording and export its original audio (T-06b)"
+        )
+
+    def download_audio(self, recording_id, dest: Path):
+        """Stream audio_url() to `dest`, atomically.
+
+        Writes to a .part file and renames on success, so a crash mid-download
+        can never look like a complete file to the ingest ledger.
+        """
+        url = self.audio_url(recording_id)
+        part = dest.with_suffix(dest.suffix + ".part")
+        resp = self.ctx.request.get(url, headers={"Authorization": self._bearer()})
+        if resp.status != 200:
+            raise TransientError(f"{resp.status} downloading {recording_id}")
+        part.write_bytes(resp.body())
+        part.replace(dest)
+        return dest
+
+    # -- Session health ---------------------------------------------------
+    def whoami(self):
+        """Make a real authenticated call — a stale session still has cookies,
+        and that is exactly the failure T-72 needs to catch."""
+        body = self._get(EP_ME)
+        u = body.get("data_user") or {}
+        st = body.get("data_state") or {}
+        return {
+            "email": u.get("email"),
+            "nickname": u.get("nickname"),
+            "device_bound": bool(st.get("is_bind")),
+            "membership": bool(st.get("is_membership")),
+            "seconds_left": u.get("seconds_left"),
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────
+#  Session handling — committed
+# ─────────────────────────────────────────────────────────────────────────
+
+def launch(headless=True):
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("playwright not installed; use the fetchers venv", file=sys.stderr)
+        sys.exit(EXIT_USAGE)
+
+    SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    p = sync_playwright().start()
+    ctx = p.chromium.launch_persistent_context(
+        user_data_dir=str(SESSION_DIR),
+        headless=headless,
+        viewport={"width": 1400, "height": 900},
+        accept_downloads=True,
+    )
+    return p, ctx
+
+
+def close(p, ctx):
+    for fn in (ctx.close, p.stop):
+        try:
+            fn()
+        except Exception:
+            pass
+
+
+def session_seeded():
+    return SESSION_DIR.exists() and any(SESSION_DIR.iterdir())
+
+
+# ─────────────────────────────────────────────────────────────────────────
+#  Commands — committed
+# ─────────────────────────────────────────────────────────────────────────
+
+def cmd_login(args):
+    p, ctx = launch(headless=False)
+    try:
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.goto(WEB_ORIGIN, wait_until="domcontentloaded")
+        print(f"Browser open on {WEB_ORIGIN}.")
+        print("Log in, then close the window. Session persists to:")
+        print(f"  {SESSION_DIR}")
+        while ctx.pages:
+            page.wait_for_timeout(1000)
+        print("Session stored.")
+        return EXIT_OK
+    finally:
+        close(p, ctx)
+
+
+def cmd_whoami(args):
+    if not session_seeded():
+        raise AuthError(f"no session at {SESSION_DIR} — run `plaud_web.py login`")
+    p, ctx = launch(headless=not args.headed)
+    try:
+        info = PlaudAPI(ctx).whoami()
+        print(json.dumps(info) if args.json else f"Signed in: {info}")
+        return EXIT_OK
+    finally:
+        close(p, ctx)
+
+
+def cmd_list(args):
+    if not session_seeded():
+        raise AuthError(f"no session at {SESSION_DIR} — run `plaud_web.py login`")
+    since = datetime.now(timezone.utc) - timedelta(days=args.days)
+    p, ctx = launch(headless=not args.headed)
+    try:
+        recs = PlaudAPI(ctx).list_recordings(since=since)
+    finally:
+        close(p, ctx)
+
+    if args.json:
+        print(json.dumps({"recordings": recs}, indent=2))
+    else:
+        for r in recs:
+            print(f"{r['id']:>24}  {r['created_at']}  "
+                  f"{r.get('duration_seconds', '?'):>5}s  {r.get('name', '')}")
+    return EXIT_OK
+
+
+def cmd_audio(args):
+    if not session_seeded():
+        raise AuthError(f"no session at {SESSION_DIR} — run `plaud_web.py login`")
+    dest = Path(args.output)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    p, ctx = launch(headless=not args.headed)
+    try:
+        PlaudAPI(ctx).download_audio(args.id, dest)
+    finally:
+        close(p, ctx)
+    print(f"{dest}  ({dest.stat().st_size} bytes)")
+    return EXIT_OK
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Plaud Web fetcher (see ADR-002)")
+    ap.add_argument("--headed", action="store_true",
+                    help="show the browser (debugging)")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("login", help="seed the session interactively")
+
+    w = sub.add_parser("whoami", help="session health check")
+    w.add_argument("--json", action="store_true")
+
+    ls = sub.add_parser("list", help="list recordings")
+    ls.add_argument("--days", type=int, default=2)
+    ls.add_argument("--json", action="store_true")
+
+    au = sub.add_parser("audio", help="download original audio")
+    au.add_argument("id")
+    au.add_argument("-o", "--output", required=True)
+
+    args = ap.parse_args()
+    handler = {
+        "login": cmd_login, "whoami": cmd_whoami,
+        "list": cmd_list, "audio": cmd_audio,
+    }[args.cmd]
+
+    try:
+        sys.exit(handler(args))
+    except AuthError as e:
+        print(f"auth: {e}", file=sys.stderr)
+        sys.exit(EXIT_AUTH)
+    except TransientError as e:
+        print(f"transient: {e}", file=sys.stderr)
+        sys.exit(EXIT_NET)
+    except (UpstreamChanged, NotImplementedError) as e:
+        print(f"upstream/unimplemented: {e}", file=sys.stderr)
+        print("Run plaud_discover.py (T-06) and fill in PlaudAPI.", file=sys.stderr)
+        sys.exit(EXIT_UNEXPECTED)
+    except KeyboardInterrupt:
+        sys.exit(130)
+
+
+if __name__ == "__main__":
+    main()

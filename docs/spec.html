@@ -1,0 +1,803 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atticus — Voice-to-Agent Pipeline Specification</title>
+<style>
+:root{--bg:#f7f8fa;--panel:#fff;--ink:#1f2937;--muted:#6b7280;--border:#d1d5db;--border-strong:#9ca3af;--accent:#2563eb;--accent-soft:#dbeafe;--accent-ink:#1e3a8a;--success:#166534;--success-soft:#dcfce7;--warning:#92400e;--warning-soft:#fef3c7;--danger:#991b1b;--danger-soft:#fee2e2;--code-bg:#111827;--code-ink:#e5e7eb;--code-comment:#9ca3af;--radius:8px;--radius-sm:4px;--shadow:0 1px 2px rgba(0,0,0,.04),0 1px 3px rgba(0,0,0,.06)}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+a:hover{text-decoration-thickness:2px}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.page{max-width:64rem;margin:0 auto;padding:2rem 1.25rem 4rem}
+@media(min-width:56rem){.page{padding:3rem 2rem 5rem}}
+.hero{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:1.75rem 1.75rem 1.5rem;margin-bottom:1.5rem;box-shadow:var(--shadow)}
+.hero .eyebrow{margin:0 0 .25rem;color:var(--accent);font-size:.8125rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.hero h1{margin:0 0 .5rem;font-size:1.875rem;line-height:1.2;font-weight:700}
+.hero .subtitle{margin:0 0 1rem;color:var(--muted);font-size:1.0625rem;max-width:48rem}
+.hero .meta{display:flex;flex-wrap:wrap;gap:.5rem 1.25rem;font-size:.875rem;color:var(--muted);border-top:1px dashed var(--border);padding-top:.75rem}
+.hero .meta strong{color:var(--ink);font-weight:600}
+.toc{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:1rem 1.25rem;margin-bottom:1.5rem;font-size:.9375rem}
+.toc h2{margin:0 0 .5rem;font-size:.75rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border:0;padding:0}
+.toc ol{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(14rem,1fr));gap:.25rem 1.25rem;counter-reset:toc}
+.toc li{counter-increment:toc;margin:0}
+.toc a{display:block;padding:.25rem 0;text-decoration:none;color:var(--ink)}
+.toc a::before{content:counter(toc) ". ";color:var(--muted)}
+.toc a:hover{color:var(--accent)}
+main{display:grid;gap:1.25rem}
+section.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem 1.5rem 1.25rem;box-shadow:var(--shadow)}
+section.card>h2:first-child{margin-top:0}
+h2{margin:1.5rem 0 .75rem;font-size:1.375rem;line-height:1.3;font-weight:700;border-bottom:1px solid var(--border);padding-bottom:.4rem}
+h3{margin:1.5rem 0 .5rem;font-size:1.125rem;font-weight:600}
+h4{margin:1.25rem 0 .25rem;font-size:1rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+p,ul,ol{margin:.5rem 0 .75rem}
+ul,ol{padding-left:1.25rem}
+li+li{margin-top:.15rem}
+hr{border:0;border-top:1px solid var(--border);margin:1.5rem 0}
+.badge{display:inline-block;padding:.125rem .5rem;border-radius:999px;font-size:.75rem;font-weight:600;background:var(--accent-soft);color:var(--accent-ink);border:1px solid transparent;vertical-align:middle}
+.badge--success{background:var(--success-soft);color:var(--success)}
+.badge--warning{background:var(--warning-soft);color:var(--warning)}
+.badge--danger{background:var(--danger-soft);color:var(--danger)}
+.badge--muted{background:#f1f5f9;color:var(--muted);border-color:var(--border)}
+.callout{position:relative;border-left:4px solid var(--accent);background:var(--accent-soft);color:var(--accent-ink);padding:.75rem 1rem;border-radius:0 var(--radius-sm) var(--radius-sm) 0;margin:.75rem 0}
+.callout p:last-child{margin-bottom:0}
+.callout p:first-child{margin-top:0}
+.callout--success{border-color:var(--success);background:var(--success-soft);color:var(--success)}
+.callout--warning{border-color:var(--warning);background:var(--warning-soft);color:var(--warning)}
+.callout--danger{border-color:var(--danger);background:var(--danger-soft);color:var(--danger)}
+.callout strong{font-weight:700}
+table{width:100%;border-collapse:collapse;margin:.75rem 0 1rem;font-size:.9375rem}
+th,td{text-align:left;padding:.5rem .75rem;border-bottom:1px solid var(--border);vertical-align:top}
+th{background:#f1f5f9;font-weight:600;border-bottom:2px solid var(--border-strong)}
+tr:hover td{background:#fafbfc}
+.table-wrap{overflow-x:auto}
+code,kbd,samp,pre{font:.875rem/1.55 ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono","Courier New",monospace}
+p code,li code,td code,dd code{background:#f1f5f9;padding:.05rem .35rem;border-radius:var(--radius-sm);font-size:.85em;color:#0f172a;border:1px solid #e5e7eb}
+.code-block{background:var(--code-bg);color:var(--code-ink);border-radius:var(--radius);overflow:hidden;margin:.75rem 0;border:1px solid #0b1220}
+.code-block-header{display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.35rem .75rem;background:#0b1220;color:#9ca3af;font:.75rem/1 ui-monospace,monospace;letter-spacing:.04em;text-transform:uppercase}
+.code-block pre{margin:0;padding:.875rem 1rem;overflow-x:auto}
+.code-block .comment{color:var(--code-comment)}
+.grid{display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr))}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem;font-size:.9375rem}
+.kv dt{color:var(--muted);font-weight:500}
+.kv dd{margin:0}
+footer.page-footer{margin-top:2rem;padding:1rem 1.25rem;border-top:1px solid var(--border);color:var(--muted);font-size:.875rem;text-align:center}
+.status-banner{display:inline-flex;align-items:center;gap:.5rem;font-size:.8125rem;font-weight:600;padding:.3rem .75rem;border-radius:999px;background:var(--warning-soft);color:var(--warning);margin-bottom:.5rem}
+.diagram{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:1rem;margin:.75rem 0;overflow-x:auto}
+.diagram svg{display:block;max-width:100%;height:auto}
+.diagram-caption{text-align:center;font-size:.8125rem;color:var(--muted);margin-top:.5rem}
+.muted{color:var(--muted)}
+.small{font-size:.8125rem}
+.mb-0{margin-bottom:0}
+
+/* ---- task board ---- */
+.filters{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;margin:.75rem 0 1rem;padding:.75rem;background:#f1f5f9;border:1px solid var(--border);border-radius:var(--radius)}
+.filters .lbl{font-size:.75rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-right:.25rem}
+.filters .sep{width:1px;align-self:stretch;background:var(--border);margin:0 .4rem}
+.fbtn{padding:.3rem .7rem;border-radius:999px;border:1px solid var(--border-strong);background:#fff;color:var(--ink);font:.8125rem/1 system-ui,sans-serif;font-weight:600;cursor:pointer}
+.fbtn:hover{background:#e8edf3}
+.fbtn[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.fbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wsname{font-weight:600}
+.owner{display:inline-block;min-width:1.6rem;text-align:center;padding:.1rem .4rem;border-radius:var(--radius-sm);font-size:.75rem;font-weight:700;border:1px solid transparent}
+.owner-C{background:var(--accent-soft);color:var(--accent-ink)}
+.owner-G{background:var(--warning-soft);color:var(--warning)}
+.owner-CG{background:var(--success-soft);color:var(--success)}
+td.tid{font:.8125rem/1.5 ui-monospace,monospace;white-space:nowrap;font-weight:600}
+td.deps{font:.8125rem/1.5 ui-monospace,monospace;color:var(--muted);white-space:nowrap}
+td.mac{text-align:center;font-weight:700}
+tr.gate td{background:var(--warning-soft)}
+tr.gate:hover td{background:#fdeec4}
+tr.milestone td{background:var(--success-soft)}
+tr.milestone:hover td{background:#cdf3d8}
+tr.contingent td{color:var(--muted)}
+.wsrow th{background:#e2e8f0;font-size:.8125rem;letter-spacing:.04em;text-transform:uppercase;border-bottom:1px solid var(--border-strong)}
+.count{font-size:.8125rem;color:var(--muted);margin-left:auto;font-weight:600}
+.legend{font-size:.8125rem;color:var(--muted);display:flex;flex-wrap:wrap;gap:.25rem 1rem;margin-top:.25rem}
+.noscript{border-left:4px solid var(--warning);background:var(--warning-soft);color:var(--warning);padding:.6rem .9rem;font-size:.875rem;border-radius:0 var(--radius-sm) var(--radius-sm) 0}
+
+@media print{
+:root{--bg:#fff;--panel:#fff;--ink:#000;--muted:#333;--border:#999}
+body{background:#fff;color:#000;font-size:10.5pt;line-height:1.4}
+.page{max-width:100%;padding:0}
+.toc,.filters,button,.no-print{display:none!important}
+.hero,section.card,.callout,.code-block,.diagram{box-shadow:none;border:1px solid #999;page-break-inside:avoid}
+.hero{border-radius:0;border-width:0 0 2px;padding:0 0 .5rem;margin-bottom:.75rem}
+section.card{border-radius:0;border-width:0;padding:0;margin:0 0 .5rem}
+h1,h2,h3{page-break-after:avoid}
+h2{border-bottom:1px solid #000}
+a[href]::after{content:" (" attr(href) ")";font-size:.85em;color:#333;word-break:break-all}
+a[href^="#"]::after{content:""}
+.code-block{background:#fff;color:#000;border:1px solid #999}
+.code-block-header{background:#f0f0f0;color:#000;border-bottom:1px solid #999}
+.badge,.owner{border:1px solid #000;background:#fff!important;color:#000!important}
+table,.diagram,.callout{page-break-inside:avoid}
+thead{display:table-header-group}
+tr{page-break-inside:avoid}
+tr.gate td,tr.milestone td{background:#eee!important}
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="hero">
+  <p class="eyebrow">Specification</p>
+  <h1>Atticus — Voice-to-Agent Pipeline</h1>
+  <p class="subtitle">Speak a task into a wearable recorder; an agent executes it and publishes the result. No human interaction between “stop recording” and “read the output.”</p>
+  <div><span class="status-banner">Draft v1 — pre-hardware</span></div>
+  <div class="meta">
+    <span><strong>Owner:</strong> Gregg Reed</span>
+    <span><strong>Updated:</strong> 2026-07-28</span>
+    <span><strong>Source of truth:</strong> <code>docs/SPEC.md</code></span>
+    <span><strong>Mac required:</strong> No (v1)</span>
+    <span><strong>Plaud cost:</strong> $0 — free tier</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Table of contents">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#intent">Intent</a></li>
+    <li><a href="#architecture">Architecture</a></li>
+    <li><a href="#repos">Repository layout</a></li>
+    <li><a href="#components">Components</a></li>
+    <li><a href="#board">Task board</a></li>
+    <li><a href="#mac">The Mac question</a></li>
+    <li><a href="#cli">CLI over MCP</a></li>
+    <li><a href="#questions">Open questions</a></li>
+    <li><a href="#sequencing">Sequencing</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section class="card" id="intent">
+  <h2>1. Intent</h2>
+  <p>Example utterance:</p>
+  <div class="callout">
+    <p>“Please research the definition of an agentic harness. Do a complete writeup and generate an HTML guide with the results.”</p>
+  </div>
+  <p>Expected outcome: an HTML guide committed to a private repo, without touching a phone, laptop, or terminal.</p>
+
+  <h3>Non-goals for v1</h3>
+  <ul>
+    <li>Plaud’s AI summarization. The NotePin S is a wearable microphone here, not a note-taking product.</li>
+    <li>Sub-minute latency. Minutes are fine.</li>
+    <li>Multi-user support, voice output, conversational back-and-forth.</li>
+  </ul>
+
+  <h3>Success criteria</h3>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th style="width:3.5rem">#</th><th>Criterion</th></tr></thead>
+    <tbody>
+      <tr><td>S1</td><td>Recording stops → audio lands in the vault repo with zero human action</td></tr>
+      <tr><td>S2</td><td>Short (&lt;30s) command recordings survive the pipeline intact</td></tr>
+      <tr><td>S3</td><td>Transcript is accurate enough to route without correction</td></tr>
+      <tr><td>S4</td><td>Agent output is committed back to the vault repo</td></tr>
+      <tr><td>S5</td><td>Failures are visible; no recording is silently dropped</td></tr>
+      <tr><td>S6</td><td>The same recording is never processed twice</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="card" id="architecture">
+  <h2>2. Architecture</h2>
+  <div class="callout callout--success">
+    <p><strong>The controlling insight.</strong> The NotePin S has its own 2.4&nbsp;GHz Wi-Fi radio and can upload directly to Plaud Cloud with no phone involved. Combined with a Plaud Web fetcher (ADR-002), the iPhone drops out of the design entirely.</p>
+  </div>
+
+  <div class="diagram">
+    <svg viewBox="0 0 880 560" role="img" aria-label="Architecture: NotePin S syncs via Wi-Fi or BLE to Plaud Cloud. WarDog polls the cloud and commits audio to the atticus-vault git repo. Forge polls git, transcribes, routes and executes, then commits results back.">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="#6b7280"/>
+        </marker>
+        <marker id="arb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="#2563eb"/>
+        </marker>
+        <marker id="arg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="#166534"/>
+        </marker>
+      </defs>
+      <g font-family="system-ui,sans-serif" font-size="13">
+
+        <rect x="20" y="20" width="150" height="52" rx="8" fill="#dbeafe" stroke="#2563eb"/>
+        <text x="95" y="42" text-anchor="middle" font-weight="700" fill="#1e3a8a">NotePin S</text>
+        <text x="95" y="60" text-anchor="middle" font-size="11" fill="#1e3a8a">record → stop</text>
+
+        <path d="M95 72 L95 106 L300 106" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arb)"/>
+        <text x="150" y="100" font-size="11" fill="#1e3a8a" font-weight="600">A · Wi-Fi (charging)</text>
+
+        <path d="M95 72 L95 176 L215 176" fill="none" stroke="#6b7280" stroke-width="2" marker-end="url(#ar)"/>
+        <text x="104" y="195" font-size="11" fill="#6b7280" font-weight="600">B · BLE</text>
+
+        <rect x="215" y="152" width="140" height="46" rx="8" fill="#f1f5f9" stroke="#9ca3af"/>
+        <text x="285" y="171" text-anchor="middle" font-weight="600">Plaud iOS app</text>
+        <text x="285" y="188" text-anchor="middle" font-size="10.5" fill="#6b7280">auto, no taps</text>
+        <path d="M355 175 L420 175 L420 133" fill="none" stroke="#6b7280" stroke-width="2" marker-end="url(#ar)"/>
+
+        <rect x="300" y="82" width="175" height="48" rx="8" fill="#dbeafe" stroke="#2563eb"/>
+        <text x="387" y="111" text-anchor="middle" font-weight="700" fill="#1e3a8a">Plaud Cloud</text>
+
+        <path d="M475 106 L575 106" fill="none" stroke="#6b7280" stroke-width="2" marker-end="url(#ar)"/>
+        <text x="525" y="97" text-anchor="middle" font-size="11" fill="#6b7280" font-weight="600">poll · fetcher</text>
+        <text x="525" y="122" text-anchor="middle" font-size="10" fill="#6b7280">2 min</text>
+
+        <rect x="575" y="42" width="285" height="128" rx="8" fill="#fff" stroke="#92400e" stroke-width="1.5"/>
+        <text x="717" y="66" text-anchor="middle" font-weight="700" fill="#92400e">WARDOG</text>
+        <text x="717" y="83" text-anchor="middle" font-size="10.5" fill="#92400e">always-on · holds tokens.json</text>
+        <line x1="591" y1="93" x2="844" y2="93" stroke="#e5e7eb"/>
+        <rect x="595" y="104" width="245" height="50" rx="6" fill="#fef3c7" stroke="#92400e"/>
+        <text x="610" y="123" font-weight="600" fill="#92400e">ingest</text>
+        <text x="610" y="140" font-size="10.5" fill="#92400e">detect new · download · commit</text>
+
+        <path d="M717 170 L717 214" fill="none" stroke="#166534" stroke-width="2.5" marker-end="url(#arg)"/>
+        <text x="729" y="196" font-size="11" fill="#166534" font-weight="600">push</text>
+
+        <rect x="500" y="218" width="360" height="72" rx="8" fill="#dcfce7" stroke="#166534" stroke-width="2"/>
+        <text x="680" y="243" text-anchor="middle" font-weight="700" fill="#166534">atticus-vault  (private git)</text>
+        <text x="680" y="261" text-anchor="middle" font-size="11.5" fill="#166534">inbox/ · processed/ · failures/</text>
+        <text x="680" y="279" text-anchor="middle" font-size="11" fill="#166534" font-style="italic">the queue — not just storage</text>
+
+        <path d="M560 290 L560 330" fill="none" stroke="#166534" stroke-width="2.5" marker-end="url(#arg)"/>
+        <text x="452" y="314" font-size="11" fill="#166534" font-weight="600">git pull · 2 min</text>
+        <path d="M800 330 L800 290" fill="none" stroke="#166534" stroke-width="2.5" marker-end="url(#arg)"/>
+        <text x="812" y="314" font-size="11" fill="#166534" font-weight="600">push</text>
+
+        <rect x="440" y="334" width="420" height="206" rx="8" fill="#fff" stroke="#1f2937" stroke-width="1.5"/>
+        <text x="650" y="358" text-anchor="middle" font-weight="700">FORGE — AI server</text>
+        <text x="650" y="375" text-anchor="middle" font-size="10.5" fill="#6b7280">may be offline · work waits in git</text>
+        <line x1="456" y1="385" x2="844" y2="385" stroke="#e5e7eb"/>
+
+        <rect x="460" y="396" width="380" height="40" rx="6" fill="#f1f5f9" stroke="#9ca3af"/>
+        <text x="474" y="414" font-weight="600">transcribe</text>
+        <text x="474" y="429" font-size="10.5" fill="#6b7280">local faster-whisper</text>
+
+        <rect x="460" y="442" width="380" height="40" rx="6" fill="#f1f5f9" stroke="#9ca3af"/>
+        <text x="474" y="460" font-weight="600">route</text>
+        <text x="474" y="475" font-size="10.5" fill="#6b7280">transcript → prompt</text>
+
+        <rect x="460" y="488" width="380" height="40" rx="6" fill="#f1f5f9" stroke="#9ca3af"/>
+        <text x="474" y="506" font-weight="600">execute</text>
+        <text x="474" y="521" font-size="10.5" fill="#6b7280">claude -p, sandboxed</text>
+
+        <rect x="20" y="230" width="400" height="96" rx="8" fill="#fef3c7" stroke="#92400e"/>
+        <text x="38" y="254" font-weight="700" fill="#92400e">Trap: do not enable “Fast Transfer”</text>
+        <text x="38" y="275" font-size="11.5" fill="#92400e">Plaud’s Wi-Fi-to-phone mode requires the app stay in the</text>
+        <text x="38" y="292" font-size="11.5" fill="#92400e">foreground. Plain BLE transfer is the hands-off path.</text>
+        <text x="38" y="314" font-size="11.5" fill="#92400e">A and B aren’t exclusive — first to deliver wins; dedupe by ID.</text>
+
+        <rect x="20" y="350" width="400" height="118" rx="8" fill="#f1f5f9" stroke="#9ca3af"/>
+        <text x="38" y="374" font-weight="700">Why the split</text>
+        <text x="38" y="395" font-size="11.5" fill="#374151">• Plaud credential stays on WarDog, never on the AI server</text>
+        <text x="38" y="413" font-size="11.5" fill="#374151">• Forge can be down; recordings accumulate safely in git</text>
+        <text x="38" y="431" font-size="11.5" fill="#374151">• Each half deploys and fails independently</text>
+        <text x="38" y="453" font-size="11.5" fill="#991b1b">• Cost: a dead Forge looks exactly like an idle one → T-74</text>
+      </g>
+    </svg>
+    <p class="diagram-caption">Git is the boundary. The two halves never talk directly — only through commits.</p>
+  </div>
+
+  <h3>2.0 Host topology</h3>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Host</th><th>Role</th><th>Needs</th><th>Always-on?</th></tr></thead>
+    <tbody>
+      <tr><td><strong>WarDog</strong></td><td>Ingest only. Plaud Cloud → vault.</td><td>Python 3.11+, Playwright, git, seeded Plaud session</td><td><strong>Yes</strong> — polling requires it</td></tr>
+      <tr><td><strong>GitHub</strong></td><td>The queue and the durable record</td><td>private repo</td><td>—</td></tr>
+      <tr><td><strong>Forge</strong></td><td>Everything downstream of a committed recording</td><td>Python 3.11+, <code>faster-whisper</code>, <code>claude</code>, git</td><td>No — work waits in git</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <ul>
+    <li><strong>The Plaud credential lives on WarDog, not Forge.</strong> The seeded browser session never touches the AI server.</li>
+    <li><strong>Forge can be offline</strong> without losing recordings. This is the main thing the split buys.</li>
+    <li><strong>Both hosts push to the same repo.</strong> Disjoint paths (<code>inbox/</code> + <code>.state/</code> vs <code>processed/</code>), but every push is <code>pull --rebase</code> then retry.</li>
+    <li><strong>Two deploy keys</strong>, one per host, independently revocable.</li>
+  </ul>
+  <p class="small muted"><strong>Assumption A3:</strong> WarDog is always-on with outbound internet. If it sleeps, latency becomes “whenever WarDog is awake.” Confirm via T-24.</p>
+
+  <h3>2.1 Transport comparison</h3>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Path</th><th>Trigger</th><th>Latency</th><th>Phone?</th><th>App open?</th></tr></thead>
+    <tbody>
+      <tr><td><strong>A. Wi-Fi → Cloud</strong></td><td>Pin on charger, idle</td><td>Next charge cycle</td><td>No</td><td>No</td></tr>
+      <tr><td><strong>B. BLE → App → Cloud</strong></td><td>Proximity to paired phone</td><td>Minutes</td><td>Yes</td><td>No</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>2.2 Why local transcription, not Plaud’s</h3>
+  <div class="callout callout--warning">
+    <p><strong>AutoFlow requires more than 200 words of spoken content to trigger.</strong> A 10-second command is ~25 words. Short command recordings will arrive with <em>no Plaud transcript at all.</em></p>
+  </div>
+  <p>This is load-bearing: we cannot depend on Plaud’s transcript. Forge runs <code>faster-whisper</code> locally. That is also the desired outcome — it removes the dependency on Plaud’s AI tier and keeps command text off their servers.</p>
+  <p class="small muted"><strong>Assumption A1:</strong> Forge can run <code>small.en</code> on sub-2-minute clips in reasonable time. If Forge is thin, downgrade to <code>base.en</code>. Confirm via T-21.</p>
+</section>
+
+<section class="card" id="repos">
+  <h2>3. Repository layout</h2>
+  <p>Two repos. Code and bulk binary data do not belong in the same history.</p>
+
+  <div class="grid">
+    <div>
+      <h4>atticus — this repo</h4>
+      <div class="code-block"><div class="code-block-header"><span>code</span></div><pre>atticus/
+├── CLAUDE.md
+├── README.md
+├── docs/
+│   ├── SPEC.md        <span class="comment">← source of truth</span>
+│   ├── spec.html      <span class="comment">← this page</span>
+│   └── decisions/
+├── ingest/
+├── processor/
+├── ops/
+└── ios/               <span class="comment">contingent</span></pre></div>
+    </div>
+    <div>
+      <h4>atticus-vault — data repo</h4>
+      <div class="code-block"><div class="code-block-header"><span>data</span></div><pre>atticus-vault/
+├── inbox/2026/07/
+│   ├── …_&lt;id&gt;.mp3
+│   └── …_&lt;id&gt;.json
+├── processed/2026/07/
+│   ├── …transcript.txt
+│   ├── …task.md
+│   └── …_&lt;id&gt;/  <span class="comment">output</span>
+├── failures/2026/07/
+└── .state/seen.jsonl</pre></div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <p><strong>On the iOS sub-repo question:</strong> keep <code>ios/</code> as a plain directory, not a submodule. A submodule buys independent versioning we don’t need and costs a detached-HEAD footgun on every clone. If the app ever ships independently, split it then — cheap later, expensive now.</p>
+  </div>
+
+  <p class="small muted"><strong>Assumption A2:</strong> plain git, no LFS. A 1-minute MP3 at 64&nbsp;kbps is ~500&nbsp;KB; at 10/day that’s ~1.8&nbsp;GB/year. Revisit if long-form recordings become common.</p>
+
+  <h3>Pipeline status</h3>
+  <p><code>raw</code> → <code>transcribed</code> → <code>routed</code> → <code>executed</code> → <code>published</code>, or → <code>failed</code> at any point. Status lives in each recording’s metadata JSON, so every stage is resumable and idempotent after a crash.</p>
+</section>
+
+<section class="card" id="components">
+  <h2>4. Components</h2>
+
+  <h3>ingest/ — Plaud → vault <span class="badge badge--warning">WarDog</span></h3>
+  <p>Runs on a systemd timer, every 2 minutes. This is the whole of WarDog’s job — it never transcribes, never routes, never runs an agent. It gets audio into git and stops.</p>
+  <div class="code-block"><div class="code-block-header"><span>flow</span></div><pre>plaud_web.py list --days 2 --json   <span class="comment"># candidates</span>
+  → filter vs .state/seen.jsonl     <span class="comment"># dedupe</span>
+  → plaud_web.py audio &lt;id&gt;         <span class="comment"># time-limited URL</span>
+  → download, sha256, metadata      <span class="comment"># status: raw</span>
+  → append ledger, commit, push</pre></div>
+  <ul>
+    <li><strong>Poll, don’t push.</strong> No webhook is documented for personal Plaud accounts — they appear only in the enterprise workflow product. Device sync latency dominates anyway.</li>
+    <li><strong>Ledger before commit, commit before processing.</strong> The recording is durable in git before any work is attempted on it.</li>
+    <li>Download URLs are time-limited. Fetch immediately; never persist the URL.</li>
+    <li>Python 3.11+ throughout. The fetcher is a module in this repo, not an external binary. No Node dependency at all now that the CLI is gone.</li>
+  </ul>
+  <div class="callout callout--danger">
+    <p><strong>Risk R1.</strong> The fetcher depends on Plaud’s web app, which can change without notice. Mitigations: authenticate via Playwright but call the JSON API rather than scraping the DOM (a narrower, more stable target); keep the T-06 discovery report so a break can be diagnosed by re-running recon; and treat T-72’s session health check as load-bearing. <strong>The failure is loud at the fetcher and silent everywhere else</strong> — nothing downstream can tell “no new recordings” from “login broken.”</p>
+  </div>
+
+  <h3>plaud_web.py — the fetcher <span class="badge badge--success">auth + list implemented</span></h3>
+  <div class="callout callout--success">
+    <p><strong>Recon ran 2026-07-28</strong> against the unbound free account — the web app seeds three demo files, which was enough to observe auth, the list endpoint and the record schema. Auth, listing and <code>whoami</code> are implemented and unit-tested against captured payloads. <strong>The audio download path is the one thing still unknown</strong> (T-06b).</p>
+  </div>
+
+  <h4>Committed — the contract ingest depends on</h4>
+  <p>Stable regardless of what recon finds, because it is our design, not Plaud’s. <code>list --json</code> emits a normalized shape whatever the upstream field names turn out to be, so no other component learns Plaud’s vocabulary.</p>
+  <div class="code-block"><div class="code-block-header"><span>list --json</span></div><pre>{
+  "recordings": [
+    { "id": "…", "name": "…",
+      "created_at": "2026-07-28T14:22:11Z",
+      "duration_seconds": 47 }
+  ]
+}</pre></div>
+
+  <h4>Exit codes — what makes silent failure tractable</h4>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th style="width:4rem">Code</th><th>Meaning</th><th>Ingest’s response</th></tr></thead>
+    <tbody>
+      <tr><td><code>0</code></td><td>Success</td><td>proceed</td></tr>
+      <tr><td><code>2</code></td><td>Usage error</td><td>bug; alarm</td></tr>
+      <tr class="gate"><td><code>3</code></td><td><strong>Session expired / auth failed</strong></td><td>alarm loudly — needs re-seeding</td></tr>
+      <tr><td><code>4</code></td><td>Network or transient upstream error</td><td>retry next tick, quiet</td></tr>
+      <tr><td><code>5</code></td><td>Unexpected — upstream likely changed</td><td>alarm; re-run T-06 recon</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Code <code>3</code> exists because it is the difference between “no new recordings” and “login broken,” and those are indistinguishable from outside. Without it, R1’s failure mode is a pipeline that goes quiet and nobody notices for a week.</p>
+
+  <h4>Observed — the endpoint layer <span class="badge badge--success">recon done</span></h4>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th style="width:3rem">#</th><th>Question</th><th>Answer from recon</th></tr></thead>
+    <tbody>
+      <tr><td>E1</td><td>Cookie or bearer?</td><td><strong>Bearer.</strong> <code>Authorization: Bearer &lt;workspace_token&gt;</code></td></tr>
+      <tr><td>E2</td><td><code>requests</code> or browser?</td><td><strong>Playwright <code>ctx.request</code></strong> — <code>requests</code> isn’t in the fetchers venv, and the browser context shares cookies anyway</td></tr>
+      <tr><td>E3</td><td>Pagination?</td><td><strong><code>skip</code> / <code>limit</code></strong>, with <code>data_file_total</code> for the bound</td></tr>
+      <tr><td>E4</td><td>Download shape?</td><td>❓ <strong>Unobserved</strong> — see T-06b</td></tr>
+      <tr class="gate"><td>E5</td><td>Server-side prep needed?</td><td>⚠️ <strong>Probably yes.</strong> Every record carries <code>ori_ready</code>, and it was <code>false</code> on all three demo files</td></tr>
+      <tr><td>E6</td><td>Short recordings listed normally?</td><td>❓ Needs a real recording — this is Q5</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p><strong>Auth flow.</strong> The web app does a three-step dance: <code>POST /auth/access-token</code> → <code>GET /team-app/workspaces/list</code> → <code>POST /user-app/auth/workspace/token/&lt;ws_id&gt;</code>. Rather than reimplement it, the fetcher <strong>harvests the <code>Authorization</code> header off a live request</strong> after loading the app.</p>
+  <div class="callout callout--success">
+    <p>Useful consequence: the workspace token lives 24h but its refresh token lives 30 days, and <em>the browser</em> performs the refresh. Practical session lifetime is <strong>~30 days, not 24 hours</strong>, and the fetcher never touches token renewal. That is most of Q2 answered ahead of schedule.</p>
+  </div>
+
+  <div class="code-block"><div class="code-block-header"><span>endpoints in use</span></div><pre>GET  /user/me          → data_user{email,…}, data_state{is_bind,…}
+GET  /file/simple/web  ?skip&amp;limit&amp;is_trash=0&amp;sort_by=start_time&amp;is_desc=true
+                       → {status, data_file_total, data_file_list[]}</pre></div>
+
+  <h4>Record schema</h4>
+  <p>Plaud’s names stop at <code>_normalize</code> — nothing downstream sees them.</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Plaud</th><th>Ours</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td><code>id</code></td><td><code>id</code></td><td>hex string</td></tr>
+      <tr><td><code>filename</code></td><td><code>name</code></td><td>may be empty</td></tr>
+      <tr><td><code>start_time</code></td><td><code>created_at</code></td><td><strong>ms</strong> epoch → ISO-8601 UTC, second precision</td></tr>
+      <tr><td><code>duration</code></td><td><code>duration_seconds</code></td><td><strong>ms</strong>, not seconds</td></tr>
+      <tr><td><code>ori_ready</code></td><td><code>ori_ready</code></td><td>original audio prepared? — E5 depends on it</td></tr>
+      <tr><td><code>filetype</code></td><td><code>filetype</code></td><td>e.g. <code>audio/mp3</code></td></tr>
+      <tr><td><code>file_md5</code></td><td><code>md5</code></td><td>integrity check on download</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Two millisecond traps: <code>duration</code> and <code>start_time</code> are both ms, and naively treating either as seconds produces plausible-looking garbage. Also, <strong>application errors arrive as HTTP 200</strong> with a non-zero <code>status</code> field — the transport layer checks the body, not just the status line.</p>
+
+  <h4>T-06b — the remaining unknown</h4>
+  <div class="callout callout--danger">
+    <p>The download path was never triggered: the account has no exportable recording. <code>ori_ready: false</code> on every demo file is E5 made concrete — the original audio is not necessarily sitting there ready to fetch.</p>
+    <p>On arrival day, re-run recon against a real recording and <strong>export its original audio</strong>, watching for the call that flips <code>ori_ready</code>, any polling, and whether the final URL is a presigned CDN link or a stream from <code>api.plaud.ai</code>.</p>
+    <p><code>audio_url()</code> raises rather than guessing. A fetcher that downloads a not-ready object yields truncated files that look successful to the ledger — the worst available failure mode, since the recording is then marked seen and never retried.</p>
+  </div>
+
+  <h3>processor/ — transcribe → route → execute <span class="badge">Forge</span></h3>
+  <p>Forge learns of new work by <strong>polling git</strong>, every 2 minutes:</p>
+  <div class="code-block"><div class="code-block-header"><span>flow</span></div><pre>git pull --rebase  →  scan inbox/ for status:raw  →  work  →  commit  →  push</pre></div>
+  <p>Rejected for v1: a GitHub webhook to a Forge endpoint (requires exposing inbound network on the box that runs an autonomous agent — a real attack surface), and <code>repository_dispatch</code> via Actions (same exposure, plus a moving part). Polling costs a <code>git pull</code> every two minutes and needs no firewall rule.</p>
+  <div class="callout callout--warning">
+    <p><strong>The split’s benefit is also its failure mode.</strong> Forge may be offline and work waits safely in git — but a dead Forge looks exactly like an idle one. Nothing errors; recordings just quietly pile up. T-74’s backlog alarm is what makes the queue safe to rely on.</p>
+  </div>
+  <p><strong>Routing in v1 is deliberately dumb:</strong> the entire transcript becomes the prompt, with a preamble carrying the output contract. Keyword grammars and intent classification are v2 — build them when a real utterance demands it, not before.</p>
+
+  <div class="callout callout--warning">
+    <p><strong>Safety.</strong> The agent executes text derived from ambient audio. Anything within earshot of the pin can, in principle, become an instruction. For v1: unprivileged user, vault-scoped working directory, deny-by-default tool permissions, no credentials in scope beyond the vault deploy key. Every executed prompt is committed, so git history is the audit trail. This is a real surface, not a theoretical one.</p>
+  </div>
+
+  <h3>ops/ — deployment</h3>
+  <p>Two deploy targets from one repo:</p>
+  <div class="code-block"><div class="code-block-header"><span>install</span></div><pre>./ops/install.sh wardog     <span class="comment"># timer + ingest + Node/CLI checks</span>
+./ops/install.sh forge      <span class="comment"># timer + processor + whisper/claude checks</span></pre></div>
+  <p>No containers in v1 — both are single trusted hosts, and a container adds a layer without removing a problem.</p>
+  <h4>Concurrent pushes</h4>
+  <p>Both hosts commit to <code>atticus-vault</code>. Every push is <code>git pull --rebase --autostash</code> → push → bounded retry. They own disjoint paths — WarDog <code>inbox/</code> + <code>.state/</code>, Forge <code>processed/</code> + <code>failures/</code> — so rebases apply cleanly. The one shared file is a recording’s metadata JSON when Forge advances <code>status</code>, and Forge only edits records already committed. Retry bounded at 3, then quarantine and notify rather than loop.</p>
+</section>
+
+<section class="card" id="board">
+  <h2>5. Task board</h2>
+
+  <div class="filters no-print" role="group" aria-label="Filter tasks">
+    <span class="lbl">Owner</span>
+    <button class="fbtn" data-f="owner" data-v="all" aria-pressed="true">All</button>
+    <button class="fbtn" data-f="owner" data-v="C" aria-pressed="false">Claude</button>
+    <button class="fbtn" data-f="owner" data-v="G" aria-pressed="false">Gregg</button>
+    <button class="fbtn" data-f="owner" data-v="CG" aria-pressed="false">Paired</button>
+    <span class="sep" aria-hidden="true"></span>
+    <span class="lbl">Host</span>
+    <button class="fbtn" data-f="host" data-v="all" aria-pressed="true">All</button>
+    <button class="fbtn" data-f="host" data-v="wardog" aria-pressed="false">WarDog</button>
+    <button class="fbtn" data-f="host" data-v="forge" aria-pressed="false">Forge</button>
+    <span class="sep" aria-hidden="true"></span>
+    <span class="lbl">Scope</span>
+    <button class="fbtn" data-f="scope" data-v="all" aria-pressed="true">All</button>
+    <button class="fbtn" data-f="scope" data-v="v1" aria-pressed="false">v1 only</button>
+    <button class="fbtn" data-f="scope" data-v="mac" aria-pressed="false">Needs Mac</button>
+    <button class="fbtn" data-f="scope" data-v="gate" aria-pressed="false">Gates</button>
+    <span class="count" id="count" aria-live="polite"></span>
+  </div>
+
+  <noscript><p class="noscript">Filters need JavaScript. All tasks are shown below.</p></noscript>
+
+  <div class="table-wrap">
+  <table id="tasks">
+    <thead>
+      <tr><th style="width:4.5rem">ID</th><th>Task</th><th style="width:4rem">Owner</th><th style="width:5rem">Host</th><th style="width:3rem">Mac</th><th style="width:8.5rem">Depends on</th></tr>
+    </thead>
+    <tbody>
+      <tr class="wsrow" data-ws><th colspan="6">W0 — Foundation</th></tr>
+      <tr data-owner="C" data-host="" data-scope="v1"><td class="tid">T-01</td><td>Project structure, CLAUDE.md, README, spec</td><td><span class="owner owner-C">C</span></td><td class="small muted">—</td><td class="mac">—</td><td class="deps">—</td></tr>
+      <tr data-owner="C" data-host="" data-scope="v1"><td class="tid">T-02</td><td>ADR-001 (no iPhone app in v1)</td><td><span class="owner owner-C">C</span></td><td class="small muted">—</td><td class="mac">—</td><td class="deps">T-01</td></tr>
+      <tr data-owner="G" data-host="" data-scope="v1"><td class="tid">T-03</td><td>Create private repos <code>atticus</code> + <code>atticus-vault</code></td><td><span class="owner owner-G">G</span></td><td class="small muted">—</td><td class="mac">—</td><td class="deps">—</td></tr>
+      <tr data-owner="G" data-host="wardog forge" data-scope="v1"><td class="tid">T-04</td><td>Push repo; add <strong>two</strong> deploy keys to vault — one per host</td><td><span class="owner owner-G">G</span></td><td class="small muted">both</td><td class="mac">—</td><td class="deps">T-01, T-03</td></tr>
+
+      <tr class="wsrow" data-ws><th colspan="6">W1 — Device enablement <span class="badge badge--muted">blocked on hardware</span></th></tr>
+      <tr data-owner="G" data-host="" data-scope="v1"><td class="tid">T-10</td><td>Unbox, pair to Plaud iOS app, update firmware</td><td><span class="owner owner-G">G</span></td><td class="small muted">phone</td><td class="mac">—</td><td class="deps">—</td></tr>
+      <tr data-owner="G" data-host="" data-scope="v1"><td class="tid">T-11</td><td>Configure 2.4 GHz Wi-Fi on the pin</td><td><span class="owner owner-G">G</span></td><td class="small muted">phone</td><td class="mac">—</td><td class="deps">T-10</td></tr>
+      <tr data-owner="G" data-host="" data-scope="v1"><td class="tid">T-12</td><td>Enable “Sync to cloud while charging”</td><td><span class="owner owner-G">G</span></td><td class="small muted">phone</td><td class="mac">—</td><td class="deps">T-11</td></tr>
+      <tr data-owner="G" data-host="" data-scope="v1"><td class="tid">T-13</td><td>Confirm “Fast Transfer” is <strong>off</strong></td><td><span class="owner owner-G">G</span></td><td class="small muted">phone</td><td class="mac">—</td><td class="deps">T-10</td></tr>
+      <tr data-owner="G" data-host="" data-scope="v1 gate" class="gate"><td class="tid">T-14</td><td><strong>Decision:</strong> is Plaud Cloud acceptable for the audio you’ll speak? A judgment call, not a technical step — and it gates everything downstream. Answerable today, no hardware.</td><td><span class="owner owner-G">G</span></td><td class="small muted">—</td><td class="mac">—</td><td class="deps">—</td></tr>
+
+      <tr class="wsrow" data-ws><th colspan="6">W2 — Plaud access layer</th></tr>
+      <tr data-owner="CG" data-host="forge" data-scope="v1"><td class="tid">T-21</td><td>Confirm Forge specs; pick whisper model size</td><td><span class="owner owner-CG">CG</span></td><td class="small muted">Forge</td><td class="mac">—</td><td class="deps">—</td></tr>
+      <tr data-owner="G" data-host="wardog" data-scope="v1"><td class="tid">T-24</td><td>Confirm WarDog is always-on with outbound internet (A3)</td><td><span class="owner owner-G">G</span></td><td class="small muted">WarDog</td><td class="mac">—</td><td class="deps">—</td></tr>
+      <tr data-owner="G" data-host="wardog" data-scope="v1"><td class="tid">T-26</td><td>Confirm WarDog can run Playwright + headless chromium</td><td><span class="owner owner-G">G</span></td><td class="small muted">WarDog</td><td class="mac">—</td><td class="deps">—</td></tr>
+      <tr data-owner="C" data-host="wardog" data-scope="v1"><td class="tid">T-08</td><td>Fetcher contract + skeleton (<code>plaud_web.py</code>), endpoints stubbed <span class="badge badge--success">done</span></td><td><span class="owner owner-C">C</span></td><td class="small muted">WarDog</td><td class="mac">—</td><td class="deps">—</td></tr>
+      <tr data-owner="G" data-host="" data-scope="v1"><td class="tid">T-25</td><td><s>Import a test MP3 to validate before hardware</s> — <strong>blocked:</strong> Plaud requires a bound device before audio import</td><td><span class="owner owner-G">G</span></td><td class="small muted">desktop</td><td class="mac">—</td><td class="deps">T-10</td></tr>
+      <tr data-owner="G" data-host="" data-scope="v1"><td class="tid">T-06</td><td><s>Run <code>plaud_discover.py</code></s> <span class="badge badge--success">done</span> — auth, list endpoint, record schema captured off the demo files</td><td><span class="owner owner-G">G</span></td><td class="small muted">desktop</td><td class="mac">—</td><td class="deps">—</td></tr><tr data-owner="G" data-host="" data-scope="v1 gate" class="gate"><td class="tid">T-06b</td><td><strong>GATE:</strong> re-run recon against a <em>real</em> recording and <strong>export its original audio</strong> — the only unobserved call. Resolves E4, E5, Q10, Q12.</td><td><span class="owner owner-G">G</span></td><td class="small muted">desktop</td><td class="mac">—</td><td class="deps">T-10</td></tr>
+      <tr data-owner="C" data-host="wardog" data-scope="v1"><td class="tid">T-07</td><td><s>Fill in <code>PlaudAPI</code></s> <span class="badge badge--success">partly done</span> — auth harvest, list, whoami implemented and unit-tested</td><td><span class="owner owner-C">C</span></td><td class="small muted">WarDog</td><td class="mac">—</td><td class="deps">T-06</td></tr><tr data-owner="C" data-host="wardog" data-scope="v1"><td class="tid">T-07b</td><td>Implement <code>audio_url()</code> / download from the T-06b report</td><td><span class="owner owner-C">C</span></td><td class="small muted">WarDog</td><td class="mac">—</td><td class="deps">T-06b</td></tr>
+      <tr data-owner="G" data-host="wardog" data-scope="v1 gate" class="gate"><td class="tid">T-22</td><td><strong>GATE:</strong> session portability — seed on a desktop, copy <code>sessions/plaud/</code> to <strong>WarDog</strong>, confirm headless reuse. The Plaud credential never touches the AI server.</td><td><span class="owner owner-G">G</span></td><td class="small muted">WarDog</td><td class="mac">—</td><td class="deps">T-07b</td></tr>
+      <tr data-owner="C" data-host="" data-scope="v1"><td class="tid">T-23</td><td>Document the fetcher's API contract + session lifetime</td><td><span class="owner owner-C">C</span></td><td class="small muted">—</td><td class="mac">—</td><td class="deps">T-07b, T-22</td></tr>
+
+      <tr class="wsrow" data-ws><th colspan="6">W3 — Arrival tests</th></tr>
+      <tr data-owner="G" data-host="wardog" data-scope="v1 gate" class="gate"><td class="tid">T-30</td><td><strong>GATE:</strong> record 15s command; confirm it appears in <code>plaud files</code> at all</td><td><span class="owner owner-G">G</span></td><td class="small muted">WarDog</td><td class="mac">—</td><td class="deps">T-12, T-20</td></tr>
+      <tr data-owner="G" data-host="wardog" data-scope="v1"><td class="tid">T-31</td><td>Confirm original audio downloads and is playable</td><td><span class="owner owner-G">G</span></td><td class="small muted">WarDog</td><td class="mac">—</td><td class="deps">T-30</td></tr>
+      <tr data-owner="G" data-host="wardog" data-scope="v1 gate" class="gate"><td class="tid">T-32</td><td><strong>GATE:</strong> confirm short recordings download <em>without</em> a Plaud transcript</td><td><span class="owner owner-G">G</span></td><td class="small muted">WarDog</td><td class="mac">—</td><td class="deps">T-30</td></tr>
+      <tr data-owner="G" data-host="" data-scope="v1"><td class="tid">T-33</td><td>Time Wi-Fi-while-charging sync: stop → visible in cloud</td><td><span class="owner owner-G">G</span></td><td class="small muted">—</td><td class="mac">—</td><td class="deps">T-12</td></tr>
+      <tr data-owner="G" data-host="" data-scope="v1"><td class="tid">T-34</td><td>Time BLE sync with app <strong>backgrounded</strong>, then <strong>force-quit</strong>. The one genuine unknown — undocumented whether iOS keeps the transfer alive when suspended.</td><td><span class="owner owner-G">G</span></td><td class="small muted">phone</td><td class="mac">—</td><td class="deps">T-10</td></tr>
+      <tr data-owner="CG" data-host="" data-scope="v1"><td class="tid">T-35</td><td>Record results into <code>docs/arrival-tests.md</code></td><td><span class="owner owner-CG">CG</span></td><td class="small muted">—</td><td class="mac">—</td><td class="deps">T-30…T-34</td></tr>
+
+      <tr class="wsrow" data-ws><th colspan="6">W4 — Ingest <span class="badge badge--warning">WarDog</span></th></tr>
+      <tr data-owner="C" data-host="wardog" data-scope="v1"><td class="tid">T-40</td><td>Poller: list → dedupe → download → commit</td><td><span class="owner owner-C">C</span></td><td class="small muted">WarDog</td><td class="mac">—</td><td class="deps">T-07b, T-23</td></tr>
+      <tr data-owner="C" data-host="wardog" data-scope="v1"><td class="tid">T-41</td><td>Ledger + idempotency + resumable status transitions</td><td><span class="owner owner-C">C</span></td><td class="small muted">WarDog</td><td class="mac">—</td><td class="deps">T-40</td></tr>
+      <tr data-owner="C" data-host="wardog" data-scope="v1"><td class="tid">T-42</td><td>Structured logging + failure quarantine</td><td><span class="owner owner-C">C</span></td><td class="small muted">WarDog</td><td class="mac">—</td><td class="deps">T-40</td></tr>
+      <tr data-owner="C" data-host="wardog" data-scope="v1"><td class="tid">T-43</td><td>systemd timer unit (2 min)</td><td><span class="owner owner-C">C</span></td><td class="small muted">WarDog</td><td class="mac">—</td><td class="deps">T-40</td></tr>
+      <tr data-owner="C" data-host="wardog forge" data-scope="v1"><td class="tid">T-45</td><td>Safe-push wrapper: <code>pull --rebase</code> + bounded retry. Both hosts write the same repo.</td><td><span class="owner owner-C">C</span></td><td class="small muted">both</td><td class="mac">—</td><td class="deps">T-40</td></tr>
+      <tr data-owner="CG" data-host="wardog" data-scope="v1"><td class="tid">T-44</td><td>Deploy to WarDog; verify a recording reaches GitHub</td><td><span class="owner owner-CG">CG</span></td><td class="small muted">WarDog</td><td class="mac">—</td><td class="deps">T-43, T-04, T-31</td></tr>
+
+      <tr class="wsrow" data-ws><th colspan="6">W5 — Transcription <span class="badge">Forge</span></th></tr>
+      <tr data-owner="G" data-host="forge" data-scope="v1"><td class="tid">T-50</td><td>Install <code>faster-whisper</code></td><td><span class="owner owner-G">G</span></td><td class="small muted">Forge</td><td class="mac">—</td><td class="deps">T-21</td></tr>
+      <tr data-owner="C" data-host="forge" data-scope="v1"><td class="tid">T-53</td><td>Git-poll loop: <code>pull --rebase</code> → scan for <code>status: raw</code></td><td><span class="owner owner-C">C</span></td><td class="small muted">Forge</td><td class="mac">—</td><td class="deps">T-45</td></tr>
+      <tr data-owner="C" data-host="forge" data-scope="v1"><td class="tid">T-51</td><td>Transcription stage; writes transcript, sets status</td><td><span class="owner owner-C">C</span></td><td class="small muted">Forge</td><td class="mac">—</td><td class="deps">T-50, T-53</td></tr>
+      <tr data-owner="CG" data-host="forge" data-scope="v1"><td class="tid">T-52</td><td>Accuracy check; tune model size</td><td><span class="owner owner-CG">CG</span></td><td class="small muted">Forge</td><td class="mac">—</td><td class="deps">T-51, T-35</td></tr>
+
+      <tr class="wsrow" data-ws><th colspan="6">W6 — Routing and execution <span class="badge">Forge</span></th></tr>
+      <tr data-owner="C" data-host="forge" data-scope="v1"><td class="tid">T-60</td><td>Prompt preamble + output contract</td><td><span class="owner owner-C">C</span></td><td class="small muted">Forge</td><td class="mac">—</td><td class="deps">T-51</td></tr>
+      <tr data-owner="C" data-host="forge" data-scope="v1"><td class="tid">T-61</td><td><code>claude -p</code> headless invocation, scoped permissions</td><td><span class="owner owner-C">C</span></td><td class="small muted">Forge</td><td class="mac">—</td><td class="deps">T-60</td></tr>
+      <tr data-owner="C" data-host="forge" data-scope="v1"><td class="tid">T-62</td><td>Sandboxing: unprivileged user, restricted tools</td><td><span class="owner owner-C">C</span></td><td class="small muted">Forge</td><td class="mac">—</td><td class="deps">T-61</td></tr>
+      <tr data-owner="C" data-host="forge" data-scope="v1"><td class="tid">T-63</td><td>Commit outputs back to vault; status → published</td><td><span class="owner owner-C">C</span></td><td class="small muted">Forge</td><td class="mac">—</td><td class="deps">T-61, T-45</td></tr>
+      <tr data-owner="CG" data-host="wardog forge" data-scope="v1" class="milestone"><td class="tid">T-64</td><td><strong>Milestone — full loop.</strong> Speak the agentic-harness prompt; get the HTML guide.</td><td><span class="owner owner-CG">CG</span></td><td class="small muted">both</td><td class="mac">—</td><td class="deps">T-44, T-52, T-63</td></tr>
+
+      <tr class="wsrow" data-ws><th colspan="6">W7 — Operations</th></tr>
+      <tr data-owner="C" data-host="wardog forge" data-scope="v1"><td class="tid">T-70</td><td>Failure notification (ntfy / email / Pushover — your call)</td><td><span class="owner owner-C">C</span></td><td class="small muted">both</td><td class="mac">—</td><td class="deps">T-42</td></tr>
+      <tr data-owner="C" data-host="wardog forge" data-scope="v1"><td class="tid">T-71</td><td><code>install.sh &lt;role&gt;</code>, <code>.env.example</code>, runbook</td><td><span class="owner owner-C">C</span></td><td class="small muted">both</td><td class="mac">—</td><td class="deps">T-43</td></tr>
+      <tr data-owner="C" data-host="wardog" data-scope="v1"><td class="tid">T-72</td><td>Token-expiry watchdog (surfaces T-22’s failure mode early)</td><td><span class="owner owner-C">C</span></td><td class="small muted">WarDog</td><td class="mac">—</td><td class="deps">T-22</td></tr>
+      <tr data-owner="C" data-host="forge" data-scope="v1"><td class="tid">T-74</td><td>Backlog alarm: <code>inbox/</code> stuck in <code>raw</code> past a threshold. Without it, a dead Forge looks exactly like an idle one.</td><td><span class="owner owner-C">C</span></td><td class="small muted">Forge</td><td class="mac">—</td><td class="deps">T-53</td></tr>
+      <tr data-owner="G" data-host="" data-scope="v1"><td class="tid">T-73</td><td>Retention/rotation policy for vault audio</td><td><span class="owner owner-G">G</span></td><td class="small muted">—</td><td class="mac">—</td><td class="deps">T-64</td></tr>
+
+      <tr class="wsrow" data-ws><th colspan="6">W8 — iOS app <span class="badge badge--danger">contingent — do not start unopposed</span></th></tr>
+      <tr data-owner="G" data-host="" data-scope="w8" class="contingent"><td class="tid">T-80</td><td>Register Plaud Developer Portal app; client creds + API key</td><td><span class="owner owner-G">G</span></td><td class="small muted">—</td><td class="mac">—</td><td class="deps">trigger</td></tr>
+      <tr data-owner="G" data-host="" data-scope="w8" class="contingent"><td class="tid">T-81</td><td>Apple Developer Program membership ($99/yr)</td><td><span class="owner owner-G">G</span></td><td class="small muted">—</td><td class="mac">—</td><td class="deps">trigger</td></tr>
+      <tr data-owner="C" data-host="" data-scope="w8" class="contingent"><td class="tid">T-82</td><td>Swift skeleton + Plaud Embedded SDK integration</td><td><span class="owner owner-C">C</span></td><td class="small muted">—</td><td class="mac">—</td><td class="deps">T-80</td></tr>
+      <tr data-owner="C" data-host="" data-scope="w8" class="contingent"><td class="tid">T-83</td><td>BLE pair, <code>getFileList</code>, <code>exportAudio</code>, background transfer</td><td><span class="owner owner-C">C</span></td><td class="small muted">—</td><td class="mac">—</td><td class="deps">T-82</td></tr>
+      <tr data-owner="C" data-host="wardog" data-scope="w8" class="contingent"><td class="tid">T-84</td><td>Upload endpoint on <strong>WarDog</strong> + app-side client. Forge stays out of ingest in every scenario.</td><td><span class="owner owner-C">C</span></td><td class="small muted">WarDog</td><td class="mac">—</td><td class="deps">T-83</td></tr>
+      <tr data-owner="G" data-host="" data-scope="w8" class="contingent"><td class="tid">T-85</td><td><strong>Unbind pin from official Plaud app</strong> — one app at a time</td><td><span class="owner owner-G">G</span></td><td class="small muted">phone</td><td class="mac">—</td><td class="deps">T-83</td></tr>
+      <tr data-owner="C" data-host="" data-scope="w8 mac" class="contingent"><td class="tid">T-86</td><td>Build + sign</td><td><span class="owner owner-C">C</span></td><td class="small muted">CI</td><td class="mac">✓*</td><td class="deps">T-82, T-81</td></tr>
+      <tr data-owner="G" data-host="" data-scope="w8 mac" class="contingent"><td class="tid">T-87</td><td>Install to device via TestFlight</td><td><span class="owner owner-G">G</span></td><td class="small muted">—</td><td class="mac">✓*</td><td class="deps">T-86</td></tr>
+      <tr data-owner="G" data-host="" data-scope="w8 mac" class="contingent"><td class="tid">T-88</td><td>On-device BLE debugging</td><td><span class="owner owner-G">G</span></td><td class="small muted">—</td><td class="mac">✓</td><td class="deps">T-87</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p class="legend">
+    <span><span class="owner owner-C">C</span> Claude</span>
+    <span><span class="owner owner-G">G</span> Gregg</span>
+    <span><span class="owner owner-CG">CG</span> Paired</span>
+    <span>✓ Mac required</span>
+    <span>✓* Mac avoidable with friction — see §6</span>
+  </p>
+</section>
+
+<section class="card" id="mac">
+  <h2>6. The Mac question</h2>
+  <div class="callout callout--success">
+    <p><strong>v1 needs no Mac.</strong> Everything through T-73 runs on Linux. Node, Python, <code>faster-whisper</code>, git, systemd — Forge handles all of it. The Mac only enters via W8, which is contingent and probably never triggers.</p>
+  </div>
+
+  <p>If W8 <em>does</em> trigger, a Mac is still avoidable, with friction:</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Need</th><th>Mac-free path</th><th>Cost</th></tr></thead>
+    <tbody>
+      <tr><td>Build + sign</td><td>GitHub Actions <code>macos-latest</code> runner</td><td>Free tier, or ~$0.08/min</td></tr>
+      <tr><td>Certs + profiles</td><td><code>fastlane match</code> + App Store Connect API key</td><td>Setup complexity</td></tr>
+      <tr><td>Install to iPhone</td><td>TestFlight</td><td>$99/yr Apple Developer</td></tr>
+      <tr><td>Iterate on BLE bugs</td><td>—</td><td><strong>This is where it breaks down</strong></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Build-and-ship is genuinely Mac-free. <strong>Debugging is not.</strong> BLE work is empirical — you’ll be watching connection state, retry behavior, and background-suspension edge cases. Doing that through 10-minute CI round-trips with no debugger, no Xcode console, and no Instruments is miserable enough that it will dominate the schedule.</p>
+
+  <div class="callout">
+    <p><strong>Recommendation:</strong> don’t buy a Mac now. If W8 triggers, borrow or rent one (MacStadium, ~$100/mo) for the BLE development window, then drop it and keep shipping via Actions.</p>
+  </div>
+</section>
+
+<section class="card" id="cli">
+  <h2>7. Which Plaud product surface</h2>
+  <div class="callout callout--danger">
+    <p><strong>Answer: none of them.</strong> The official CLI is <strong>paywalled</strong> — it requires a paid plan. We use a Plaud Web fetcher instead. See <a href="decisions/ADR-002-plaud-web-fetcher.md">ADR-002</a>.</p>
+  </div>
+
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Surface</th><th>What it reads</th><th>Why not</th></tr></thead>
+    <tbody>
+      <tr><td><strong>CLI</strong><br><code>@plaud-ai/cli</code></td><td>Your personal account</td><td><strong>Paywalled.</strong></td></tr>
+      <tr><td><strong>MCP</strong><br><code>@plaud-ai/mcp</code></td><td>Same account, same data</td><td>Paywalled the same way — and a cron job has no use for a conversational client.</td></tr>
+      <tr><td><strong>Embedded</strong></td><td>Nothing of yours: audio <em>you</em> upload, plus BLE pairing</td><td>Free, but B2B infrastructure for building your own Plaud-powered app. No “list my recordings” endpoint. W8 only.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>What we use instead</h3>
+  <div class="code-block"><div class="code-block-header"><span>ingest/plaud_web.py</span></div><pre>plaud_web.py login              <span class="comment"># seed the session (interactive, once)</span>
+plaud_web.py whoami             <span class="comment"># session health check</span>
+plaud_web.py list --json        <span class="comment"># recordings, newest first</span>
+plaud_web.py audio &lt;id&gt; -o …    <span class="comment"># download original MP3/WAV</span></pre></div>
+  <p>Playwright with a persistent session, credentials from 1Password, calling Plaud’s JSON API with the session the browser established. Follows the house pattern in <code>~/.claude/site-fetchers/</code>. Deliberately CLI-shaped, so nothing downstream of ingest changes. Cost: <strong>$0/yr</strong>.</p>
+
+  <h3>Why the free tier is sufficient</h3>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th></th><th>Starter (free)</th><th>Paid</th></tr></thead>
+    <tbody>
+      <tr><td>Original audio export (MP3/WAV)</td><td>✅</td><td>✅</td></tr>
+      <tr><td>Wi-Fi sync to cloud</td><td>✅</td><td>✅</td></tr>
+      <tr><td>Web/app access to recordings</td><td>✅</td><td>✅</td></tr>
+      <tr><td>Transcription minutes</td><td>300/mo</td><td>more</td></tr>
+      <tr><td>CLI / MCP</td><td>❌</td><td>✅</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Two reasons the transcription allowance is irrelevant: we transcribe locally with <code>faster-whisper</code>, and AutoFlow only fires above 200 words — so a 15-second command consumes <strong>zero</strong> minutes. The free tier is not a compromise for this workload.</p>
+
+  <div class="callout callout--warning">
+    <p><strong>The tradeoff we accepted.</strong> The fetcher breaks if Plaud reworks their web app — the same bet the other five fetchers in the registry already make. It is why T-72’s session health check is load-bearing rather than nice-to-have, and why the T-06 discovery report is kept: re-running recon is how we repair a break.</p>
+  </div>
+
+  <h3>Community packages</h3>
+  <div class="callout callout--danger">
+    <p><strong>Avoid</strong> <code>sergivalverde/plaud-toolkit</code> and the rest. Reverse-engineered from the web app, alpha, and they want your email and password in plaintext.</p><p>Our fetcher targets the same underlying API, so the distinction matters: we authenticate through a real browser session in a 1Password-backed Playwright profile and <strong>never store the account password</strong>. Same access, none of the credential handling that made the toolkits a bad idea.</p>
+  </div>
+
+  <h3>Free fallback worth remembering</h3>
+  <p>The web API exposes Plaud’s transcript when one exists. Short commands won’t have one (AutoFlow’s 200-word floor), but meeting-length recordings arrive already transcribed at no cost. A “use Plaud’s if present, whisper otherwise” fallback is cheap. Not v1 — noted so it isn’t rediscovered.</p>
+</section>
+
+<section class="card" id="questions">
+  <h2>8. Open questions</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th style="width:3rem">#</th><th>Question</th><th style="width:7rem">Resolved by</th><th style="width:9rem">Blocks</th></tr></thead>
+    <tbody>
+      <tr><td>Q1</td><td><s>Does <code>--json</code> exist on the CLI?</s> <strong>Moot</strong> — CLI is paywalled</td><td>—</td><td>—</td></tr>
+      <tr><td>Q2</td><td>Does the browser session survive copy to WarDog and work headless?</td><td>T-22</td><td>W4</td></tr><tr><td>Q9</td><td><s>What is the web API’s actual shape?</s> <strong>Answered</strong> except the download path</td><td>T-06</td><td>—</td></tr><tr class="gate"><td>Q10</td><td>Does audio export return an existing object, or start a server-side job? (E5)</td><td>T-06b</td><td>fetcher design</td></tr><tr class="gate"><td>Q12</td><td>Does <code>ori_ready</code> gate the download, and what flips it?</td><td>T-06b</td><td><strong>fetcher correctness</strong></td></tr>
+      <tr><td>Q3</td><td>Does BLE sync complete with the app suspended?</td><td>T-34</td><td>transport choice</td></tr>
+      <tr><td>Q4</td><td>Wi-Fi-while-charging latency?</td><td>T-33</td><td>expectations</td></tr>
+      <tr class="gate"><td>Q5</td><td>Do sub-200-word recordings sync at all, and is raw audio retrievable with no transcript?</td><td>T-30, T-32</td><td><strong>entire design</strong></td></tr>
+      <tr><td>Q6</td><td>Forge CPU/GPU — which whisper model?</td><td>T-21</td><td>W5</td></tr>
+      <tr><td>Q7</td><td>Is Plaud Cloud acceptable for this audio?</td><td>T-14</td><td>W8 trigger</td></tr>
+      <tr><td>Q8</td><td>Is WarDog always-on with outbound internet? (A3)</td><td>T-24</td><td>ingest latency</td></tr><tr><td>Q11</td><td>Can WarDog run Playwright + headless chromium?</td><td>T-26</td><td>W4</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="callout callout--danger">
+    <p><strong>Q5 is the existential one.</strong> The whole design assumes a 15-second utterance is a first-class recording that syncs and exposes its original audio. Plaud’s product is built around meeting-length content, and AutoFlow’s 200-word floor proves they think in those terms. If short clips are discarded, deprioritized in sync, or have their audio withheld pending transcription, v1 needs rethinking. <strong>Test this on day one, before anything else is built.</strong></p>
+  </div>
+</section>
+
+<section class="card" id="sequencing">
+  <h2>9. Sequencing</h2>
+  <div class="code-block"><div class="code-block-header"><span>critical path</span></div><pre>NOW <span class="comment">(genuinely hardware-free)</span>
+  T-01 ─ T-02 ─┬─ T-03 ─ T-04
+               └─ spec review
+  T-08 ─ T-06 ─ T-07   <span class="comment">◄ DONE: contract, recon, auth + list</span>
+  T-24 ─ T-26   <span class="comment">◄ A3. WarDog always-on? Can it run Playwright?</span>
+  T-21          <span class="comment">◄ Q6. Forge specs.</span>
+  T-14          <span class="comment">◄ Q7. Decides whether W8 is mandatory.</span>
+
+ARRIVAL DAY <span class="comment">(tightly ordered — each gate can stop the next)</span>
+  T-10 ─ T-11 ─ T-12 ─ T-13
+  T-30 ─ T-32   <span class="comment">◄ Q5. Do short recordings exist and export?</span>
+  T-06b         <span class="comment">◄ recon #2: EXPORT AUDIO. Only unknown left.</span>
+  T-07b ─ T-22  <span class="comment">◄ implement download; prove headless on WarDog</span>
+  T-31 ─ T-33 ─ T-34 ─ T-35
+
+THEN <span class="comment">(I build, largely unattended)</span>
+  W4 (WarDog) ──► GitHub ──► W5 ─ W6 (Forge) ──► T-64 full loop
+  W7 hardening
+
+LATER / PROBABLY NEVER
+  W8</pre></div>
+  <div class="callout callout--success">
+    <p><strong>Most of the head start was recovered.</strong> The paywall looked like it would push every Plaud unknown to arrival day. It didn’t — the web app seeds three demo files into a new account, and that was enough to observe the auth flow, the list endpoint and the record schema without a device. Auth, listing and <code>whoami</code> are implemented and unit-tested against real captured payloads.</p>
+  </div>
+  <p><strong>One unknown remains: the audio download path</strong> (T-06b, Q10, Q12). It could not be observed because the account has nothing exportable — and <code>ori_ready: false</code> on every demo file suggests it is not a simple GET. That is the first thing to settle on arrival day, immediately after Q5.</p>
+  <p>W4 and W5/W6 are independently deployable because git separates them. Ingest can run on WarDog for days, accumulating recordings, before Forge processes any of them.</p>
+</section>
+
+<section class="card">
+  <h2>References</h2>
+  <ul class="small">
+    <li><a href="https://docs.plaud.ai/overview">Plaud Developer Platform</a></li>
+    <li><a href="https://docs.plaud.ai/plaud-mcp-cli/cli.md">Plaud CLI</a> · <a href="https://docs.plaud.ai/plaud-mcp-cli/mcp.md">Plaud MCP</a></li>
+    <li><a href="https://docs.plaud.ai/plaud-embedded/ios-sdk.md">Embedded iOS SDK</a> · <a href="https://docs.plaud.ai/plaud-embedded/devices.md">Supported devices</a> · <a href="https://docs.plaud.ai/plaud-embedded/quickstart.md">Quickstart</a></li>
+    <li><a href="https://support.plaud.ai/hc/en-us/articles/11681029415439-How-to-enable-Sync-to-cloud-while-charging-transfer">Sync to cloud while charging</a> · <a href="https://support.plaud.ai/hc/en-us/articles/51820671018265-Private-Cloud-Sync">Private Cloud Sync</a></li>
+    <li><a href="https://support.plaud.ai/hc/en-us/articles/51885855749785-AutoFlow">AutoFlow (200-word threshold)</a> · <a href="https://support.plaud.ai/hc/en-us/articles/53640104184985-Transfer-Files">Transfer Files</a></li>
+  </ul>
+</section>
+
+</main>
+
+<footer class="page-footer">
+  Atticus spec · generated view of <code>docs/SPEC.md</code>, which is authoritative · 2026-07-28
+</footer>
+
+</div>
+
+<script>
+(function () {
+  var state = { owner: 'all', host: 'all', scope: 'all' };
+  var table = document.getElementById('tasks');
+  var rows = Array.prototype.slice.call(table.tBodies[0].rows);
+  var countEl = document.getElementById('count');
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('.fbtn'));
+
+  function matches(row) {
+    if (state.owner !== 'all' && row.dataset.owner !== state.owner) return false;
+    if (state.host !== 'all') {
+      var hosts = (row.dataset.host || '').split(' ');
+      if (hosts.indexOf(state.host) === -1) return false;
+    }
+    if (state.scope === 'all') return true;
+    var scope = (row.dataset.scope || '').split(' ');
+    if (state.scope === 'v1') return scope.indexOf('v1') !== -1;
+    if (state.scope === 'mac') return scope.indexOf('mac') !== -1;
+    if (state.scope === 'gate') return scope.indexOf('gate') !== -1 || row.classList.contains('milestone');
+    return true;
+  }
+
+  function apply() {
+    var shown = 0;
+    var groups = [];
+    rows.forEach(function (row) {
+      if (row.hasAttribute('data-ws')) { groups.push({ header: row, any: false }); return; }
+      var ok = matches(row);
+      row.hidden = !ok;
+      if (ok) { shown++; if (groups.length) groups[groups.length - 1].any = true; }
+    });
+    groups.forEach(function (g) { g.header.hidden = !g.any; });
+    countEl.textContent = shown + (shown === 1 ? ' task' : ' tasks');
+  }
+
+  buttons.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var facet = btn.dataset.f;
+      state[facet] = btn.dataset.v;
+      buttons.forEach(function (b) {
+        if (b.dataset.f === facet) b.setAttribute('aria-pressed', String(b === btn));
+      });
+      apply();
+    });
+  });
+
+  apply();
+})();
+</script>
+</body>
+</html>

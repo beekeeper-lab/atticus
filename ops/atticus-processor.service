@@ -1,0 +1,44 @@
+[Unit]
+Description=Atticus processor — transcribe, route, execute, publish
+Documentation=https://github.com/OWNER/atticus/blob/main/docs/SPEC.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# Adjust to the deployment path on Forge.
+WorkingDirectory=%h/atticus
+ExecStart=/usr/bin/python3 %h/atticus/processor/pipeline.py
+
+# Credentials come from the shared file, same convention as hyprwhspr.
+# Never put a key in this unit.
+EnvironmentFile=-%h/.config/ai/env
+EnvironmentFile=-%h/atticus/ops/.env
+
+# One pass at a time. Overlapping runs would fight over git and could
+# double-execute a record whose status has not been committed yet.
+TimeoutStartSec=3600
+
+# Modest hardening. The agent needs network and needs to write the vault,
+# so this is a blast-radius reduction, not a sandbox.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/atticus %h/.claude %h/.cache
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+
+# ReadWritePaths must also include the vault. Uncomment and set:
+# ReadWritePaths=%h/atticus %h/.claude %h/.cache %h/atticus-vault
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=atticus
+
+[Install]
+WantedBy=default.target
