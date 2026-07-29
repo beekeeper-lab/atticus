@@ -105,6 +105,27 @@ Two deploy keys, one per host, both with write access.
   retry. They own disjoint paths — WarDog `inbox/` + `.state/`, Forge
   `processed/` + `failures/`.
 
+## Git workflow — read before committing
+
+**This repo (`atticus`): never push to `main` directly. Use `ops/pr.sh`.**
+
+```bash
+./ops/pr.sh "Short title" "optional longer body"
+```
+
+It pulls latest, branches, commits, pushes, opens a PR, squash-merges, and
+returns you to an up-to-date `main`. No approval needed — the point is the
+pull-and-merge discipline, because WarDog and Forge both edit this repo.
+
+It also refuses to commit `ops/.env`, `docs/recon/`, `.scratch-vault/`, or any
+credential-shaped string, regardless of what `.gitignore` says.
+
+**The vault (`atticus-vault`): the opposite — commit directly, no PRs.** It is
+machine-written every few minutes from two hosts and *is* the pipeline's queue.
+A PR per commit would add a merge step to every message and stall the handoff.
+Concurrency there is handled by `pull --rebase` + bounded retry in
+`processor/vault.py`. `ops/pr.sh` detects the vault and refuses to run.
+
 ## Conventions
 
 - Python 3.11+ on both hosts. Shelling out to `plaud` is the supported path.
