@@ -18,15 +18,22 @@ Documentation=https://github.com/beekeeper-lab/atticus/blob/main/docs/SPEC.md
 # PLAUD_POLL_DAYS (default 2) plus the seen ledger means a missed window is
 # free — the next pass picks it up. Revisit this if the transport ever becomes
 # hands-off (Wi-Fi-while-charging or direct BLE); then latency is ours to own.
-OnBootSec=3min
-OnUnitActiveSec=15min
+# OnCalendar, NOT OnUnitActiveSec — see atticus-processor.timer for the full
+# account. Short version: OnUnitActiveSec= needs the service's last-activation
+# time as a reference, that reference is lost on a daemon-reload, and systemd
+# then parks the timer at infinity where it never fires again while still
+# reporting enabled and active. A sibling timer on this box did precisely that
+# for 76 minutes. For ingest it would be the worst case of all — a poller that
+# never runs cannot raise the session-dead alarm this file's whole design
+# depends on.
+OnCalendar=*:0/15
 
 # Wider than the processor's, to keep 96 daily browser launches from landing
 # on the same second as anything else.
 RandomizedDelaySec=120
 
-# Catch up after downtime instead of silently skipping the window. Without
-# this, a laptop suspend means recordings sit in the cloud unnoticed.
+# Catch up after downtime instead of silently skipping the window. Effective
+# only with OnCalendar= — it was a no-op under the previous monotonic config.
 Persistent=true
 
 AccuracySec=30s

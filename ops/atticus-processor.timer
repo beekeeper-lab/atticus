@@ -5,13 +5,30 @@ Documentation=https://github.com/beekeeper-lab/atticus/blob/main/docs/SPEC.md
 [Timer]
 # Five minutes, not two. These jobs take minutes of agent time, so a tighter
 # interval mostly finds work already in progress and wastes a git pull.
-OnBootSec=2min
-OnUnitActiveSec=5min
+#
+# OnCalendar, NOT OnUnitActiveSec. This is not a style preference — it is a
+# bug fix. OnUnitActiveSec= schedules relative to the last activation of the
+# SERVICE, and that reference is monotonic: stop the timer or reload the daemon
+# without the service having run, and there is nothing left to compute from.
+# systemd then parks the timer at next_elapse=infinity and it NEVER FIRES
+# AGAIN, while `is-enabled` and `is-active` both still say it is fine.
+#
+# This is not hypothetical. atticus-vault-site.timer did exactly this on
+# 2026-07-29 and sat dead for 76 minutes across ~15 missed runs. `restart` did
+# not fix it; only triggering the service by hand restored a reference.
+#
+# It is also the worst possible failure shape for this system: a timer that
+# never fires cannot alarm about not firing, so every notification path we
+# built is bypassed by it. A wall-clock schedule cannot lose its reference.
+OnCalendar=*:0/5
 
 # Spread load if several timers land together.
 RandomizedDelaySec=30
 
-# Catch up after downtime rather than silently skipping a window.
+# Catch up after downtime rather than silently skipping a window. This ONLY
+# works with OnCalendar= — systemd.timer(5) is explicit that Persistent= has
+# no effect on monotonic timers. Under the old OnUnitActiveSec= it was a no-op
+# that the comment right here claimed was protecting us.
 Persistent=true
 
 AccuracySec=30s

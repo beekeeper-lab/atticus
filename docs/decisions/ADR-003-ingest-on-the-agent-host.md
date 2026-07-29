@@ -60,15 +60,31 @@ change — WarDog can resume ingesting at any time without coordination.
 
 ### What we accept
 
-**The credential isolation is gone, and it was real.** An agent on this host
-runs unprivileged with deny-by-default tools, but it is not sandboxed from the
-filesystem. `~/.local/share/claude-fetchers/sessions/plaud` is a live,
-authenticated Plaud session sitting on the same box, readable by the same user.
-The mitigation is the wake-phrase gate (`ATTICUS_WAKE_PHRASE`), which already
-demonstrated its value: of the first real recordings, all but one were correctly
-filed as unexecuted notes. That gate is now load-bearing for credential safety,
-not just for avoiding spurious agent runs. **Do not disable it on a host that
-also ingests.**
+**The credential isolation is weakened, and it was real.**
+`~/.local/share/claude-fetchers/sessions/plaud` is a live, authenticated Plaud
+session sitting on the same box as an agent that executes text derived from
+ambient audio.
+
+Two mitigations, in order of how much they actually buy:
+
+1. **The processor cannot see the session directory.** The unit carries
+   `InaccessiblePaths=%h/.local/share/claude-fetchers`. This was **not** in the
+   original revision of this ADR, and its absence was a live hole:
+   `ProtectHome=read-only` still permits reads, so the processor sandbox could
+   read the session cookie jar — verified, 28 KB, fully readable. Adding the
+   line blinds the processor while leaving ingest's own access untouched, both
+   confirmed against the real units. This recovers most of what moving ingest
+   here gave away, at zero functional cost, because the processor never had any
+   use for that directory.
+2. **The wake-phrase gate** (`ATTICUS_WAKE_PHRASE`), which already demonstrated
+   its value: of the first real recordings, all but one were correctly filed as
+   unexecuted notes. It remains load-bearing for credential safety, not just for
+   avoiding spurious agent runs. **Do not disable it on a host that also
+   ingests.**
+
+Neither is a sandbox. The agent still has network access and still writes the
+vault. The point is that the specific, obvious path from "overheard sentence" to
+"exfiltrated Plaud session" is closed.
 
 Worth revisiting if the agent ever gets broader tool permissions — granting
 `WebFetch`/`WebSearch` (open defect #3 in `docs/deploy/forge-2026-07-29.md`)

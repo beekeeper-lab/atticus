@@ -127,6 +127,19 @@ Two deploy keys, one per host, both with write access.
   while audio piles up in the cloud. Ingest alarms on it through
   `ATTICUS_NOTIFY_URL`, throttled to one message per condition per 6h. A failed
   push is the same shape and is logged loudly for the same reason.
+- **The processor must never be able to read the Plaud session.**
+  `InaccessiblePaths=%h/.local/share/claude-fetchers` on the processor unit.
+  `ProtectHome=read-only` still permits reads, so without it the agent that
+  executes ambient-audio-derived text can read the session cookie jar. Ingest
+  keeps its own access; the processor never needed any.
+- **Timers use `OnCalendar=`, never `OnUnitActiveSec=`.** The latter schedules
+  from the service's last activation, a monotonic reference that is lost on a
+  daemon-reload — after which systemd parks the timer at `next_elapse=infinity`
+  and it never fires again while still reporting enabled *and* active.
+  `atticus-vault-site.timer` did this for 76 minutes on 2026-07-29. A timer that
+  never fires cannot alarm about not firing, which makes it the one failure that
+  defeats every other safeguard here. `Persistent=true` is also a no-op on
+  monotonic timers — it only works with `OnCalendar=`.
 - **Sandbox options on systemd *user* units break ssh, and therefore break
   every push.** `ProtectSystem`/`ProtectHome`/`PrivateTmp` put the unit in a
   user namespace where root-owned files read as `nobody`, so ssh rejects
