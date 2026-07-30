@@ -41,7 +41,16 @@ class Config:
         f = _parse_env(env_file or (REPO / "ops/.env"))
 
         def g(k, default=None):
-            return os.environ.get(k) or f.get(k) or default
+            # UNSET (None) falls back to the default; an explicit EMPTY string
+            # does not. Or-chaining collapsed "" into the default, so a setting
+            # meant to be blank-to-disable (a spend ceiling, a notify URL) could
+            # never actually be blank — execute.py's "no spend ceiling" warning
+            # was unreachable as a result. Callers that still want ""→default
+            # keep their own `or default` (see skills_dir).
+            v = os.environ.get(k)
+            if v is None:
+                v = f.get(k)
+            return default if v is None else v
 
         self.vault = Path(g("ATTICUS_VAULT_PATH", str(REPO / ".scratch-vault"))).expanduser()
         self.log_level = g("ATTICUS_LOG_LEVEL", "INFO")
@@ -128,7 +137,11 @@ class Config:
         # spoken near the device should not be able to run up an unbounded bill.
         # Blank disables it (and says so at startup rather than silently).
         self.max_budget_usd = (g("ATTICUS_MAX_BUDGET_USD", "2.00") or "").strip()
-        self.skills_dir = Path(g("ATTICUS_SKILLS_DIR", str(REPO / "skills")))
+        # `or` fallback, not g()'s default: ATTICUS_SKILLS_DIR ships BLANK in
+        # ops/.env, and now that "" is preserved rather than collapsed, an empty
+        # value would otherwise become Path("") == cwd. Blank means "use the
+        # repo's skills dir".
+        self.skills_dir = Path(g("ATTICUS_SKILLS_DIR") or str(REPO / "skills"))
 
         # Upper bound on how much of a recording is ever transcribed.
         #

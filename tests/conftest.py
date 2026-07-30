@@ -18,6 +18,14 @@ def cfg(tmp_path):
         vault=tmp_path / "vault",
         wake_phrase="atticus",
         wake_aliases=["advocates", "abacus", "artemis"],
+        # Adjudicator keys mirror config.py's real defaults so tests and prod
+        # cannot silently diverge (e.g. a threshold fallback disagreeing with
+        # the configured default). Individual tests override as needed.
+        wake_adjudicator=True,
+        wake_adjudicator_threshold=50,
+        wake_adjudicator_model="gpt-4o-mini",
+        wake_adjudicator_timeout=15,
+        openai_key="sk-test",
         min_words=3,
         max_command_chars=600,
         max_command_sentences=6,

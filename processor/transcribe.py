@@ -18,6 +18,7 @@ from pathlib import Path
 import requests
 
 from audio import (
+    API_MAX_BYTES,
     API_MAX_SECONDS,
     AudioToolMissing,
     join_transcripts,
@@ -25,8 +26,6 @@ from audio import (
     probe_seconds,
     slice_audio,
 )
-
-API_MAX_BYTES = 25 * 1024 * 1024  # OpenAI hard limit
 
 MIME = {
     ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4",
@@ -65,33 +64,46 @@ def bounded_audio(audio: Path, cfg, duration_hint=None, log=print):
     if limit and seconds is None:
         seconds = _probe_seconds(audio)
 
-    if not limit or seconds is None or seconds <= limit:
-        # Backstop: no usable duration and the file may still be over the API's
-        # own ceiling. Let the request fail with the API's message rather than
-        # guessing — but say so, because that 400 is confusing on its own.
-        if seconds is None and limit:
-            log("    duration unknown (no metadata, no ffprobe) — not truncating")
+    if not limit or (seconds is not None and seconds <= limit):
+        # No limit configured, or a KNOWN duration within it. Pass the original
+        # through untouched.
         yield audio, {}
         return
 
+    # We are here because either the recording is over the limit, OR a limit is
+    # set but we could not establish a duration at all (no metadata, no
+    # ffprobe). Both must be CUT. Passing an unknown-duration file through
+    # "because we can't prove it's too long" fails OPEN — a 40-minute ambient
+    # recording would then be transcribed in full, which is exactly the exposure
+    # the limit exists to cap. Cut blindly to the limit; if the source is
+    # actually shorter, ffmpeg simply produces a file of the original length.
     exe = shutil.which("ffmpeg")
     if not exe:
+        known = f"{seconds:.0f}s" if seconds is not None else "of unknown length"
         raise TranscriptionError(
-            f"recording is {seconds:.0f}s, over the {limit}s command limit, and "
+            f"recording is {known}, at or over the {limit}s command limit, and "
             f"ffmpeg is not installed to truncate it",
             retryable=False, kind="too_large")
 
     tmp = Path(tempfile.mkdtemp(prefix="atticus-trunc."))
     try:
         cut = tmp / f"head{audio.suffix or '.mp3'}"
-        log(f"    {seconds:.0f}s exceeds the {limit}s command limit — "
-            f"transcribing the first {limit}s only")
+        if seconds is None:
+            log(f"    duration unknown — cutting blindly to the first {limit}s "
+                f"rather than transcribing an unbounded recording")
+        else:
+            log(f"    {seconds:.0f}s exceeds the {limit}s command limit — "
+                f"transcribing the first {limit}s only")
         try:
             slice_audio(audio, cut, 0, limit)
         except AudioToolMissing as e:
             raise TranscriptionError(str(e), retryable=False, kind="too_large")
-        yield cut, {"truncated_from_seconds": round(seconds, 1),
-                    "transcribed_seconds": limit}
+        meta = {"transcribed_seconds": limit}
+        # Only claim a truncation-from length when we actually know it; the
+        # pipeline's "was the device left running?" alarm keys off this.
+        if seconds is not None:
+            meta["truncated_from_seconds"] = round(seconds, 1)
+        yield cut, meta
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -280,7 +292,14 @@ def extract_command(text: str, cfg) -> tuple[str, dict]:
     if max_chars and cut > max_chars:
         window = instruction[:max_chars]
         b = max(window.rfind(". "), window.rfind("? "), window.rfind("! "))
-        cut = (b + 1) if b > max_chars // 3 else (window.rfind(" ") or max_chars)
+        if b > max_chars // 3:
+            cut = b + 1
+        else:
+            # rfind returns -1 when there is no space. `-1 or max_chars` kept the
+            # -1 (truthy) and cut to instruction[:-1] — dropping one char instead
+            # of enforcing the cap. Handle the sentinel explicitly.
+            sp = window.rfind(" ")
+            cut = sp if sp > 0 else max_chars
 
     trimmed = instruction[:cut].strip()
     if trimmed == instruction.strip():
@@ -296,7 +315,19 @@ def strip_wake_phrase(text: str, cfg) -> str:
     if not cfg.wake_phrase:
         return text
     low = text.lower()
-    i = low.find(cfg.wake_phrase)
-    if i == -1:
+    # Also try configured aliases, not just the wake phrase. sanity_check admits
+    # a command that opens with an alias ("Advocates, research …"), but stripping
+    # only the wake phrase then left the misheard name at the front of the prompt
+    # handed to the agent. Take the EARLIEST trigger that appears, so the
+    # instruction starts right after whichever word actually gated it.
+    triggers = [cfg.wake_phrase, *getattr(cfg, "wake_aliases", [])]
+    best_i, best_len = -1, 0
+    for t in triggers:
+        if not t:
+            continue
+        i = low.find(t)
+        if i != -1 and (best_i == -1 or i < best_i):
+            best_i, best_len = i, len(t)
+    if best_i == -1:
         return text
-    return text[i + len(cfg.wake_phrase):].lstrip(" ,.:;-—").strip() or text
+    return text[best_i + best_len:].lstrip(" ,.:;-—").strip() or text
