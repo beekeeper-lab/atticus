@@ -219,6 +219,16 @@ Credentials come from `~/.config/ai/env`, a single machine-wide file. **Nothing
 in this repo holds a key**, `ops/.env` is gitignored, and the vault — which holds
 your audio and output — is a separate private repo.
 
+## Licence
+
+[Apache-2.0](LICENSE). Chosen over MIT deliberately: this repository makes
+explicit security claims, and Apache requires a modified fork to say that it is
+modified — so nobody can ship a weakened build carrying these assurances.
+
+The licence covers this work only. It grants no rights in Plaud's service, whose
+undocumented endpoints this software calls; see [`NOTICE`](NOTICE) and
+[`SECURITY.md`](SECURITY.md).
+
 ## Where to read next
 
 | Document | What |
