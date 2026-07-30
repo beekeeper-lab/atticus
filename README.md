@@ -162,18 +162,48 @@ dependency, a privacy exposure, and a failure mode.
 
 ### Known work, roughly in order
 
-1. **Scope the agent's prompt to the command.** Truncation bounds the *audio* at
-   180s, but the whole transcript still reaches the agent — including ambient
-   conversation. A sentence cap after the wake phrase would bound the *prompt*.
-2. **Fix the output contract.** The agent is told to write to the vault path but
-   the pipeline collects from a scratch directory, so a stray `response.md` is
-   committed and the byte accounting is wrong.
-3. **Decide on web access.** Granting `WebSearch`/`WebFetch` makes research
-   actually research — and widens what a prompt-injected agent can reach. A real
-   trade-off, deliberately unresolved.
-4. **Chunk long recordings** with overlap, so a 40-minute meeting transcribes.
-5. **Fuzzy wake-word matching**, or a phonetically stronger wake word.
-6. **One transcription implementation** instead of two.
+Everything on the original list has landed. What remains:
+
+1. **A phonetically stronger wake word.** Transcription mishears "Atticus" — of
+   nine attempts in one day, three came back "Advocates", "Abacus" and
+   "Artemis". An adjudicator now recovers most of those (below), but a word with
+   harder consonants would reduce the rate at source rather than compensating
+   for it.
+2. **Audio out of git.** Recordings are committed to the vault, where deletion
+   is deliberately hard. A 30-day expiry bounds what a *checkout* exposes, not
+   what history holds. Object storage or `git-annex` is the real fix, and it is
+   a change to the queue model.
+3. **Egress control.** The agent has full network access — deliberately, because
+   research needs it. A network namespace with an allowlist proxy would bound
+   exfiltration. Worth doing on its own merits, not as a substitute for the
+   sandbox.
+4. **Skills**, which is where the leverage now is: Signal, Outlook, Azure
+   DevOps, calendar. Each does the thing and writes an HTML record of what it
+   did. Read the prompt-scoping caveat in [`SECURITY.md`](SECURITY.md) before
+   the first one that *sends* anything.
+5. **Direct BLE**, to cut the vendor cloud out and halve the round trip.
+
+<details>
+<summary>Recently completed</summary>
+
+- **Prompt scoping** — a sentence and character bound on what reaches the agent,
+  so ambient conversation after a command does not become part of it.
+- **The output contract** — the agent writes to a scratch directory the pipeline
+  actually collects from, instead of being told to write into the vault.
+- **Web access** — granted. Denying `WebSearch`/`WebFetch` bought nothing: the
+  agent has bash, curl and working DNS inside the sandbox, so a tool denial
+  prevented convenient research while leaving exfiltration available.
+- **Wake-word recovery** — an adjudicator scores whether a misheard first word
+  was *meant* as the wake word, weighing both sound and who was being addressed.
+  A request to a person that merely rhymes does not trigger it.
+- **Chunking** — long recordings split with overlap and join, so a meeting
+  transcribes. Off by default: truncation remains correct for a *command*, since
+  the wake phrase comes first and the rest is ambient. Opt in globally, or per
+  recording with `"chunk_audio": true`.
+- **One transcription implementation** — the pipeline and the CLI now share the
+  audio-slicing module, having already drifted once.
+
+</details>
 
 ## Running it yourself
 

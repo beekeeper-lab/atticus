@@ -147,6 +147,17 @@ class Config:
         # listing, so this check is free.
         self.max_ingest_seconds = int(g("ATTICUS_MAX_INGEST_SECONDS", "7200"))
 
+        # Chunking is the DOCUMENT path and is off by default, because
+        # truncation is correct for a command: the wake phrase comes first, so
+        # everything past the opening seconds is silence or ambient speech, and
+        # transcribing 40 minutes of someone's day is both wasteful and a
+        # privacy problem. Turn it on globally, or mark one recording by setting
+        # "chunk_audio": true in its metadata JSON.
+        self.chunk_long_audio = (g("ATTICUS_CHUNK_LONG_AUDIO", "off").lower()
+                                 in ("1", "on", "true", "yes"))
+        self.chunk_seconds = int(g("ATTICUS_CHUNK_SECONDS", "1200"))
+        self.chunk_overlap_seconds = int(g("ATTICUS_CHUNK_OVERLAP_SECONDS", "10"))
+
         # Sanity gate — below this many words we refuse to execute.
         self.min_words = int(g("ATTICUS_MIN_WORDS", "3"))
         # Hard bound on the prompt handed to the agent, cut at a sentence

@@ -196,8 +196,8 @@ so this is buildable without sudo.
   in the parent; A1 + A2 subsume the benefit.
 - **`CODE_OF_CONDUCT.md`.** Ceremony for a single-operator alpha. LICENSE and
   SECURITY.md are the load-bearing ones.
-- **Chunking long recordings**, **granting the agent web access**, **changing the
-  wake word.** Each is a decision, not a defect.
+- **Changing the wake word.** A decision, not a defect. Chunking and web
+  access have since landed.
 
 ---
 
