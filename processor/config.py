@@ -101,6 +101,11 @@ class Config:
                         not in ("0", "off", "false", "no"))
         self.claude_model = g("ATTICUS_CLAUDE_MODEL", "") or None
         self.exec_timeout = int(g("ATTICUS_EXEC_TIMEOUT", "1800"))
+        # Hard spend ceiling per recording. Wall-clock alone is a poor proxy: a
+        # research fan-out can spend a lot in a few minutes, and one sentence
+        # spoken near the device should not be able to run up an unbounded bill.
+        # Blank disables it (and says so at startup rather than silently).
+        self.max_budget_usd = (g("ATTICUS_MAX_BUDGET_USD", "2.00") or "").strip()
         self.skills_dir = Path(g("ATTICUS_SKILLS_DIR", str(REPO / "skills")))
 
         # Upper bound on how much of a recording is ever transcribed.
@@ -122,6 +127,15 @@ class Config:
 
         # Sanity gate — below this many words we refuse to execute.
         self.min_words = int(g("ATTICUS_MIN_WORDS", "3"))
+        # Hard bound on the prompt handed to the agent, cut at a sentence
+        # boundary. The full transcript is still written to the vault; this only
+        # limits how much ambient speech can reach an autonomous agent. 600
+        # chars comfortably fits every real command observed (longest ~640
+        # chars of transcript, ~500 after the wake phrase).
+        self.max_command_chars = int(g("ATTICUS_MAX_COMMAND_CHARS", "600"))
+        # Sentence bound, which bites earlier than the character cap on dense
+        # speech. The longest real command observed was 5 sentences.
+        self.max_command_sentences = int(g("ATTICUS_MAX_COMMAND_SENTENCES", "6"))
         # Optional wake phrase. Empty = execute everything that transcribes.
         self.wake_phrase = (g("ATTICUS_WAKE_PHRASE", "") or "").strip().lower()
         # Known mishearings, exact-matched. NOT fuzzy matching: measured against

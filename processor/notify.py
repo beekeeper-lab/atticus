@@ -70,9 +70,15 @@ def notify(cfg, text: str, log=None, key: str | None = None,
     if key and throttled(key, hours):
         say(f"alarm '{key}' suppressed — already sent within {hours}h")
         return False
+    # Validate the scheme. This URL comes from config, and urlopen() will
+    # happily accept file:// or a custom handler — a typo or a hostile .env
+    # should not turn an alarm into a local file operation.
+    if not str(cfg.notify_url).lower().startswith(("http://", "https://")):
+        say(f"refusing to notify: {str(cfg.notify_url)[:32]!r} is not http(s)")
+        return False
     try:
         import urllib.request
-        req = urllib.request.Request(
+        req = urllib.request.Request(  # noqa: S310 — scheme checked above
             cfg.notify_url, data=text.encode(), method="POST",
             headers={
                 # HTTP headers are latin-1. A title with an em-dash in it
@@ -87,7 +93,7 @@ def notify(cfg, text: str, log=None, key: str | None = None,
                 "Priority": priority,
                 "Tags": _ascii(tags),
             })
-        with urllib.request.urlopen(req, timeout=10):
+        with urllib.request.urlopen(req, timeout=10):  # noqa: S310 — scheme checked above
             pass
     except Exception as e:
         say(f"notification failed: {type(e).__name__}: {e}")

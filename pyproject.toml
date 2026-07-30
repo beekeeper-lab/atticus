@@ -1,0 +1,75 @@
+[project]
+name = "atticus"
+version = "0.1.0a0"
+description = "Asynchronous voice agent: speak a task, walk away, get a durable artifact"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Gregg Reed" }]
+keywords = ["voice", "agent", "wearable", "automation", "asynchronous"]
+
+# The base install runs nothing on its own. Each ROLE brings its own deps,
+# because the whole point of the split is that a host can run one and not the
+# other — an ingest box has no business installing an agent's dependencies.
+dependencies = []
+
+[project.optional-dependencies]
+# Ingest talks to the transport. Playwright is heavy and only the web fetcher
+# needs it; a BLE or Android transport would not.
+ingest = ["playwright>=1.55"]
+# The processor calls the transcription REST endpoint.
+processor = ["requests>=2.31"]
+dev = ["pytest>=8", "pytest-timeout>=2.3", "ruff>=0.6"]
+
+[project.scripts]
+atticus-ingest = "atticus_cli:ingest_main"
+atticus-process = "atticus_cli:process_main"
+atticus-doctor = "atticus_cli:doctor_main"
+
+[project.urls]
+Homepage = "https://github.com/beekeeper-lab/atticus"
+Issues = "https://github.com/beekeeper-lab/atticus/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# Not yet a src/ package — see docs/HARDENING.md section E for why that
+# restructure is deliberately deferred until tests pin the behaviour first.
+include = ["processor", "ingest", "skills", "ops", "atticus_cli.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["processor", "ingest", "."]
+addopts = "-q --strict-markers"
+timeout = 120
+markers = [
+  "live: hits a real external service; skipped unless ATTICUS_LIVE_TESTS=1",
+  "sandbox: requires bwrap and working user namespaces",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "S"]
+ignore = [
+  "E501",   # long lines are mostly prose in docstrings
+  "S603",   # subprocess calls are the point of this program
+  "S607",   # partial paths are resolved via shutil.which
+  "B904",   # explicit `from` chaining is noise in these handlers
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106"]   # asserts and fake credentials
+# Recon tooling: every suppressed exception is a deliberate best-effort probe
+# against an API we do not control, and failing loudly there would be wrong.
+"ingest/plaud_discover.py" = ["S110"]
+"ingest/plaud_web.py" = ["S110"]
+# XDG_RUNTIME_DIR is preferred; /tmp is the documented fallback and the lock is
+# advisory flock, not a predictable-name secret.
+"processor/lock.py" = ["S108"]
+"processor/execute.py" = ["S108"]

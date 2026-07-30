@@ -37,6 +37,13 @@ Environment="ATTICUS_GIT_AUTHOR_NAME=Atticus Ingest"
 # A pass downloads audio over a headless browser; give it room but not forever.
 TimeoutStartSec=1800
 
+# The single-instance lock lives here. Without this, ProtectSystem=strict
+# makes the runtime dir read-only and the lock cannot be taken at all.
+# Preserve=yes so a manual run and a timed run share one lock rather than
+# taking different ones and racing anyway.
+RuntimeDirectory=atticus
+RuntimeDirectoryPreserve=yes
+
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

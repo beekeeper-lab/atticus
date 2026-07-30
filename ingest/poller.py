@@ -33,7 +33,7 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, UTC
 from hashlib import sha256
 from pathlib import Path
 
@@ -181,7 +181,7 @@ def make_stem(rec: dict) -> str:
     try:
         dt = datetime.fromisoformat(rec["created_at"].replace("Z", "+00:00"))
     except ValueError:
-        dt = datetime.now(timezone.utc)
+        dt = datetime.now(UTC)
     return f"{dt.strftime('%Y-%m-%dT%H%M%SZ')}_{str(rec['id'])[:12]}"
 
 

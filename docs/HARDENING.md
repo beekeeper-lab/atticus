@@ -1,6 +1,7 @@
 # Hardening plan — v0.1.0-alpha
 
-**Status:** in progress — A1–A3, B1, B3–B7, D1 landed 2026-07-29
+**Status:** in progress — A1–A4, A6, B1, B3–B7, C1–C4, D1 landed 2026-07-29.
+Remaining: A5, B2, D2–D8.
 **Opened:** 2026-07-29
 **Source:** external review of the public repo, plus findings verified on Forge.
 
@@ -61,13 +62,20 @@ so this is buildable without sudo.
       still not guaranteed.
       *Acceptance:* no claim of isolation in the repo that a test does not back.
 
-- [ ] **A4. Bound the transcript deterministically before it reaches the agent.**
+- [x] **A4. Bound the transcript deterministically before it reaches the agent.**
       The preamble asks the model to ignore trailing speech; that is not a
       control. Extract a command segment: after the wake phrase, stop at
       `ATTICUS_MAX_COMMAND_CHARS` (default 600) or a sentence boundary past it.
       Keep the full transcript in the vault; pass only the segment.
       *Acceptance:* a 389-word ambient transcript yields a prompt containing the
-      command and not the trailing conversation.
+      command and not the trailing conversation. **Landed with a caveat worth
+      keeping:** the first implementation used a character cap alone, and a test
+      caught that it did not isolate anything when ambient speech follows
+      immediately — it passed on the real transcript only because the ambient
+      sentence happened to fall past the cut. A sentence bound was added, and
+      the tests now assert what the bound genuinely provides (exposure is
+      capped) rather than what it cannot (intent is isolated). Real isolation
+      needs a terminator phrase, silence segmentation, or an extraction model.
 
 - [ ] **A5. Treat agent-generated HTML as untrusted when serving it.**
       Strip `<script>`, inline handlers, and external references at publish
@@ -76,7 +84,7 @@ so this is buildable without sudo.
       *Acceptance:* a doc containing `<script>` and a remote `<img>` is served
       with both neutralised.
 
-- [ ] **A6. Per-recording cost ceiling.**
+- [x] **A6. Per-recording cost ceiling.**
       Nothing currently bounds what one spoken sentence can spend. Wall-clock is
       capped at 30 min; add a token/turn bound and alarm on breach.
       *Acceptance:* the limit is configurable and recorded in the record's
@@ -129,19 +137,19 @@ so this is buildable without sudo.
 
 ## C — Reproducibility. Blocks anyone else succeeding.
 
-- [ ] **C1. `pyproject.toml` + lockfile + project-owned venv.**
+- [x] **C1. `pyproject.toml` + lockfile + project-owned venv.**
       Stop depending on a differently-named external `claude-fetchers` venv.
       Extras: `ingest`, `processor`, `dev`.
       *Acceptance:* a clean clone installs and runs from the lockfile alone.
 
-- [ ] **C2. Test suite** — `unit/`, `integration/`, `security/`.
+- [x] **C2. Test suite** — `unit/`, `integration/`, `security/`.
       Fake fetcher, fake OpenAI, fake agent. The security tests are the point.
       *Acceptance:* `pytest` green from a clean clone.
 
-- [ ] **C3. CI** — ruff, pytest, `systemd-analyze verify`, shellcheck, secret scan.
+- [x] **C3. CI** — ruff, pytest, `systemd-analyze verify`, shellcheck, secret scan.
       *Acceptance:* a pull request runs them and can fail.
 
-- [ ] **C4. `atticus doctor`** — one command that checks every precondition the
+- [x] **C4. `atticus doctor`** — one command that checks every precondition the
       installer checks, plus live vault push and session health.
       *Acceptance:* it detects a missing key, a dead session, and an unpushable
       vault, distinctly.

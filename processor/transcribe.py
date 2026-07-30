@@ -8,6 +8,7 @@ Guards borrowed from ScribeVault's WhisperService: a pre-upload size check so
 a too-large file fails immediately instead of after a slow upload, and
 retry-on-transient with backoff.
 """
+import re
 import shutil
 import subprocess
 import tempfile
@@ -136,7 +137,7 @@ def transcribe(audio: Path, cfg, *, attempts: int = 3) -> str:
                           "response_format": "json"},
                     timeout=cfg.stt_timeout,
                 )
-        except requests.Timeout as e:
+        except requests.Timeout:
             last = TranscriptionError(f"timeout after {cfg.stt_timeout}s",
                                       retryable=True, kind="transient")
         except requests.RequestException as e:
@@ -215,6 +216,49 @@ def _drop_fillers(head: str) -> str:
                     head = head[len(prefix):].lstrip(" ,")
                     changed = True
     return head
+
+
+def extract_command(text: str, cfg) -> tuple[str, dict]:
+    """The bounded instruction actually handed to the agent.
+
+    The preamble ASKS the model to ignore trailing speech. That is guidance, not
+    a control: the transcript that motivated this held 389 words of which ~25
+    were the command, and included "hey Atticus, send a signal message to Bill"
+    spoken as an example of a future capability.
+
+    Two bounds, whichever bites first: a sentence count and a character cap.
+    The full transcript always stays in the vault; only the prompt is cut.
+
+    WHAT THIS DOES NOT DO. No positional heuristic can separate a command from
+    speech that immediately follows it. If you keep talking for two sentences
+    after the request, those two sentences reach the agent. This bounds
+    exposure — it does not isolate intent. Real isolation needs a terminator
+    phrase, silence segmentation (which needs word timestamps, i.e. whisper-1),
+    or an extraction model. See docs/HARDENING.md A4.
+    """
+    instruction = strip_wake_phrase(text, cfg)
+    max_chars = getattr(cfg, "max_command_chars", 0)
+    max_sents = getattr(cfg, "max_command_sentences", 0)
+
+    cut = len(instruction)
+    if max_sents:
+        # Sentence ends, not decimal points or abbreviations we cannot detect.
+        ends = [m.end() for m in re.finditer(r"[.!?](?:\s|$)", instruction)]
+        if len(ends) > max_sents:
+            cut = min(cut, ends[max_sents - 1])
+    if max_chars and cut > max_chars:
+        window = instruction[:max_chars]
+        b = max(window.rfind(". "), window.rfind("? "), window.rfind("! "))
+        cut = (b + 1) if b > max_chars // 3 else (window.rfind(" ") or max_chars)
+
+    trimmed = instruction[:cut].strip()
+    if trimmed == instruction.strip():
+        return instruction, {}
+    return trimmed, {
+        "command_chars": len(trimmed),
+        "transcript_chars": len(instruction),
+        "command_clipped": True,
+    }
 
 
 def strip_wake_phrase(text: str, cfg) -> str:

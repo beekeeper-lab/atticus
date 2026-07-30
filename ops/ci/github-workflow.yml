@@ -1,0 +1,75 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --extra processor --extra dev
+
+      # bubblewrap is what contains the agent. Without it the security tests
+      # skip, and skipped security tests are the ones you stop noticing.
+      - name: Install bubblewrap and ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap ffmpeg
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Tests
+        run: uv run pytest -v
+
+      - name: Assert the security tests actually RAN
+        run: |
+          uv run pytest tests/security -q --collect-only | tail -1
+          n=$(uv run pytest tests/security -q 2>&1 | grep -oE '[0-9]+ passed' | head -1 | cut -d' ' -f1)
+          echo "security tests passed: ${n:-0}"
+          # A green build with every isolation test skipped is worse than a red
+          # one, because it reads as proof.
+          [ "${n:-0}" -ge 8 ] || { echo "too few security tests ran"; exit 1; }
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck -S warning ops/*.sh
+
+  units:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: systemd unit files parse
+        run: |
+          for u in ops/*.service ops/*.timer; do
+            systemd-analyze verify "$u" 2>&1 | grep -viE 'Unknown (lvalue|section)|command not found' || true
+          done
+          echo "checked $(ls ops/*.service ops/*.timer | wc -l) unit files"
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: No credential-shaped strings in history
+        run: |
+          if git log -p --all | grep -aoiE 'sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----'; then
+            echo "::error::credential-shaped string found in history"; exit 1
+          fi
+          echo "history clean"

@@ -23,7 +23,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 
 SITE = "plaud"
@@ -155,7 +155,7 @@ class PlaudAPI:
             "name": rec.get("filename") or rec.get("fullname") or "",
             # Second precision — this feeds vault filenames, so no microseconds.
             "created_at": datetime.fromtimestamp(
-                ms / 1000, tz=timezone.utc
+                ms / 1000, tz=UTC
             ).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             "duration_seconds": round((rec.get("duration") or 0) / 1000),
             # Operationally significant extras:
@@ -352,7 +352,7 @@ def cmd_whoami(args):
 def cmd_list(args):
     if not session_seeded():
         raise AuthError(f"no session at {SESSION_DIR} — run `plaud_web.py login`")
-    since = datetime.now(timezone.utc) - timedelta(days=args.days)
+    since = datetime.now(UTC) - timedelta(days=args.days)
     p, ctx = launch(headless=not args.headed)
     try:
         recs = PlaudAPI(ctx).list_recordings(
