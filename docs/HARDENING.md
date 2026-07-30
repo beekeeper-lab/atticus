@@ -1,7 +1,7 @@
 # Hardening plan — v0.1.0-alpha
 
-**Status:** in progress — A1–A4, A6, B1, B3–B7, C1–C4, D1 landed 2026-07-29.
-Remaining: D7 and D8 only — both need your decision.
+**Status:** COMPLETE — all 25 items landed. Follow-on work is tracked in the
+README roadmap, not here.
 **Opened:** 2026-07-29
 **Source:** external review of the public repo, plus findings verified on Forge.
 
@@ -178,9 +178,12 @@ so this is buildable without sudo.
       The existing alarms all fire on a *recognised* failure; a disabled timer,
       a full disk, or an import error is still silent. A stalled timer has
       already happened once.
-- [ ] **D7. Retention policy** ⚠️ *needs your decision*
-- [ ] **D8. Re-tag as `v0.1.0-alpha`** ⚠️ *needs your decision* — deleting a
-      published tag is outward-facing.
+- [x] **D7. Retention policy** — audio expires at 30 days; transcripts and
+      outputs kept forever. `ops/retention.py`. Bounds what a CHECKOUT
+      exposes, not what git history holds — the structural fix (audio out of
+      git entirely) is on the roadmap, not done.
+- [x] **D8. Re-tagged `v0.1.0-alpha`**; `v1.0.0` deleted locally and on the
+      remote while it was still free to do so.
 
 ## E — Deferred, with reasons
 
