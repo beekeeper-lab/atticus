@@ -54,6 +54,13 @@ InaccessiblePaths=%h/.local/share/claude-fetchers
 
 # Modest hardening. The agent needs network and needs to write the vault,
 # so this is a blast-radius reduction, not a sandbox.
+# The single-instance lock lives here. Without this, ProtectSystem=strict
+# makes the runtime dir read-only and the lock cannot be taken at all.
+# Preserve=yes so a manual run and a timed run share one lock rather than
+# taking different ones and racing anyway.
+RuntimeDirectory=atticus
+RuntimeDirectoryPreserve=yes
+
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

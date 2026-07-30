@@ -19,7 +19,7 @@ import json
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from hashlib import sha256
 from pathlib import Path
 
@@ -51,7 +51,7 @@ def main():
     if args.clean and vault.exists():
         shutil.rmtree(vault)
 
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     stamp = now.strftime("%Y-%m-%dT%H%M%SZ")
     ym = now.strftime("%Y/%m")
     rid = sha256(stamp.encode()).hexdigest()[:12]

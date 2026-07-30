@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 class MalformedRecord(RuntimeError):
@@ -30,7 +30,7 @@ RAW, TRANSCRIBED, ROUTED, EXECUTED, PUBLISHED, FAILED = (
 
 
 def utcnow() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def write_atomic(path: Path, data: str | bytes):

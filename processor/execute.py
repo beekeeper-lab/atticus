@@ -99,7 +99,10 @@ def agent_env(ws: Path, out: Path) -> dict:
         # A private HOME inside the workspace. Claude Code writes config and
         # caches; without this it reaches into the operator's real home.
         "HOME": str(ws / "home"),
-        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        # Deliberately NOT the operator's PATH: that points at ~/.local/bin,
+        # which does not exist in the sandbox and would only invite the agent to
+        # look for tools it should not have. The CLI is bound into ws/bin.
+        "PATH": f"{ws / 'bin'}:/usr/local/bin:/usr/bin:/bin",
         "ATTICUS_OUTPUT_DIR": str(out),
     })
     return env
@@ -169,11 +172,20 @@ def wrap_sandbox(cmd: list, ws: Path, out: Path, cfg, *, log=print) -> list:
         if str(target) != str(resolv):
             args += ["--ro-bind", str(target), str(target)]
 
-    # The CLI lives outside /usr (~/.local/bin), and that is usually a symlink
-    # into a versioned directory — BOTH need binding, or exec fails with a
-    # baffling "No such file or directory" for a binary that plainly exists.
-    for p in _cli_paths(claude):
-        args += ["--ro-bind", str(p), str(p)]
+    # Bind the CLI BINARY ONLY, at a synthetic path inside the workspace.
+    #
+    # Binding ~/.local/bin wholesale (the obvious approach) drags in every other
+    # tool that happens to live there — notify-push, transcribe-audio, uv — and
+    # leaves a visible ~/.local skeleton in the sandbox. The agent needs exactly
+    # one executable. Give it exactly one.
+    real = Path(claude).resolve()
+    if real.is_file():
+        bindir = ws / "bin"
+        bindir.mkdir(exist_ok=True)
+        (bindir / "claude").touch()
+        args += ["--ro-bind", str(real), str(bindir / "claude")]
+    else:
+        log(f"    cannot resolve {cfg.claude_bin} to a file — agent will likely fail")
 
     # Claude Code needs its own credential, and only that. NOT the rest of
     # ~/.claude, which holds session transcripts, history, and hooks. Mounted
@@ -196,17 +208,6 @@ def wrap_sandbox(cmd: list, ws: Path, out: Path, cfg, *, log=print) -> list:
 
     return args + ["--"] + cmd
 
-
-def _cli_paths(claude: str) -> list:
-    """Directories that must exist inside the sandbox for the CLI to exec."""
-    out, seen = [], set()
-    p = Path(claude)
-    for cand in (p.parent, p.resolve().parent if p.is_symlink() else None,
-                 p.resolve() if p.resolve().is_dir() else None):
-        if cand and cand.is_dir() and str(cand) not in seen and not str(cand).startswith("/usr"):
-            seen.add(str(cand))
-            out.append(cand)
-    return out
 
 
 def build_task(transcript: str) -> str:
@@ -253,6 +254,11 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
                "--add-dir", str(out)]
         if cfg.claude_model:
             cmd += ["--model", cfg.claude_model]
+        budget = getattr(cfg, "max_budget_usd", "")
+        if budget:
+            cmd += ["--max-budget-usd", str(budget)]
+        else:
+            log("    no spend ceiling set (ATTICUS_MAX_BUDGET_USD is blank)")
         cmd = wrap_sandbox(cmd, ws, out, cfg, log=log)
 
         env = agent_env(ws, out)
@@ -295,4 +301,5 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
             shutil.copy2(src, dst)
             total += src.stat().st_size
 
-        return {"files": len(produced), "bytes": total, "stdout_tail": tail}
+        return {"files": len(produced), "bytes": total, "stdout_tail": tail,
+                "budget_usd": budget or None}

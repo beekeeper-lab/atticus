@@ -33,7 +33,7 @@ import json
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -147,7 +147,7 @@ def main():
     ap.add_argument("-o", "--output", default=None, help="report path")
     args = ap.parse_args()
 
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     out_path = Path(args.output or f"plaud-discovery-{stamp}.json")
 
     session_dir = SESSION_ROOT / SITE
