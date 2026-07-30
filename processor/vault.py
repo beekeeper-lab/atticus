@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import datetime, UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 class MalformedRecord(RuntimeError):
@@ -24,9 +24,16 @@ class MalformedRecord(RuntimeError):
 REQUIRED_FIELDS = ("plaud_id", "recorded_at", "audio_filename")
 
 
-RAW, TRANSCRIBED, ROUTED, EXECUTED, PUBLISHED, FAILED = (
-    "raw", "transcribed", "routed", "executed", "published", "failed"
+RAW, TRANSCRIBED, ROUTED, EXECUTED, PUBLISHED, FAILED, RETRY_WAIT = (
+    "raw", "transcribed", "routed", "executed", "published", "failed",
+    "retry_wait"
 )
+
+# Backoff between attempts. `retryable` used to be recorded on the error and
+# then ignored: fail() set FAILED, the scan excluded FAILED, and nothing ever
+# tried again — so an API timeout or a 503 became a PERMANENT failure. These are
+# the delays before attempts 2, 3 and 4; after that it is genuinely failed.
+RETRY_BACKOFF_SECONDS = (300, 1200, 7200)
 
 
 def utcnow() -> str:
@@ -111,16 +118,51 @@ class Record:
         self.save()
 
     def fail(self, vault: Path, stage: str, error: str, retryable: bool):
+        attempts = self.data.get("attempts", 0) + 1
+        self.data["attempts"] = attempts
+        self.data["failed_stage"] = stage
+        self.data["last_error"] = error[:500]
+
+        if retryable and attempts <= len(RETRY_BACKOFF_SECONDS):
+            delay = RETRY_BACKOFF_SECONDS[attempts - 1]
+            when = datetime.now(UTC) + timedelta(seconds=delay)
+            self.data["status"] = RETRY_WAIT
+            self.data["next_attempt_at"] = (
+                when.replace(microsecond=0).isoformat().replace("+00:00", "Z"))
+            self.data["retryable"] = True
+            self.save()
+            return RETRY_WAIT
+
         self.data["status"] = FAILED
         self.data["failed_at"] = utcnow()
-        self.data["failed_stage"] = stage
-        self.data["attempts"] = self.data.get("attempts", 0) + 1
+        self.data["retryable"] = bool(retryable)
+        self.data.pop("next_attempt_at", None)
         self.save()
         write_atomic(self.error_path(vault), json.dumps({
             "plaud_id": self.id, "stage": stage, "error": error,
             "retryable": retryable, "attempts": self.data["attempts"],
             "at": utcnow(),
         }, indent=2) + "\n")
+        return FAILED
+
+    def due(self) -> bool:
+        """True when a retry_wait record's deadline has passed."""
+        if self.status != RETRY_WAIT:
+            return True
+        when = self.data.get("next_attempt_at")
+        if not when:
+            return True
+        try:
+            due = datetime.fromisoformat(when.replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        return datetime.now(UTC) >= due
+
+    def rearm(self):
+        """Force a retry now, whatever the deadline said."""
+        self.data["status"] = self.data.get("failed_stage") or RAW
+        self.data.pop("next_attempt_at", None)
+        self.save()
 
     def save(self):
         write_atomic(self.meta_path, json.dumps(self.data, indent=2) + "\n")
