@@ -226,9 +226,27 @@ def adjudicate(heard: str, cfg, log=print, following: str = "") -> tuple[bool, s
         return False, f"adjudicator returned {resp.status_code} — failing closed"
 
     try:
-        answer = resp.json()["choices"][0]["message"]["content"].strip()
+        body = resp.json()
+        answer = body["choices"][0]["message"]["content"].strip()
     except (KeyError, IndexError, ValueError, TypeError):
         return False, "adjudicator reply unparseable — failing closed"
+
+    # Real money, however little. Recorded so the monthly api total is the whole
+    # truth rather than transcription only — a runaway adjudicator should show up
+    # in the budget, not hide behind it.
+    try:
+        import usage as _usage
+        u = body.get("usage") or {}
+        pt, ct = int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)
+        model = getattr(cfg, "wake_adjudicator_model", "gpt-4o-mini")
+        _usage.record(getattr(cfg, "vault", None), kind="adjudicator",
+                      billing=_usage.API, model=model,
+                      usd=_usage.chat_usd(model, pt, ct),
+                      input_tokens=pt, output_tokens=ct)
+    except Exception as e:                          # noqa: BLE001
+        # Accounting must never change the gate's verdict — but say so, or a
+        # silently unrecorded call makes the monthly total quietly wrong.
+        log(f"    ! could not record adjudicator usage: {type(e).__name__}: {e}")
 
     # A bare integer, nothing else. Prose or hedging fails closed.
     m = re.fullmatch(r"(\d{1,3})\.?", answer)

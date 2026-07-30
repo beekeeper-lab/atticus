@@ -8,6 +8,7 @@ live. The logic stays in `processor/` and `ingest/`.
 import os
 import shutil
 import subprocess
+import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -212,3 +213,84 @@ def doctor_main():
 
 if __name__ == "__main__":
     sys.exit(doctor_main())
+
+
+def usage_main() -> int:
+    """`atticus-usage` — what this month consumed, money and quota kept apart.
+
+    The two halves are reported separately and labelled, because they are not the
+    same kind of thing: the api section is money that left an account and is
+    bounded by a budget; the subscription section is rate-limit quota against the
+    operator's Claude plan, where the dollar figure is the CLI's imputed estimate
+    and is useful only for comparing runs against each other.
+    """
+    import argparse
+    ap = argparse.ArgumentParser(prog="atticus-usage", description=usage_main.__doc__)
+    ap.add_argument("--month", help="YYYY-MM (default: this UTC month)")
+    ap.add_argument("--json", action="store_true", help="machine-readable")
+    ap.add_argument("--by-recording", action="store_true",
+                    help="one line per recording instead of totals")
+    args = ap.parse_args()
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "processor"))
+    from config import Config
+    import usage as u
+
+    cfg = Config()
+    month = args.month or u.month_key()
+    summary = u.summarise(cfg.vault, month)
+    state = u.budget_state(cfg.vault, cfg)
+
+    if args.json:
+        print(json.dumps({"summary": summary, "budget": state}, indent=2))
+        return 0
+
+    print(f"\nAtticus usage — {month}   (vault: {cfg.vault})\n")
+
+    print("  REAL MONEY (OpenAI API)")
+    if not summary["api"]:
+        print("    nothing recorded")
+    for kind, row in sorted(summary["api"].items()):
+        extra = f", {row['seconds'] / 60:.1f} min audio" if row["seconds"] else ""
+        print(f"    {kind:<14} {row['calls']:>4} call(s)  ${row['usd']:.4f}{extra}")
+    print(f"    {'TOTAL':<14} {'':>4}          ${summary['api_total_usd']:.4f}")
+    if state["enabled"]:
+        pct = (state["spent_usd"] / state["budget_usd"] * 100) if state["budget_usd"] else 0
+        bar = "#" * min(30, int(pct / 100 * 30))
+        flag = "  ** EXHAUSTED — transcription is stopped **" if state["exhausted"] else ""
+        print(f"    budget         ${state['spent_usd']:.4f} of "
+              f"${state['budget_usd']:.2f}  ({pct:.1f}%) [{bar:<30}]{flag}")
+    else:
+        print("    budget         disabled (ATTICUS_API_BUDGET_USD=0)")
+
+    print("\n  SUBSCRIPTION (Claude plan — quota, not billed per token)")
+    if not summary["subscription"]:
+        print("    nothing recorded")
+    for model, row in sorted(summary["subscription"].items()):
+        print(f"    {model}")
+        print(f"      {row['calls']} run(s), {row['input_tokens']:,} in / "
+              f"{row['output_tokens']:,} out tokens")
+        print(f"      cache: {row['cache_read_tokens']:,} read / "
+              f"{row['cache_write_tokens']:,} written"
+              + (f", {row['web_searches']} web request(s)" if row["web_searches"] else ""))
+        print(f"      ~${row['imputed_usd']:.4f} imputed (NOT a charge — "
+              f"subscription usage)")
+
+    if args.by_recording:
+        print("\n  BY RECORDING")
+        per = {}
+        for e in u.load(cfg.vault, month):
+            if not e.get("stem"):
+                continue
+            row = per.setdefault(e["stem"], {"api": 0.0, "imputed": 0.0, "tok": 0})
+            if e.get("billing") == u.API:
+                row["api"] += e.get("usd", 0.0)
+            else:
+                row["imputed"] += e.get("usd", 0.0)
+                row["tok"] += int(e.get("output_tokens") or 0)
+        for stem, row in sorted(per.items()):
+            print(f"    {stem}  api ${row['api']:.4f}  "
+                  f"imputed ${row['imputed']:.4f}  {row['tok']:,} out-tok")
+
+    print()
+    return 0

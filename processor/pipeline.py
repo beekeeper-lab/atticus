@@ -29,6 +29,7 @@ from config import Config                                    # noqa: E402
 from lock import AlreadyRunning, single_instance             # noqa: E402
 import execute as ex                                         # noqa: E402
 import transcribe as stt                                     # noqa: E402
+import usage                                                 # noqa: E402
 import wake                                                  # noqa: E402
 from notify import clear as _notify_clear, notify as _notify  # noqa: E402
 from vault import (                                          # noqa: E402
@@ -152,6 +153,20 @@ class _ResultTarget:
 def stage_transcribe(rec, cfg, log):
     log.info(f"  transcribe: {rec.audio.name}")
 
+    # The budget gate. Checked HERE, before the only paid call in the pipeline,
+    # and non-retryable: a month's budget does not refill on a 5-minute backoff,
+    # so retrying would just re-check the same wall three times. Audio is already
+    # durable in the vault, so nothing is lost — the recording waits for a human
+    # to raise the ceiling or for the month to roll over.
+    state = usage.budget_state(cfg.vault, cfg)
+    if state["exhausted"]:
+        raise stt.TranscriptionError(
+            f"the ${state['budget_usd']:.2f} API budget for {state['month']} is "
+            f"spent (${state['spent_usd']:.4f}). Transcription is STOPPED so it "
+            f"cannot keep charging. Raise ATTICUS_API_BUDGET_USD to continue this "
+            f"month, or wait for the month to roll over.",
+            retryable=False, kind="quota")
+
     # Two genuinely different jobs, and the record decides which one this is.
     #
     # A COMMAND is truncated: the wake phrase must come first, so everything
@@ -182,6 +197,17 @@ def stage_transcribe(rec, cfg, log):
         with stt.bounded_audio(rec.audio, cfg, rec.data.get("duration_seconds"),
                                log=log.info) as (upload, trunc):
             text = stt.transcribe(upload, cfg)
+    # Real money, so record it before anything else can fail. `transcribed` is
+    # what we actually sent to the API — the truncated length, not the
+    # recording's full length, which is the whole point of truncating.
+    transcribed = float(trunc.get("transcribed_seconds")
+                        or (duration if isinstance(duration, (int, float)) else 0))
+    usage.record(cfg.vault, kind="transcription", billing=usage.API,
+                 stem=rec.stem, model=cfg.stt_model,
+                 usd=usage.transcription_usd(transcribed, cfg.stt_model),
+                 audio_seconds=round(transcribed, 1),
+                 chunks=trunc.get("chunks"), log=log.warn)
+
     write_atomic(rec.transcript_path(cfg.vault), text + "\n")
     words = len(text.split())
     log.info(f"    {words} words: {text[:90]}{'…' if len(text) > 90 else ''}")
@@ -272,6 +298,20 @@ def stage_execute(rec, cfg, log, dry_run=False):
         return
     res = ex.run(task, outdir, cfg, log=log.info)
     log.info(f"    produced {res['files']} file(s), {res['bytes']:,} bytes")
+
+    # SUBSCRIPTION, not api. `claude -p` authenticates with the operator's OAuth
+    # credential, so this consumes rate-limit quota and bills nothing per token.
+    # The CLI's total_cost_usd is an imputed figure for efficiency comparison —
+    # recording it as money would resurrect exactly the mistake this split fixes.
+    au = res.get("usage") or {}
+    if au:
+        log.info(f"    agent: {au.get('input_tokens', 0):,} in / "
+                 f"{au.get('output_tokens', 0):,} out tokens, "
+                 f"{au.get('cache_read_tokens', 0):,} cached, "
+                 f"{au.get('turns', 0)} turn(s), "
+                 f"~${au.get('usd', 0):.4f} imputed (subscription, not billed)")
+    usage.record(cfg.vault, kind="agent", billing=usage.SUBSCRIPTION,
+                 stem=rec.stem, log=log.warn, **au)
     rec.advance(EXECUTED, output_files=res["files"], output_bytes=res["bytes"],
                 budget_usd=res.get("budget_usd"))
 
