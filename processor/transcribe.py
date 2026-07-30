@@ -188,11 +188,33 @@ def sanity_check(text: str, cfg) -> tuple[bool, str]:
         return False, f"too short: {len(words)} word(s), need {cfg.min_words}"
 
     if cfg.wake_phrase:
-        head = " ".join(words[:4]).lower().strip(" ,.:;!?")
-        if not head.startswith(cfg.wake_phrase):
+        head = " ".join(words[:5]).lower().strip(" ,.:;!?")
+        head = _drop_fillers(head)
+        triggers = [cfg.wake_phrase, *getattr(cfg, "wake_aliases", [])]
+        if not any(head.startswith(t) for t in triggers if t):
             return False, f"no wake phrase {cfg.wake_phrase!r} — filed as a note, not executed"
 
     return True, "ok"
+
+
+# Fillers that precede a direct address. Deliberately excludes "so" and "well":
+# those introduce DESCRIPTION as often as address ("So Atticus is a thing I
+# built…"), and a false positive runs an agent on speech never aimed at it.
+# A false negative only files a note, which is recoverable and visible.
+_FILLERS = ("um", "uh", "er", "erm", "okay", "ok", "hey", "alright", "right")
+
+
+def _drop_fillers(head: str) -> str:
+    """Strip leading conversational filler so "Okay, Atticus, …" still triggers."""
+    changed = True
+    while changed:
+        changed = False
+        for f in _FILLERS:
+            for prefix in (f + " ", f + ", "):
+                if head.startswith(prefix):
+                    head = head[len(prefix):].lstrip(" ,")
+                    changed = True
+    return head
 
 
 def strip_wake_phrase(text: str, cfg) -> str:

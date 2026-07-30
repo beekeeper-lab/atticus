@@ -104,7 +104,10 @@ def notify_result(cfg, rec, log):
     if executed:
         doc = primary_doc(rec.outdir(cfg.vault))
         link = doc_url(cfg, rec, doc)
-        title, tags, priority = "Atticus finished", "white_check_mark", "default"
+        title, tags, priority = "Atticus finished", "white_check_mark", "high"
+        # High, not default. Results were sent at default priority and went
+        # unnoticed for hours — iOS delivers those quietly. The entire premise
+        # is that you walked away, so the result has to reach you.
         body = said or rec.stem
         if link:
             body += f"\n\n{link}"
@@ -165,7 +168,7 @@ def stage_route(rec, cfg, log):
         return False
 
     instruction = stt.strip_wake_phrase(text, cfg)
-    task = ex.build_task(instruction, str(rec.outdir(cfg.vault)))
+    task = ex.build_task(instruction)
     write_atomic(rec.task_path(cfg.vault), task)
     rec.advance(ROUTED, task_path=str(rec.task_path(cfg.vault).relative_to(cfg.vault)))
     return True
