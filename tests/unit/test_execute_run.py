@@ -12,6 +12,8 @@ The binary must be resolved to an absolute host path and HOME must be real.
 """
 import os
 import types
+
+import pytest
 from pathlib import Path
 
 import execute as ex
@@ -94,3 +96,41 @@ def test_sandbox_off_resolves_absolute_binary_and_real_home(cfg, tmp_path, monke
     home = captured["env"]["HOME"]
     assert Path(home).is_dir()
     assert res["files"] == 1
+
+
+def test_budget_exhaustion_is_not_retried(tmp_path, cfg, monkeypatch):
+    """Retrying a deterministic failure spends the ceiling again to hit the same
+    wall. Observed 2026-07-30: a research task exceeded $2.00, produced NO output,
+    and was queued for three more attempts at $2.00 each — $8 for nothing, on the
+    operator's money.
+    """
+    import subprocess
+    import execute as ex
+
+    def fake_run(*a, **kw):
+        return subprocess.CompletedProcess(
+            a[0] if a else [], 1, "", "Error: Exceeded USD budget (2)")
+
+    monkeypatch.setattr(ex.subprocess, "run", fake_run)
+    monkeypatch.setattr(ex, "wrap_sandbox", lambda cmd, *a, **k: cmd)
+    with pytest.raises(ex.ExecutionError) as e:
+        ex.run("task", tmp_path / "out", cfg, log=lambda m: None)
+    assert e.value.retryable is False, "budget exhaustion must not be retried"
+    assert "spend ceiling" in str(e.value)
+    assert "ATTICUS_MAX_BUDGET_USD" in str(e.value), "must name the remedy"
+
+
+def test_an_ordinary_agent_failure_is_still_retried(tmp_path, cfg, monkeypatch):
+    """The fix above must not make every failure terminal."""
+    import subprocess
+    import execute as ex
+
+    def fake_run(*a, **kw):
+        return subprocess.CompletedProcess(
+            a[0] if a else [], 1, "", "transient upstream hiccup")
+
+    monkeypatch.setattr(ex.subprocess, "run", fake_run)
+    monkeypatch.setattr(ex, "wrap_sandbox", lambda cmd, *a, **k: cmd)
+    with pytest.raises(ex.ExecutionError) as e:
+        ex.run("task", tmp_path / "out", cfg, log=lambda m: None)
+    assert e.value.retryable is True
