@@ -118,8 +118,15 @@ def test_only_the_cli_binary_is_bound_not_the_whole_bin_dir(tmp_path):
 
 
 @needs_bwrap
+@pytest.mark.skipif(not shutil.which("claude"),
+                    reason="claude CLI not installed; nothing to bind or find")
 def test_cli_is_still_runnable(tmp_path):
-    """Containment must not break the thing it contains."""
+    """Containment must not break the thing it contains.
+
+    Only meaningful where the CLI exists. On a runner without it, wrap_sandbox
+    correctly declines to bind a binary that is not there — asserting it is
+    findable would be asserting something about the runner, not the code.
+    """
     out = _run_in_sandbox(tmp_path, 'command -v claude >/dev/null && echo found || echo MISSING')
     assert out == "found"
 
