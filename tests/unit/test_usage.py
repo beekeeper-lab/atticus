@@ -209,3 +209,190 @@ def test_a_healthy_budget_does_not_block_transcription(tmp_path, cfg, monkeypatc
     with pytest.raises(Exception) as e:
         pipeline.stage_transcribe(rec, cfg, pipeline.Log("ERROR"))
     assert "API budget for" not in str(e.value)
+
+
+# --- budget threshold alerts ---------------------------------------------
+
+def _spend(v, amount):
+    usage.record(v, kind="transcription", billing=usage.API, usd=amount)
+
+
+def test_thresholds_fire_as_spend_passes_them(tmp_path, cfg):
+    v = _vault(tmp_path)
+    cfg.api_budget_usd = 4.00
+    cfg.budget_alert_usd = [2.00, 3.00, 4.00]
+
+    assert usage.newly_crossed(v, cfg) == []
+    _spend(v, 2.10)
+    assert usage.newly_crossed(v, cfg) == [2.00]
+
+
+def test_a_threshold_is_announced_exactly_once(tmp_path, cfg):
+    """The property that matters. Spend stays over a threshold for the rest of the
+    month, so anything time-based would re-announce it every 5-minute pass."""
+    v = _vault(tmp_path)
+    cfg.api_budget_usd = 4.00
+    cfg.budget_alert_usd = [2.00, 3.00, 4.00]
+    _spend(v, 2.50)
+
+    assert usage.newly_crossed(v, cfg) == [2.00]
+    usage.mark_alerted(v, 2.00, 2.50)
+    assert usage.newly_crossed(v, cfg) == []
+    _spend(v, 0.10)                     # more spend, still under $3
+    assert usage.newly_crossed(v, cfg) == []
+
+
+def test_a_jump_past_two_thresholds_announces_both_in_order(tmp_path, cfg):
+    """A single expensive recording must not silently skip a warning."""
+    v = _vault(tmp_path)
+    cfg.api_budget_usd = 4.00
+    cfg.budget_alert_usd = [2.00, 3.00, 4.00]
+    _spend(v, 3.50)
+    assert usage.newly_crossed(v, cfg) == [2.00, 3.00]
+
+
+def test_markers_do_not_count_as_spend_or_pollute_the_report(tmp_path, cfg):
+    v = _vault(tmp_path)
+    cfg.api_budget_usd = 4.00
+    cfg.budget_alert_usd = [2.00]
+    _spend(v, 2.00)
+    before = usage.api_spend(v)
+    usage.mark_alerted(v, 2.00, 2.00)
+
+    assert usage.api_spend(v) == before, "a marker is not money"
+    s = usage.summarise(v)
+    assert "budget-alert" not in s["api"]
+    assert "budget-alert" not in s["subscription"]
+    assert s["events"] == 1, "only the transcription is a consumption event"
+
+
+def test_subscription_usage_never_trips_a_threshold(tmp_path, cfg):
+    v = _vault(tmp_path)
+    cfg.api_budget_usd = 4.00
+    cfg.budget_alert_usd = [2.00, 3.00, 4.00]
+    usage.record(v, kind="agent", billing=usage.SUBSCRIPTION, usd=500.0)
+    assert usage.newly_crossed(v, cfg) == []
+
+
+def test_no_thresholds_configured_means_no_alerts(tmp_path, cfg):
+    v = _vault(tmp_path)
+    cfg.api_budget_usd = 4.00
+    cfg.budget_alert_usd = []
+    _spend(v, 99.0)
+    assert usage.newly_crossed(v, cfg) == []
+
+
+def test_thresholds_reset_next_month(tmp_path, cfg):
+    """Last month's announcement must not silence this month's crossing."""
+    v = _vault(tmp_path)
+    cfg.api_budget_usd = 4.00
+    cfg.budget_alert_usd = [2.00]
+    (v / ".state" / "usage-old.jsonl").write_text(json.dumps(
+        {"month": "2020-01", "billing": usage.META, "kind": "budget-alert",
+         "threshold_usd": 2.00, "usd": 0}) + "\n")
+    _spend(v, 2.00)
+    assert usage.newly_crossed(v, cfg) == [2.00]
+
+
+def test_the_final_threshold_reports_that_transcription_stopped(tmp_path, cfg,
+                                                               monkeypatch):
+    """The $4 alert must say what actually happened, not just quote a number."""
+    import pipeline
+    sent = []
+    monkeypatch.setattr(pipeline, "notify",
+                        lambda cfg, text, log, **kw: sent.append((text, kw)))
+    v = _vault(tmp_path)
+    cfg.vault = v
+    cfg.api_budget_usd = 4.00
+    cfg.budget_alert_usd = [2.00, 4.00]
+    _spend(v, 4.00)
+
+    pipeline._alarm_budget_thresholds(cfg, pipeline.Log("ERROR"))
+    assert len(sent) == 2, "both thresholds announced"
+    final_text, final_kw = sent[-1]
+    assert "STOPPED" in final_text
+    assert "ATTICUS_API_BUDGET_USD" in final_text, "must name the remedy"
+    assert final_kw["priority"] == "high"
+    # And it is not announced again on the next pass.
+    sent.clear()
+    pipeline._alarm_budget_thresholds(cfg, pipeline.Log("ERROR"))
+    assert sent == []
+
+
+def test_a_warning_threshold_says_the_agent_is_not_counted(tmp_path, cfg,
+                                                           monkeypatch):
+    """The distinction is the whole point of the feature — say it in the push."""
+    import pipeline
+    sent = []
+    monkeypatch.setattr(pipeline, "notify",
+                        lambda cfg, text, log, **kw: sent.append((text, kw)))
+    v = _vault(tmp_path)
+    cfg.vault = v
+    cfg.api_budget_usd = 4.00
+    cfg.budget_alert_usd = [2.00]
+    _spend(v, 2.00)
+
+    pipeline._alarm_budget_thresholds(cfg, pipeline.Log("ERROR"))
+    text, kw = sent[0]
+    assert "subscription" in text.lower()
+    assert kw["priority"] != "high", "a warning is not an emergency"
+
+
+def test_alerts_go_through_the_REAL_notify_path(tmp_path, cfg, monkeypatch):
+    """Regression: the first version of this feature never delivered anything.
+
+    pipeline.notify() hardcoded title=, so passing a custom title raised
+    "got multiple values for keyword argument 'title'" — swallowed by
+    _alarm_budget_thresholds' own except and visible only as a log line. Every
+    unit test passed because they all monkeypatched pipeline.notify and so never
+    exercised its signature. This one patches the HTTP layer instead, leaving the
+    real call chain intact.
+    """
+    import urllib.request
+
+    import notify as nt
+    import pipeline
+
+    # notify() imports urllib.request inside the function, so patch the module
+    # itself rather than an attribute on notify.
+    posted = []
+    monkeypatch.setattr(nt, "STATE", tmp_path / "stamps")
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda req, timeout=None: posted.append(req) or _Resp())
+
+    v = _vault(tmp_path)
+    cfg.vault = v
+    cfg.notify_url = "https://ntfy.example/atticus"
+    cfg.api_budget_usd = 4.00
+    cfg.budget_alert_usd = [2.00]
+    _spend(v, 2.00)
+
+    pipeline._alarm_budget_thresholds(cfg, pipeline.Log("ERROR"))
+    assert len(posted) == 1, "the alert never reached the transport"
+    assert posted[0].get_header("Title")           # header actually set
+    assert usage.newly_crossed(v, cfg) == [], "and it was marked as announced"
+
+
+class _Resp:
+    """Minimal stand-in for urlopen's context-manager response."""
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+
+def test_a_custom_title_no_longer_collides(cfg):
+    """The narrow fix, pinned on its own so it cannot silently regress."""
+    import notify as nt
+    import pipeline
+    seen = {}
+    orig = nt.notify
+    try:
+        nt.notify = lambda cfg, text, **kw: seen.update(kw) or True
+        pipeline._notify = nt.notify
+        pipeline.notify(cfg, "x", pipeline.Log("ERROR"), title="Custom")
+        assert seen["title"] == "Custom"
+        seen.clear()
+        pipeline.notify(cfg, "x", pipeline.Log("ERROR"))
+        assert seen["title"] == "Atticus processor", "default still applies"
+    finally:
+        nt.notify = orig
+        pipeline._notify = orig

@@ -75,6 +75,15 @@ class Config:
         # subscription and bills nothing per token, so folding it in would stop
         # the pipeline over money nobody spent. 0 disables the cap.
         self.api_budget_usd = float(g("ATTICUS_API_BUDGET_USD", "4.00") or 0)
+        # Warn on the way up, not only on arrival. A budget whose first signal is
+        # "transcription has stopped" gives no chance to react; these fire once
+        # each per calendar month as the month's api spend passes them. Absolute
+        # dollars rather than percentages, so the numbers mean the same thing
+        # after the budget is raised. Blank disables the warnings (the cap itself
+        # still applies).
+        self.budget_alert_usd = [float(t) for t in
+                                 (g("ATTICUS_BUDGET_ALERT_USD", "2.00,3.00,4.00")
+                                  or "").replace(" ", "").split(",") if t]
 
         # Results. A finished voice command is the whole point of the system, so
         # it gets a push carrying a link to the page it produced. Separate knob
