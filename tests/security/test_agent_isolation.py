@@ -14,7 +14,32 @@ import pytest
 import execute as ex
 
 pytestmark = pytest.mark.sandbox
-needs_bwrap = pytest.mark.skipif(not shutil.which("bwrap"), reason="bwrap absent")
+
+
+def _bwrap_actually_works() -> bool:
+    """Whether bwrap can really create a namespace here.
+
+    Checking only that the binary exists is not enough, and CI proved it: on
+    Ubuntu 24.04 runners AppArmor restricts unprivileged user namespaces, so
+    bwrap is installed, runs, and silently produces nothing. The tests then
+    compared empty strings to expected output and failed for a reason that had
+    nothing to do with the code under test.
+    """
+    if not shutil.which("bwrap"):
+        return False
+    try:
+        p = subprocess.run(
+            ["bwrap", "--ro-bind", "/usr", "/usr", "--dev", "/dev",
+             "--", "/bin/true"],
+            capture_output=True, timeout=20)
+        return p.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+needs_bwrap = pytest.mark.skipif(
+    not _bwrap_actually_works(),
+    reason="bwrap cannot create a namespace here (restricted unprivileged userns?)")
 
 
 def test_env_allowlist_excludes_credentials(tmp_path, monkeypatch):
