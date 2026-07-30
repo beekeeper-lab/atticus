@@ -1,4 +1,4 @@
-#!/home/gregg/.local/share/claude-fetchers/venv/bin/python
+#!/usr/bin/env python3
 """One-time recon against Plaud Web.
 
 The official CLI is paywalled (see ADR-002). This script watches the network
@@ -44,7 +44,7 @@ except ImportError:
     sys.exit(
         "playwright not importable.\n"
         "Run with the fetchers venv:\n"
-        "  /home/gregg/.local/share/claude-fetchers/venv/bin/python plaud_discover.py"
+        "  ~/.local/share/claude-fetchers/venv/bin/python plaud_discover.py"
     )
 
 SITE = "plaud"

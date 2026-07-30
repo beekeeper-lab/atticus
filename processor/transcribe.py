@@ -8,7 +8,11 @@ Guards borrowed from ScribeVault's WhisperService: a pre-upload size check so
 a too-large file fails immediately instead of after a slow upload, and
 retry-on-transient with backoff.
 """
+import shutil
+import subprocess
+import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import requests
@@ -34,6 +38,78 @@ class FileTooLarge(TranscriptionError):
         super().__init__(
             f"{size} bytes exceeds the {API_MAX_BYTES}-byte API limit",
             retryable=False, kind="too_large")
+
+
+API_MAX_SECONDS = 1400   # gpt-4o-transcribe rejects anything longer, with a 400
+
+
+def _probe_seconds(audio: Path) -> float | None:
+    """Duration via ffprobe, or None if it is unavailable or unhelpful.
+
+    Only consulted when upstream metadata has no duration — the point is to
+    avoid making ffprobe a hard dependency of the processor for the normal path.
+    """
+    exe = shutil.which("ffprobe")
+    if not exe:
+        return None
+    try:
+        p = subprocess.run(
+            [exe, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", str(audio)],
+            capture_output=True, text=True, timeout=60)
+        return float((p.stdout or "").strip()) if p.returncode == 0 else None
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return None
+
+
+@contextmanager
+def bounded_audio(audio: Path, cfg, duration_hint=None, log=print):
+    """Yield (path_to_upload, metadata_dict), truncating an over-long recording.
+
+    Keeps the original untouched: the cut goes to a temp file that is removed on
+    exit. `metadata_dict` is empty for a normal recording, so callers can splat
+    it into the record either way.
+    """
+    limit = getattr(cfg, "max_command_seconds", 0)
+    seconds = duration_hint if isinstance(duration_hint, (int, float)) else None
+    if limit and seconds is None:
+        seconds = _probe_seconds(audio)
+
+    if not limit or seconds is None or seconds <= limit:
+        # Backstop: no usable duration and the file may still be over the API's
+        # own ceiling. Let the request fail with the API's message rather than
+        # guessing — but say so, because that 400 is confusing on its own.
+        if seconds is None and limit:
+            log("    duration unknown (no metadata, no ffprobe) — not truncating")
+        yield audio, {}
+        return
+
+    exe = shutil.which("ffmpeg")
+    if not exe:
+        raise TranscriptionError(
+            f"recording is {seconds:.0f}s, over the {limit}s command limit, and "
+            f"ffmpeg is not installed to truncate it",
+            retryable=False, kind="too_large")
+
+    tmp = Path(tempfile.mkdtemp(prefix="atticus-trunc."))
+    try:
+        cut = tmp / f"head{audio.suffix or '.mp3'}"
+        log(f"    {seconds:.0f}s exceeds the {limit}s command limit — "
+            f"transcribing the first {limit}s only")
+        # -c copy: no re-encode, so this is instant and needs no encoder. Frame
+        # -boundary imprecision of a few ms does not matter for speech.
+        p = subprocess.run(
+            [exe, "-hide_banner", "-loglevel", "error", "-nostdin",
+             "-i", str(audio), "-t", str(limit), "-c", "copy", str(cut)],
+            capture_output=True, text=True, timeout=300)
+        if p.returncode != 0 or not cut.is_file() or cut.stat().st_size == 0:
+            raise TranscriptionError(
+                f"could not truncate the recording: {(p.stderr or '').strip()[:200]}",
+                retryable=False, kind="too_large")
+        yield cut, {"truncated_from_seconds": round(seconds, 1),
+                    "transcribed_seconds": limit}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def transcribe(audio: Path, cfg, *, attempts: int = 3) -> str:
