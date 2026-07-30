@@ -174,6 +174,10 @@ PATH will not find it; add its directory to Environment=PATH in the service"
 
   install_units atticus-processor.service atticus-processor.timer
   grant_vault "$UNITS/atticus-processor.service"
+
+  # The heartbeat watches everything else. It alarms on ABSENCE, which is the
+  # one failure mode none of the other alarms can see.
+  install_units atticus-heartbeat.service atticus-heartbeat.timer
 fi
 
 # ---- enable ---------------------------------------------------------------
@@ -190,6 +194,8 @@ fi
 if (( DO_PROCESSOR )); then
   systemctl --user enable --now atticus-processor.timer
   ok "processor timer enabled (every 5 min)"
+  systemctl --user enable --now atticus-heartbeat.timer
+  ok "heartbeat enabled (hourly)"
 fi
 echo
 systemctl --user list-timers 'atticus-*' --no-pager 2>/dev/null | head -5

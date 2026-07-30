@@ -1,0 +1,15 @@
+[Unit]
+Description=Check hourly that Atticus is actually alive
+Documentation=https://github.com/beekeeper-lab/atticus/blob/main/docs/HARDENING.md
+
+[Timer]
+# Hourly is enough: this catches conditions measured in hours (a stalled timer,
+# a stuck record, a diverged vault), not minutes. Alarming faster would mean
+# alarming on normal quiet.
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=300
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

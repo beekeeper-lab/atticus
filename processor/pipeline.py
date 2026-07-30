@@ -102,7 +102,13 @@ def notify_result(cfg, rec, log):
         said = rec.transcript_path(cfg.vault).read_text().strip()
     except OSError:
         pass
-    said = (said[:180] + "…") if len(said) > 180 else said
+    detail = getattr(cfg, "notification_detail", "full")
+    if detail == "title":
+        said = ""                                   # link only; nothing spoken
+    elif detail == "summary":
+        said = (said[:60] + "…") if len(said) > 60 else said
+    else:
+        said = (said[:180] + "…") if len(said) > 180 else said
 
     if executed:
         doc = primary_doc(rec.outdir(cfg.vault))

@@ -1,7 +1,7 @@
 # Hardening plan — v0.1.0-alpha
 
 **Status:** in progress — A1–A4, A6, B1, B3–B7, C1–C4, D1 landed 2026-07-29.
-Remaining: A5, D2–D8.
+Remaining: D3, D4, and D7/D8 which need a decision.
 **Opened:** 2026-07-29
 **Source:** external review of the public repo, plus findings verified on Forge.
 
@@ -77,7 +77,7 @@ so this is buildable without sudo.
       capped) rather than what it cannot (intent is isolated). Real isolation
       needs a terminator phrase, silence segmentation, or an extraction model.
 
-- [ ] **A5. Treat agent-generated HTML as untrusted when serving it.**
+- [x] **A5. Treat agent-generated HTML as untrusted when serving it.**
       Strip `<script>`, inline handlers, and external references at publish
       time; serve under a restrictive CSP. Note forgeserve also renders
       Markdown, and the origin is shared with other published sites.
@@ -159,7 +159,7 @@ so this is buildable without sudo.
 - [x] **D1. LICENSE** — Apache-2.0, chosen for the state-your-changes
       requirement given this repo publishes security claims. `NOTICE` records
       that the licence grants no rights in Plaud's service.
-- [ ] **D2. SECURITY.md** — threat model, ambient-audio sensitivity, prompt
+- [x] **D2. SECURITY.md** — threat model, ambient-audio sensitivity, prompt
       injection, third-party data exposure, unofficial-endpoint fragility,
       disclosure process.
 - [ ] **D3. Documentation hierarchy.** `README` = current behaviour only;
@@ -169,11 +169,11 @@ so this is buildable without sudo.
       `gpt-4o-mini-transcribe` and `gpt-4o-transcribe`, and its diagram still
       shows "Wi-Fi, while charging" as a live path that testing disproved.
 - [ ] **D4. Generated configuration table** so defaults cannot drift from code.
-- [ ] **D5. Notification detail setting** —
+- [x] **D5. Notification detail setting** —
       `ATTICUS_NOTIFICATION_DETAIL=title|summary|full`, defaulting to `title`
       for anyone but the author. Transcript text currently reaches lock screens,
       watches, and phone backups.
-- [ ] **D6. Dead-man heartbeat.** Alarm on *absence*: no successful ingest, no
+- [x] **D6. Dead-man heartbeat.** Alarm on *absence*: no successful ingest, no
       successful processor pass, oldest `raw` record too old, vault diverged.
       The existing alarms all fire on a *recognised* failure; a disabled timer,
       a full disk, or an import error is still silent. A stalled timer has

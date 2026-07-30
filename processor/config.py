@@ -62,6 +62,12 @@ class Config:
         # Gated notes are the common case (a wearable overhears a lot), so they
         # are silent by default. Turn on to catch a misheard wake word — the
         # failure where a real command is silently filed as a note.
+        # title | summary | full. Notifications travel through a third-party
+        # push service and land on lock screens, watches and phone backups.
+        # "full" is right for a single operator on a private topic; it is the
+        # wrong default for anyone else, so it is a conscious setting.
+        self.notification_detail = (g("ATTICUS_NOTIFICATION_DETAIL", "full")
+                                    or "full").strip().lower()
         self.notify_notes = (g("ATTICUS_NOTIFY_NOTES", "false").lower()
                              in ("1", "true", "yes", "on"))
         self.push_retries = int(g("ATTICUS_PUSH_RETRIES", "3"))
