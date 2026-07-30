@@ -74,6 +74,38 @@ def unit_last_run(unit: str):
     return None, ok
 
 
+def unit_is_running(unit: str) -> bool:
+    """True while the unit is starting or running.
+
+    systemd clears ExecMainExitTimestamp for the duration of a run and a timer
+    whose service is executing can report no next elapse, so sampling a unit
+    mid-run made the checks below announce that a perfectly healthy unit "has no
+    record of ever completing" and that its "timer will never fire again". Both
+    were observed: the 14:05:06 heartbeat and the 14:05:06 processor run started
+    in the same second, and every timer here fires on a :0X boundary, so the
+    collision is structural rather than unlucky.
+    """
+    r = subprocess.run(["systemctl", "--user", "show", unit, "-p", "ActiveState"],
+                       capture_output=True, text=True)
+    return (r.stdout or "").strip().endswith(("=active", "=activating",
+                                              "=reloading", "=deactivating"))
+
+
+def timer_has_fired(timer: str) -> bool:
+    """False for a timer that is installed and scheduled but has not run yet.
+
+    A daily timer installed at noon has genuinely never triggered until midnight.
+    Reporting that as "no record of ever completing" is true and useless: it fires
+    every hour until the timer's first run and trains the operator to ignore the
+    alarm that matters.
+    """
+    r = subprocess.run(
+        ["systemctl", "--user", "show", timer, "-p", "LastTriggerUSec"],
+        capture_output=True, text=True)
+    val = (r.stdout or "").split("=", 1)[-1].strip()
+    return bool(val) and val not in ("n/a", "0")
+
+
 def timer_is_scheduled(timer: str) -> bool:
     """A timer with no next elapse will never fire again, however healthy
     `is-enabled` and `is-active` look."""
@@ -146,10 +178,15 @@ def main():
                   "atticus-retention.timer", "atticus-vault-site.timer"):
             if not unit_exists(t):
                 continue        # this host does not have that role
-            if not timer_is_scheduled(t):
-                problems.append(f"{t} has NO next elapse — it will never fire again")
-            else:
+            if timer_is_scheduled(t):
                 notes.append(f"{t} scheduled")
+            elif unit_is_running(t.replace(".timer", ".service")):
+                # A timer reports no next elapse while its own service is mid-run.
+                # That is not the parked-at-infinity failure this check exists for.
+                notes.append(f"{t} has no next elapse because its service is "
+                             f"running — will reschedule when it finishes")
+            else:
+                problems.append(f"{t} has NO next elapse — it will never fire again")
     check("timers-scheduled", check_scheduled)
 
     # 2. Has anything run recently — AND did the last run succeed?
@@ -163,8 +200,18 @@ def main():
                   "atticus-retention.service"):
             if not unit_exists(u):
                 continue        # this host does not have that role
+            if unit_is_running(u):
+                notes.append(f"{u} is running right now")
+                continue
             last, ok = unit_last_run(u)
             if last is None:
+                # Distinguish "installed, scheduled, simply not due yet" from
+                # "should have run and never has". Only the second is a problem.
+                timer = u.replace(".service", ".timer")
+                if unit_exists(timer) and not timer_has_fired(timer):
+                    notes.append(f"{u} has not run yet — its timer is scheduled "
+                                 f"and has not fired")
+                    continue
                 problems.append(f"{u} has no record of ever completing")
                 continue
             if not ok:

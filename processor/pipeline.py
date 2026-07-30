@@ -434,9 +434,17 @@ def main():
         # invisibly. Mirror the VaultSyncError handling below: alarm (throttled)
         # and exit 3.
         if not git.pull():
-            log.error("git pull failed — the vault remote is unreachable")
+            # Do NOT assert a cause. This said "the vault remote is unreachable"
+            # unconditionally, and the real error in production was
+            # "fatal: Cannot rebase onto multiple branches" — a local git state
+            # problem caused by ingest and the processor fetching at the same
+            # instant, with a perfectly healthy remote. Naming the wrong cause
+            # sends the operator to check the network for a concurrency bug.
+            why = git.last_error or "(no output from git)"
+            log.error(f"git pull failed: {why}")
             notify(cfg, "Atticus cannot pull the vault. The processor is running "
-                        "on a stale tree and cannot see new recordings.",
+                        "on a stale tree and cannot see new recordings.\n\n"
+                        f"git said: {why}",
                    log, key="pull")
             return 3
         # Clear on recovery, or a pull that breaks again inside the throttle

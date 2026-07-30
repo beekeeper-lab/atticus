@@ -94,3 +94,54 @@ def test_non_benign_collision_refuses_and_leaves_no_rebase(two_clones):
     # The rebase must have been aborted, not left half-applied for a human.
     assert not (a / ".git/rebase-merge").exists()
     assert not (a / ".git/rebase-apply").exists()
+
+
+def test_concurrent_pulls_do_not_corrupt_fetch_head(git_vault):
+    """The production failure this lock exists for, as a regression test.
+
+    Ingest and the processor share one working tree but took DIFFERENT
+    single-instance locks, so nothing excluded them. Two concurrent `git fetch`es
+    leave .git/FETCH_HEAD holding more than one branch and `pull --rebase` aborts
+    with "fatal: Cannot rebase onto multiple branches" — which alarmed as "the
+    vault remote is unreachable" while the remote was perfectly healthy.
+
+    Verified by hand before the fix: eight concurrent raw `git pull --rebase` in a
+    clone failed 8/8 with that exact message; through Git.pull() they succeed 8/8.
+    """
+    import concurrent.futures as cf
+    from vault import Git
+
+    def pull(i):
+        g = Git(git_vault.work, "t", "t@t", 1, log=lambda m: None)
+        return g.pull(), g.last_error
+
+    with cf.ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(pull, range(8)))
+
+    failures = [err for ok, err in results if not ok]
+    assert not failures, f"concurrent pulls failed: {failures}"
+    # One line per fetched branch. More than one is the corruption itself.
+    fetch_head = git_vault.work / ".git/FETCH_HEAD"
+    if fetch_head.exists():
+        assert len([ln for ln in fetch_head.read_text().splitlines() if ln.strip()]) <= 1
+
+
+def test_the_git_lock_is_reentrant(git_vault):
+    """commit_push() -> _push_with_retry() -> pull() all nest, and flock() would
+    deadlock against itself on a second descriptor."""
+    from vault import Git
+    g = Git(git_vault.work, "t", "t@t", 1, log=lambda m: None)
+    (git_vault.work / "inbox" / "nested.json").write_text("{}")
+    assert g.commit_push("nested lock acquisition must not deadlock") is True
+    assert g._lock_depth == 0, "the lock was not released"
+
+
+def test_the_lock_file_is_never_committed(git_vault):
+    """It lives in .git/, so it cannot be staged by `add -A`."""
+    from vault import Git
+    g = Git(git_vault.work, "t", "t@t", 1, log=lambda m: None)
+    (git_vault.work / "inbox" / "x.json").write_text("{}")
+    g.commit_push("lock must stay out of the tree")
+    tracked = subprocess.run(["git", "-C", str(git_vault.work), "ls-files"],
+                             capture_output=True, text=True).stdout
+    assert "atticus-git.lock" not in tracked

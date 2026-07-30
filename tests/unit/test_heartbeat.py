@@ -187,3 +187,62 @@ def test_a_wrong_vault_path_is_not_reported_healthy(monkeypatch, tmp_path, capsy
     out = capsys.readouterr().out
     assert rc == 1
     assert "does not exist" in out
+
+
+def test_a_timer_that_has_not_fired_yet_is_not_a_problem(monkeypatch, tmp_path, capsys):
+    """retention is on a DAILY timer. Installed at noon, it has genuinely never
+    triggered until midnight — and reporting that hourly as "no record of ever
+    completing" is true, useless, and trains the operator to ignore the alarm that
+    matters. Observed in production after retention joined the watch list.
+    """
+    vault = _empty_vault(tmp_path)
+    monkeypatch.setenv("ATTICUS_VAULT_PATH", str(vault))
+    monkeypatch.setattr(hb, "unit_exists", lambda u: "retention" in u)
+    monkeypatch.setattr(hb, "unit_is_running", lambda u: False)
+    monkeypatch.setattr(hb, "timer_is_scheduled", lambda t: True)
+    monkeypatch.setattr(hb, "timer_has_fired", lambda t: False)
+    monkeypatch.setattr(hb, "unit_last_run", lambda u: (None, True))
+    monkeypatch.setattr(sys, "argv", ["heartbeat.py", "--dry-run"])
+
+    rc = hb.main()
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert "has not run yet" in out
+    assert "no record of ever completing" not in out
+
+
+def test_a_unit_that_never_ran_and_whose_timer_HAS_fired_is_a_problem(
+        monkeypatch, tmp_path, capsys):
+    """The real failure must survive the fix above."""
+    vault = _empty_vault(tmp_path)
+    monkeypatch.setenv("ATTICUS_VAULT_PATH", str(vault))
+    monkeypatch.setattr(hb, "unit_exists", lambda u: "retention" in u)
+    monkeypatch.setattr(hb, "unit_is_running", lambda u: False)
+    monkeypatch.setattr(hb, "timer_is_scheduled", lambda t: True)
+    monkeypatch.setattr(hb, "timer_has_fired", lambda t: True)
+    monkeypatch.setattr(hb, "unit_last_run", lambda u: (None, True))
+    monkeypatch.setattr(sys, "argv", ["heartbeat.py", "--dry-run"])
+
+    assert hb.main() == 1
+    assert "no record of ever completing" in capsys.readouterr().out
+
+
+def test_a_unit_sampled_mid_run_is_not_reported_broken(monkeypatch, tmp_path, capsys):
+    """systemd clears ExecMainExitTimestamp during a run and a timer whose service
+    is executing reports no next elapse. The 14:05:06 heartbeat and the 14:05:06
+    processor run started in the same second, and every timer here fires on a :0X
+    boundary — so this collision is structural, not unlucky.
+    """
+    vault = _empty_vault(tmp_path)
+    monkeypatch.setenv("ATTICUS_VAULT_PATH", str(vault))
+    monkeypatch.setattr(hb, "unit_exists", lambda u: "processor" in u)
+    monkeypatch.setattr(hb, "unit_is_running", lambda u: True)
+    monkeypatch.setattr(hb, "timer_is_scheduled", lambda t: False)
+    monkeypatch.setattr(hb, "unit_last_run", lambda u: (None, True))
+    monkeypatch.setattr(sys, "argv", ["heartbeat.py", "--dry-run"])
+
+    rc = hb.main()
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert "will never fire again" not in out
+    assert "no record of ever completing" not in out
