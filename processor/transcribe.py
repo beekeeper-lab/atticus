@@ -10,13 +10,21 @@ retry-on-transient with backoff.
 """
 import re
 import shutil
-import subprocess
 import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
 
 import requests
+
+from audio import (
+    API_MAX_SECONDS,
+    AudioToolMissing,
+    join_transcripts,
+    plan_chunks,
+    probe_seconds,
+    slice_audio,
+)
 
 API_MAX_BYTES = 25 * 1024 * 1024  # OpenAI hard limit
 
@@ -41,26 +49,7 @@ class FileTooLarge(TranscriptionError):
             retryable=False, kind="too_large")
 
 
-API_MAX_SECONDS = 1400   # gpt-4o-transcribe rejects anything longer, with a 400
-
-
-def _probe_seconds(audio: Path) -> float | None:
-    """Duration via ffprobe, or None if it is unavailable or unhelpful.
-
-    Only consulted when upstream metadata has no duration — the point is to
-    avoid making ffprobe a hard dependency of the processor for the normal path.
-    """
-    exe = shutil.which("ffprobe")
-    if not exe:
-        return None
-    try:
-        p = subprocess.run(
-            [exe, "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=nw=1:nk=1", str(audio)],
-            capture_output=True, text=True, timeout=60)
-        return float((p.stdout or "").strip()) if p.returncode == 0 else None
-    except (ValueError, OSError, subprocess.SubprocessError):
-        return None
+_probe_seconds = probe_seconds   # kept for callers that import it by name
 
 
 @contextmanager
@@ -97,20 +86,61 @@ def bounded_audio(audio: Path, cfg, duration_hint=None, log=print):
         cut = tmp / f"head{audio.suffix or '.mp3'}"
         log(f"    {seconds:.0f}s exceeds the {limit}s command limit — "
             f"transcribing the first {limit}s only")
-        # -c copy: no re-encode, so this is instant and needs no encoder. Frame
-        # -boundary imprecision of a few ms does not matter for speech.
-        p = subprocess.run(
-            [exe, "-hide_banner", "-loglevel", "error", "-nostdin",
-             "-i", str(audio), "-t", str(limit), "-c", "copy", str(cut)],
-            capture_output=True, text=True, timeout=300)
-        if p.returncode != 0 or not cut.is_file() or cut.stat().st_size == 0:
-            raise TranscriptionError(
-                f"could not truncate the recording: {(p.stderr or '').strip()[:200]}",
-                retryable=False, kind="too_large")
+        try:
+            slice_audio(audio, cut, 0, limit)
+        except AudioToolMissing as e:
+            raise TranscriptionError(str(e), retryable=False, kind="too_large")
         yield cut, {"truncated_from_seconds": round(seconds, 1),
                     "transcribed_seconds": limit}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def transcribe_long(audio: Path, cfg, duration: float, log=print,
+                    *, attempts: int = 3) -> tuple[str, dict]:
+    """Transcribe a recording too long for one request, by chunking it.
+
+    This is the DOCUMENT path, and it is opt-in for a reason. Truncation is
+    right for a command — the wake phrase comes first, so everything after the
+    opening seconds is silence or ambient speech, and transcribing 40 minutes of
+    someone's day would be both wasteful and a privacy problem. But a meeting
+    handed over deliberately is the opposite case: the whole thing is the point.
+
+    Chunks overlap so a word split across a boundary is not lost in both halves;
+    the duplicated run is removed when the parts are joined.
+    """
+    chunk = getattr(cfg, "chunk_seconds", 1200)
+    overlap = getattr(cfg, "chunk_overlap_seconds", 10)
+    if chunk > API_MAX_SECONDS:
+        chunk = API_MAX_SECONDS
+
+    plan = plan_chunks(duration, chunk, overlap)
+    log(f"    chunking {duration:.0f}s into {len(plan)} part(s) "
+        f"of up to {chunk}s with {overlap}s overlap")
+
+    tmp = Path(tempfile.mkdtemp(prefix="atticus-chunk."))
+    parts: list[str] = []
+    try:
+        for i, (start, dur) in enumerate(plan, 1):
+            piece = tmp / f"part{i:03d}{audio.suffix or '.mp3'}"
+            try:
+                slice_audio(audio, piece, start, dur)
+            except AudioToolMissing as e:
+                raise TranscriptionError(str(e), retryable=False, kind="too_large")
+            log(f"      part {i}/{len(plan)}  {start:.0f}s–{start + dur:.0f}s")
+            # A failure in one part fails the whole recording rather than
+            # yielding a transcript with a silent hole in the middle.
+            parts.append(transcribe(piece, cfg, attempts=attempts))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    text = join_transcripts(parts)
+    return text, {
+        "chunks": len(plan),
+        "chunk_seconds": chunk,
+        "chunk_overlap_seconds": overlap,
+        "transcribed_seconds": round(duration, 1),
+    }
 
 
 def transcribe(audio: Path, cfg, *, attempts: int = 3) -> str:

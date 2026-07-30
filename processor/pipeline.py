@@ -147,22 +147,39 @@ class _ResultTarget:
 
 def stage_transcribe(rec, cfg, log):
     log.info(f"  transcribe: {rec.audio.name}")
-    # A recording left running is normal operator error, and only its opening
-    # seconds can contain a command — the wake phrase has to come first. So an
-    # over-long recording is truncated, never rejected: rejecting would discard
-    # a real instruction silently.
-    with stt.bounded_audio(rec.audio, cfg, rec.data.get("duration_seconds"),
-                           log=log.info) as (upload, trunc):
-        text = stt.transcribe(upload, cfg)
+
+    # Two genuinely different jobs, and the record decides which one this is.
+    #
+    # A COMMAND is truncated: the wake phrase must come first, so everything
+    # past the opening seconds is silence or ambient conversation. Transcribing
+    # all of it would be wasteful and a privacy problem.
+    #
+    # A DOCUMENT — a meeting, a long dictation — is chunked, because the whole
+    # recording is the point. Opt in globally with ATTICUS_CHUNK_LONG_AUDIO, or
+    # per recording with "chunk_audio": true in its metadata.
+    chunk_this = bool(rec.data.get("chunk_audio",
+                                   getattr(cfg, "chunk_long_audio", False)))
+    duration = rec.data.get("duration_seconds")
+    if not isinstance(duration, (int, float)):
+        duration = stt.probe_seconds(rec.audio)
+
+    if chunk_this and duration and duration > getattr(cfg, "max_command_seconds", 180):
+        text, trunc = stt.transcribe_long(rec.audio, cfg, duration, log=log.info)
+    else:
+        with stt.bounded_audio(rec.audio, cfg, rec.data.get("duration_seconds"),
+                               log=log.info) as (upload, trunc):
+            text = stt.transcribe(upload, cfg)
     write_atomic(rec.transcript_path(cfg.vault), text + "\n")
     words = len(text.split())
     log.info(f"    {words} words: {text[:90]}{'…' if len(text) > 90 else ''}")
     rec.advance(TRANSCRIBED, word_count=words, **trunc,
                 transcript_path=str(rec.transcript_path(cfg.vault).relative_to(cfg.vault)))
-    if trunc:
+    if trunc.get("truncated_from_seconds"):
         notify(cfg, f"Truncated a {trunc['truncated_from_seconds']:.0f}s recording "
                     f"to its first {trunc['transcribed_seconds']}s — "
                     f"was the device left running?\n\n{text[:150]}", log)
+    elif trunc.get("chunks"):
+        log.info(f"    joined {trunc['chunks']} chunk(s) → {words} words")
 
 
 def stage_route(rec, cfg, log):
