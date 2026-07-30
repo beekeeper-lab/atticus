@@ -1,4 +1,4 @@
-#!/home/gregg/.local/share/claude-fetchers/venv/bin/python
+#!/usr/bin/env python3
 """Plaud Web fetcher — the CLI replacement (ADR-002).
 
     plaud_web.py login                    seed the session (interactive, once)

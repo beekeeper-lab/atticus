@@ -9,6 +9,11 @@ task breakdown, and open questions. This file is orientation only.
 
 ## Current state
 
+**v1. Working end to end on real recordings** — 15 processed, 5 executed into
+published HTML reports, each announced by a push notification carrying a link to
+a private searchable site. Measured round trip ~30 minutes, of which ~13 is the
+pipeline and the rest is device sync and poll intervals.
+
 **Cloud → vault → agent output works end to end on real recordings.** Both
 timers run on Forge. The pipeline has transcribed real audio, held the
 wake-phrase gate on overheard speech, and published a 74 KB research report.

@@ -324,6 +324,24 @@ def main():
         # both list a recording before either has pushed. If the pull brought
         # the other host's metadata, honour it rather than downloading twice.
         stem = make_stem(rec)
+
+        # Absurd length — do not spend the download. Plaud reports duration in
+        # the listing, so this costs nothing. The processor truncates merely-long
+        # recordings; this is the separate case of something pathological.
+        secs = rec.get("duration_seconds")
+        if (cfg.max_ingest_seconds and isinstance(secs, (int, float))
+                and secs > cfg.max_ingest_seconds):
+            log(f"  ⊘ {stem}: {secs / 60:.0f} min exceeds the "
+                f"{cfg.max_ingest_seconds / 60:.0f} min ingest limit — not downloaded")
+            # Ledger it so this is not re-evaluated every 15 minutes. Delete the
+            # line to reconsider it after raising the limit.
+            append_seen(vault, rec["id"], f"{stem} (skipped: too long)")
+            notify(cfg, f"Skipped a {secs / 60:.0f}-minute recording on "
+                        f"{host_id()} — over the ingest limit, not downloaded.",
+                   log=log, key="too-long")
+            skipped += 1
+            continue
+
         dt = datetime.fromisoformat(rec["created_at"].replace("Z", "+00:00"))
         if (vault / "inbox" / dt.strftime("%Y/%m") / f"{stem}.json").exists():
             log(f"  = {stem} already in the vault (another host) — recording locally")
