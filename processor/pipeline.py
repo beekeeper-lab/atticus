@@ -28,7 +28,7 @@ import transcribe as stt                                     # noqa: E402
 from notify import notify as _notify                          # noqa: E402
 from vault import (                                          # noqa: E402
     EXECUTED, FAILED, PUBLISHED, RAW, ROUTED, TRANSCRIBED,
-    Git, MalformedRecord, VaultSyncError, load_records, write_atomic,
+    Git, VaultSyncError, load_records, write_atomic,
 )
 
 LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
@@ -168,10 +168,14 @@ def stage_route(rec, cfg, log):
         rec.advance(PUBLISHED, executed=False, gate_reason=reason)
         return False
 
-    instruction = stt.strip_wake_phrase(text, cfg)
+    instruction, clip = stt.extract_command(text, cfg)
+    if clip:
+        log.warn(f"    command bounded: {clip['transcript_chars']} chars of "
+                 f"transcript → {clip['command_chars']} chars of prompt")
     task = ex.build_task(instruction)
     write_atomic(rec.task_path(cfg.vault), task)
-    rec.advance(ROUTED, task_path=str(rec.task_path(cfg.vault).relative_to(cfg.vault)))
+    rec.advance(ROUTED, **clip,
+                task_path=str(rec.task_path(cfg.vault).relative_to(cfg.vault)))
     return True
 
 
@@ -184,7 +188,8 @@ def stage_execute(rec, cfg, log, dry_run=False):
         return
     res = ex.run(task, outdir, cfg, log=log.info)
     log.info(f"    produced {res['files']} file(s), {res['bytes']:,} bytes")
-    rec.advance(EXECUTED, output_files=res["files"], output_bytes=res["bytes"])
+    rec.advance(EXECUTED, output_files=res["files"], output_bytes=res["bytes"],
+                budget_usd=res.get("budget_usd"))
 
 
 def process(rec, cfg, git, log, dry_run=False) -> bool:

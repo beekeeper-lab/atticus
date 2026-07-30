@@ -21,8 +21,28 @@ class AlreadyRunning(RuntimeError):
 
 @contextmanager
 def single_instance(name: str, log=print):
-    d = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "atticus"
-    d.mkdir(parents=True, exist_ok=True)
+    # Under ProtectSystem=strict the runtime dir is read-only unless the unit
+    # declares RuntimeDirectory=, so fall back rather than crash. The fallback
+    # must be STABLE and shared, or a manual run and a timed run would take
+    # different locks and the race this exists to prevent would still happen.
+    candidates = []
+    if os.environ.get("XDG_RUNTIME_DIR"):
+        candidates.append(Path(os.environ["XDG_RUNTIME_DIR"]) / "atticus")
+    candidates.append(Path(f"/tmp/atticus-{os.getuid()}"))  # noqa: S108
+
+    d = None
+    for c in candidates:
+        try:
+            c.mkdir(parents=True, exist_ok=True)
+            probe = c / ".w"
+            probe.touch()
+            probe.unlink()
+            d = c
+            break
+        except OSError:
+            continue
+    if d is None:
+        raise RuntimeError(f"no writable location for the {name} lock")
     path = d / f"{name}.lock"
     fh = path.open("w")
     try:
