@@ -254,6 +254,9 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
                "--add-dir", str(out)]
         if cfg.claude_model:
             cmd += ["--model", cfg.claude_model]
+        tools = getattr(cfg, "allowed_tools", None)
+        if tools:
+            cmd += ["--allowedTools", *tools]
         budget = getattr(cfg, "max_budget_usd", "")
         if budget:
             cmd += ["--max-budget-usd", str(budget)]
