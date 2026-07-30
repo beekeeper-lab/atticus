@@ -30,7 +30,7 @@ def _bwrap_actually_works() -> bool:
     try:
         p = subprocess.run(
             ["bwrap", "--ro-bind", "/usr", "/usr", "--dev", "/dev",
-             "--", "/bin/true"],
+             "--", "/usr/bin/true"],
             capture_output=True, timeout=20)
         return p.returncode == 0
     except (OSError, subprocess.SubprocessError):
