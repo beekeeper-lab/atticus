@@ -27,6 +27,7 @@ from config import Config                                    # noqa: E402
 from lock import AlreadyRunning, single_instance             # noqa: E402
 import execute as ex                                         # noqa: E402
 import transcribe as stt                                     # noqa: E402
+import wake                                                  # noqa: E402
 from notify import notify as _notify                          # noqa: E402
 from vault import (                                          # noqa: E402
     EXECUTED, FAILED, PUBLISHED, RAW, RETRY_WAIT, ROUTED, TRANSCRIBED,
@@ -167,15 +168,44 @@ def stage_transcribe(rec, cfg, log):
 def stage_route(rec, cfg, log):
     text = rec.transcript_path(cfg.vault).read_text().strip()
     ok, reason = stt.sanity_check(text, cfg)
+
+    # The strict gate failed. Before filing this as a note — which silently
+    # discards a real command when the wake word was merely misheard — ask
+    # whether the first word was PHONETICALLY a mishearing. Only reachable
+    # after an exact-match failure, so this can widen the gate, never narrow it.
+    if not ok and "no wake phrase" in reason:
+        heard = wake.first_token(text)
+        recovered, why = wake.adjudicate(
+            heard, cfg, log=log.info,
+            following=" ".join(text.split()[1:1 + wake.CONTEXT_WORDS]))
+        log.info(f"    wake check: {why}")
+        rec.data["wake_heard"] = heard
+        rec.data["wake_adjudicated"] = recovered
+        if recovered:
+            log.warn(f"    RECOVERED: {heard!r} judged a mishearing of "
+                     f"{cfg.wake_phrase!r} — executing")
+            # The transcript on disk is NEVER rewritten. It records what was
+            # actually heard, which is the evidence; the substitution is
+            # metadata, so a fuzzy admission stays visible in git history.
+            ok, reason = True, f"wake phrase recovered from {heard!r}"
+            rec.data["wake_recovery_reason"] = why
+
     if not ok:
         # Not an error — a deliberate refusal to act on doubtful input.
         log.warn(f"    gate: {reason}")
         note = rec.outdir(cfg.vault) / "note.md"
         write_atomic(note, f"# Unexecuted recording\n\n**Reason:** {reason}\n\n"
                            f"## Transcript\n\n{text}\n")
-        rec.advance(PUBLISHED, executed=False, gate_reason=reason)
+        rec.advance(PUBLISHED, executed=False, gate_reason=reason,
+                    wake_heard=rec.data.get("wake_heard"),
+                    wake_adjudicated=rec.data.get("wake_adjudicated"))
         return False
 
+    # When the wake word was recovered, strip_wake_phrase cannot find it — it is
+    # looking for "atticus" in a transcript that says "Artemis". Hand it the word
+    # that was actually heard so the instruction starts in the right place.
+    if rec.data.get("wake_adjudicated"):
+        cfg = _with_wake(cfg, rec.data.get("wake_heard", ""))
     instruction, clip = stt.extract_command(text, cfg)
     if clip:
         log.warn(f"    command bounded: {clip['transcript_chars']} chars of "
@@ -185,6 +215,14 @@ def stage_route(rec, cfg, log):
     rec.advance(ROUTED, **clip,
                 task_path=str(rec.task_path(cfg.vault).relative_to(cfg.vault)))
     return True
+
+
+def _with_wake(cfg, heard: str):
+    """A shallow view of cfg whose wake phrase is the word actually heard."""
+    import copy
+    c = copy.copy(cfg)
+    c.wake_phrase = heard.lower()
+    return c
 
 
 def stage_execute(rec, cfg, log, dry_run=False):

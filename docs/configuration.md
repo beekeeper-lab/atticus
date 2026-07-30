@@ -11,6 +11,8 @@ copies.
 | Setting | Default | Purpose |
 |---|---|---|
 | `ATTICUS_ALARM_THROTTLE_HOURS` | `6` | One alarm per condition per this many hours. The ingest timer rediscovers a dead session every 15 minutes; alarming each time is how you learn to ignore the alarm. |
+| `ATTICUS_ALLOWED_TOOLS` | `WebSearch,WebFetch,Read,Write,Edit,Glob,Grep,Bash` | Tools the agent may use, comma-separated. WebSearch/WebFetch are granted deliberately. Denying them bought NO security: the sandbox leaves the network namespace intact because research needs it, an… |
+| `ATTICUS_AUDIO_RETENTION_DAYS` | `30` | Expire raw audio after this many days. 0 = keep forever. Transcripts and agent output are NEVER expired — only the audio. The vault contains recordings of other people who did not consent to perman… |
 | `ATTICUS_BACKLOG_ALARM_MINUTES` | *(empty)* | Warn if a recording sits in inbox/ unprocessed longer than this. The queue's benefit — the processor may be offline, work waits — is also its failure mode: a dead processor looks exactly like an id… |
 | `ATTICUS_CLAUDE_BIN` | `claude` | ── execution ──────────────────────────────────────────────────────── Leave model unset to use the Claude Code default. |
 | `ATTICUS_CLAUDE_MODEL` | *(empty)* |  |
@@ -39,9 +41,13 @@ copies.
 | `ATTICUS_STT_TIMEOUT` | `60` |  |
 | `ATTICUS_STT_URL` | `https://api.openai.com/v1/audio/transcriptions` | ── transcription ──────────────────────────────────────────────────── Same endpoint and model as the machine's existing dictation (hyprwhspr), deliberately: one transcription stack, not two. The AP… |
 | `ATTICUS_VAULT_PATH` | *(empty)* | Absolute path to the atticus-vault checkout on THIS host. Each host has its own clone; the paths need not match. |
+| `ATTICUS_WAKE_ADJUDICATOR` | `on` | Probabilistic wake-word recovery. When the strict gate fails, ask a small model whether the first word could be a MISHEARING of the wake phrase. Phonetics only, one word in, one token out, and it f… |
+| `ATTICUS_WAKE_ADJUDICATOR_MODEL` | `gpt-4o-mini` |  |
+| `ATTICUS_WAKE_ADJUDICATOR_THRESHOLD` | `50` |  |
+| `ATTICUS_WAKE_ADJUDICATOR_TIMEOUT` | `15` |  |
 | `ATTICUS_WAKE_ALIASES` | *(empty)* | Known mishearings of the wake phrase, comma-separated, exact-matched. Observed: "Atticus, research the best Android phone options" transcribed as "Advocates research…" and was silently filed as a n… |
 | `ATTICUS_WAKE_PHRASE` | *(empty)* | Optional wake phrase. Empty = execute every transcript that passes the word count. Set it (e.g. "atticus") and only transcripts starting with it are executed — everything else is filed as an unexec… |
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*33 settings.*
+*39 settings.*

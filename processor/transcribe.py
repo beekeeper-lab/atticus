@@ -195,6 +195,7 @@ def sanity_check(text: str, cfg) -> tuple[bool, str]:
         if not any(head.startswith(t) for t in triggers if t):
             return False, f"no wake phrase {cfg.wake_phrase!r} — filed as a note, not executed"
 
+
     return True, "ok"
 
 

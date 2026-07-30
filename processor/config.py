@@ -71,6 +71,11 @@ class Config:
         self.notify_notes = (g("ATTICUS_NOTIFY_NOTES", "false").lower()
                              in ("1", "true", "yes", "on"))
         self.push_retries = int(g("ATTICUS_PUSH_RETRIES", "3"))
+        # Expire raw audio after this many days; 0 keeps it forever. Transcripts
+        # and outputs are never expired. The vault holds recordings of other
+        # people who did not consent to permanent retention. NOTE: this removes
+        # audio from the working tree, not from git history — see ops/retention.py.
+        self.audio_retention_days = int(g("ATTICUS_AUDIO_RETENTION_DAYS", "30"))
         self.git_name = g("ATTICUS_GIT_AUTHOR_NAME", "Atticus Processor")
         self.git_email = g("ATTICUS_GIT_AUTHOR_EMAIL", "atticus@localhost")
 
@@ -107,6 +112,17 @@ class Config:
                         not in ("0", "off", "false", "no"))
         self.claude_model = g("ATTICUS_CLAUDE_MODEL", "") or None
         self.exec_timeout = int(g("ATTICUS_EXEC_TIMEOUT", "1800"))
+        # Tools the agent may use. WebSearch/WebFetch are granted because
+        # denying them bought NO security: the sandbox deliberately leaves the
+        # network namespace intact (research needs it), and the agent has bash,
+        # curl, python3 and working DNS — verified. So a tool denial prevented
+        # convenient research while leaving exfiltration entirely available.
+        # Real egress control is a network-namespace + allowlist proxy, and it
+        # should be built for its own sake, not simulated by a tool list.
+        self.allowed_tools = [t.strip() for t in
+                              (g("ATTICUS_ALLOWED_TOOLS",
+                                 "WebSearch,WebFetch,Read,Write,Edit,Glob,Grep,Bash")
+                               or "").split(",") if t.strip()]
         # Hard spend ceiling per recording. Wall-clock alone is a poor proxy: a
         # research fan-out can spend a lot in a few minutes, and one sentence
         # spoken near the device should not be able to run up an unbounded bill.
@@ -151,6 +167,21 @@ class Config:
         # fire on ordinary speech, and a false positive runs an autonomous agent
         # on words never addressed to it. A curated list is explicit, auditable,
         # and grows only when you observe a mishearing.
+        # Probabilistic recovery when the strict gate fails. Asks a small model
+        # whether the first word could be a mishearing of the wake phrase —
+        # phonetics only, one word in, one token out, failing closed. Replaces
+        # the need to maintain a whitelist: verdicts are cached, so the system
+        # learns its own aliases. See processor/wake.py for the safety design.
+        self.wake_adjudicator = (g("ATTICUS_WAKE_ADJUDICATOR", "on").lower()
+                                 not in ("0", "off", "false", "no"))
+        self.wake_adjudicator_model = g("ATTICUS_WAKE_ADJUDICATOR_MODEL", "gpt-4o-mini")
+        self.wake_adjudicator_timeout = int(g("ATTICUS_WAKE_ADJUDICATOR_TIMEOUT", "15"))
+        # Score at or above which a misheard word is admitted. Tuned against the
+        # three real mishearings observed and a set of words that must NOT open
+        # the gate — see tests/unit/test_wake.py.
+        self.wake_adjudicator_threshold = int(g("ATTICUS_WAKE_ADJUDICATOR_THRESHOLD", "50"))
+        # Kept as a deterministic escape hatch, empty by default now that the
+        # adjudicator does this job. Populate it to force a match without a call.
         self.wake_aliases = [w.strip().lower() for w in
                              (g("ATTICUS_WAKE_ALIASES", "") or "").split(",")
                              if w.strip()]
