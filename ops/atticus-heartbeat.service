@@ -1,0 +1,22 @@
+[Unit]
+Description=Atticus heartbeat — alarm when nothing has happened
+Documentation=https://github.com/beekeeper-lab/atticus/blob/main/docs/HARDENING.md
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/atticus
+ExecStart=/usr/bin/python3 %h/atticus/ops/heartbeat.py
+
+EnvironmentFile=-%h/.config/ai/env
+EnvironmentFile=-%h/atticus/ops/.env
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment="GIT_SSH_COMMAND=ssh -F %h/.ssh/config"
+
+# Deliberately NOT sandboxed the way the processor is. This job's entire purpose
+# is to observe the system from outside, so it needs to read the vault, query
+# systemd, and reach the network. It runs no agent and executes no transcript.
+NoNewPrivileges=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=atticus-heartbeat
