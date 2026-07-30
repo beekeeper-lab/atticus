@@ -20,7 +20,6 @@ TITLE="${1:-}"; BODY="${2:-}"
 [[ -n "$TITLE" ]] || die 'usage: ops/pr.sh "Short title" ["body"]'
 
 cd "$(git rev-parse --show-toplevel)" || die "not in a git repo"
-REPO=$(basename "$(pwd)")
 
 # --- guardrails -------------------------------------------------------------
 if [[ -f README.md ]] && grep -qi 'Private. Data only' README.md 2>/dev/null; then
