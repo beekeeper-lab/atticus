@@ -62,7 +62,7 @@ exists so that a claim in the documentation cannot quietly become false.
 
 Earlier versions asserted this and did not deliver it: the vault deploy key was
 readable and the agent has a shell, so "the agent never touches git" was
-decorative. That history is in `docs/deploy/forge-2026-07-29.md`.
+decorative. That history is in `docs/history/forge-2026-07-29.md`.
 
 ### Failures must be loud
 

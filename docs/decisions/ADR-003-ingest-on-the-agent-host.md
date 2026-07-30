@@ -87,7 +87,7 @@ vault. The point is that the specific, obvious path from "overheard sentence" to
 "exfiltrated Plaud session" is closed.
 
 Worth revisiting if the agent ever gets broader tool permissions — granting
-`WebFetch`/`WebSearch` (open defect #3 in `docs/deploy/forge-2026-07-29.md`)
+`WebFetch`/`WebSearch` (open defect #3 in `docs/history/forge-2026-07-29.md`)
 moves in exactly the wrong direction and should be weighed against this.
 
 ### What we gain

@@ -32,6 +32,9 @@ jobs:
       - name: Tests
         run: uv run pytest -v
 
+      - name: Configuration docs are not stale
+        run: uv run python ops/gen-config-docs.py --check
+
       - name: Assert the security tests actually RAN
         run: |
           uv run pytest tests/security -q --collect-only | tail -1
