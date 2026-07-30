@@ -222,7 +222,7 @@ def build_task(transcript: str) -> str:
     into the vault when the design says it never should.
 
     The target is now a fixed in-workspace path, which is what run() actually
-    watches. See docs/deploy/forge-2026-07-29.md defect #2.
+    watches. See docs/history/forge-2026-07-29.md defect #2.
     """
     return PREAMBLE.format(transcript=transcript.strip())
 

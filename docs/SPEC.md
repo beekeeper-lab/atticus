@@ -6,6 +6,12 @@
 
 ---
 
+> **Reading this document.** It is the design record and retains superseded
+> reasoning on purpose. Where it disagrees with `README.md`, `SECURITY.md` or
+> `docs/configuration.md`, **those are current and this is history.** The
+> transport verdict in `docs/transport-tests.md` supersedes every hands-off sync
+> assumption below.
+
 ## 1. Intent
 
 Speak a task into a wearable recorder. Have an autonomous agent execute it and
@@ -52,7 +58,7 @@ Web fetcher (ADR-002), the iPhone drops out of the design entirely.
 │  NotePin S   │  record → stop
 └──────┬───────┘
        │
-       ├─── (A) Wi-Fi, while charging ──────────┐
+       ├─── (A) Wi-Fi while charging — DISPROVED (T1) ─┐
        │                                        ▼
        └─── (B) BLE ──► Plaud iOS app ──►  Plaud Cloud
                         (auto, no taps)         │
@@ -191,7 +197,7 @@ depend on it even if we wanted to.
 
 **Not local either** — this reverses an earlier decision. The original plan was
 `faster-whisper` on Forge. The machine already runs dictation many times a day
-through **hyprwhspr → OpenAI `gpt-4o-mini-transcribe`**, and that transcription
+through **hyprwhspr → OpenAI `gpt-4o-transcribe`**, and that transcription
 is known-good. Atticus uses the same endpoint and the same capitalization
 steering prompt — but a **larger model, `gpt-4o-transcribe`**.
 
@@ -209,7 +215,7 @@ different job:
 
 | | Dictation (hyprwhspr) | Atticus |
 |---|---|---|
-| Model | `gpt-4o-mini-transcribe` | `gpt-4o-transcribe` |
+| Model | `gpt-4o-transcribe` | `gpt-4o-transcribe` |
 | Cost/min | $0.003 | $0.006 |
 | Latency | **User is watching a cursor** | Nobody is waiting — 5-min timer |
 | Error cost | You see the typo and fix it mid-sentence | Silently becomes an agent's instruction |
@@ -232,7 +238,7 @@ The API key is read from `~/.config/ai/env` at runtime — the machine's single
 credential source — and never written into this repo. See the
 `hyprwhspr-doctor` skill for that convention.
 
-**The gate this creates.** `gpt-4o-mini-transcribe` returns plain text with no
+**The gate this creates.** `gpt-4o-transcribe` returns plain text with no
 confidence signal; `verbose_json` with `no_speech_prob` is `whisper-1` only. So
 the "is this transcript trustworthy" check is heuristic — word count and an
 optional wake phrase — rather than model confidence. See §4.2.
@@ -501,7 +507,7 @@ exposure, plus a moving part). Polling costs a `git pull` every two minutes and
 needs no inbound firewall rule. Revisit only if latency becomes the complaint.
 
 1. Scan `inbox/` for `status: raw`
-2. OpenAI `gpt-4o-mini-transcribe` → `processed/**/*.transcript.txt`, status `transcribed`
+2. OpenAI `gpt-4o-transcribe` → `processed/**/*.transcript.txt`, status `transcribed`
 3. Route: transcript → task file, status `routed`
 4. Execute: `claude -p` headless in the vault working dir, status `executed`
 5. Commit outputs, status `published`

@@ -47,7 +47,7 @@ lives. Without it the execute stage dies with "claude binary not found" while an
 interactive shell finds it fine — so the preflight passes green and the unit
 still cannot launch the agent.
 
-Both were found the hard way. See `docs/deploy/forge-2026-07-29.md`.
+Both were found the hard way. See `docs/history/forge-2026-07-29.md`.
 
 ## Credentials
 
