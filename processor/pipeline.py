@@ -28,7 +28,7 @@ from lock import AlreadyRunning, single_instance             # noqa: E402
 import execute as ex                                         # noqa: E402
 import transcribe as stt                                     # noqa: E402
 import wake                                                  # noqa: E402
-from notify import notify as _notify                          # noqa: E402
+from notify import clear as _notify_clear, notify as _notify  # noqa: E402
 from vault import (                                          # noqa: E402
     EXECUTED, FAILED, PUBLISHED, RAW, RETRY_WAIT, ROUTED, TRANSCRIBED,
     Git, VaultSyncError, load_records, write_atomic,
@@ -51,8 +51,10 @@ class Log:
     def error(self, m): self._e("ERROR", m)
 
 
-def notify(cfg, text, log):
-    _notify(cfg, text, log=log.warn, title="Atticus processor")
+def notify(cfg, text, log, **kw):
+    # Forward key= (and any other _notify kwarg) so a recurring condition can be
+    # throttled to one alarm per window instead of firing every 5-minute pass.
+    _notify(cfg, text, log=log.warn, title="Atticus processor", **kw)
 
 
 def primary_doc(outdir: Path) -> Path | None:
@@ -258,6 +260,14 @@ def stage_execute(rec, cfg, log, dry_run=False):
 def process(rec, cfg, git, log, dry_run=False) -> bool:
     """Drive one record as far as it will go. True if it ends published."""
     log.info(f"▶ {rec.stem}  [{rec.status}]")
+    # A due RETRY_WAIT record matches none of the stage branches below, so
+    # without this it would fall straight through every pass and never retry —
+    # rearm() only ran on a manual --retry. Re-arm it here so a retryable
+    # failure actually gets its second attempt: rearm() restores failed_stage,
+    # putting the record back at the stage that failed so it re-executes.
+    if rec.status == RETRY_WAIT and rec.due():
+        log.info(f"  ↻ retry due — re-arming to {rec.data.get('failed_stage') or RAW}")
+        rec.rearm()
     try:
         if rec.status == RAW:
             stage_transcribe(rec, cfg, log)
@@ -297,6 +307,12 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
             log.warn(f"  ↻ {kind}: {e}")
             log.warn(f"    attempt {rec.data['attempts']} — retrying after "
                      f"{rec.data['next_attempt_at']}")
+            # Commit the RETRY_WAIT transition. Without this the backoff state
+            # lived only in the local working tree: a later pass on another host
+            # (or after a pull) would not see next_attempt_at and could retry
+            # early or lose the attempt count. Git is the queue, so the wait has
+            # to be in it.
+            git.commit_push(f"retry-wait {rec.stem} (attempt {rec.data['attempts']})")
             return False
         log.error(f"  ✗ {kind}: {e}")
         git.commit_push(f"fail {rec.stem} ({kind})")
@@ -369,7 +385,17 @@ def main():
               log=log.warn)
 
     if not args.no_pull:
-        git.pull()
+        # A silent failure is the worst failure. An unreachable remote makes
+        # pull() return False; ignoring it means the pass runs on a stale tree,
+        # exits 0, and looks exactly like a quiet day — while work piles up
+        # invisibly. Mirror the VaultSyncError handling below: alarm (throttled)
+        # and exit 3.
+        if not git.pull():
+            log.error("git pull failed — the vault remote is unreachable")
+            notify(cfg, "Atticus cannot pull the vault. The processor is running "
+                        "on a stale tree and cannot see new recordings.",
+                   log, key="pull")
+            return 3
 
     bad = []
 
@@ -400,9 +426,15 @@ def main():
         log.info(f"{len(waiting)} record(s) waiting to retry; soonest "
                  f"{min(r.data.get('next_attempt_at', '') for r in waiting)}")
     if bad:
+        # Throttled: a malformed file stays malformed, so an unkeyed alarm fired
+        # every 5-minute pass and trained the operator to ignore it.
         notify(cfg, f"Atticus: {len(bad)} unreadable recording metadata file(s) "
                     f"quarantined — they are NOT being processed.\n\n"
-                    + "\n".join(str(p.name) for p, _ in bad[:5]), log)
+                    + "\n".join(str(p.name) for p, _ in bad[:5]), log, key="malformed")
+    else:
+        # No bad records this pass — clear the throttle so a NEW malformed file
+        # alarms immediately rather than waiting out a window opened earlier.
+        _notify_clear("malformed")
     if args.once or args.retry:
         want = args.once or args.retry
         todo = [r for r in load_records(cfg.vault, on_bad=on_bad)

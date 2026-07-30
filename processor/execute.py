@@ -80,7 +80,7 @@ class ExecutionError(RuntimeError):
 #  containing the agent
 # ---------------------------------------------------------------------------
 
-def agent_env(ws: Path, out: Path) -> dict:
+def agent_env(ws: Path, out: Path, cfg=None) -> dict:
     """The agent's environment, built by ALLOWLIST.
 
     It used to be `os.environ` minus three git variables, which meant the agent
@@ -92,17 +92,33 @@ def agent_env(ws: Path, out: Path) -> dict:
     Nothing credential-shaped is here on purpose. A capability that genuinely
     needs a secret should be handed exactly that one, at the point of use, not
     granted to every agent run by default.
+
+    HOME and PATH are SANDBOX-AWARE. With the sandbox on, the agent gets a
+    private HOME inside the workspace and a PATH pointing only at the bound-in
+    CLI — the operator's real home and tools are absent by mount namespace. With
+    ATTICUS_SANDBOX=off there IS no namespace, so those synthetic paths point at
+    nothing that exists: a HOME under a temp dir holds no credential and a PATH
+    of `ws/bin` holds no binary. That path built the sandbox and only the
+    sandbox, so with it off the agent could neither find `claude` nor
+    authenticate. Off is the documented trade — the agent shares the pipeline's
+    view — so hand it the real HOME and PATH to make that view actually usable.
     """
     keep = ("LANG", "LC_ALL", "TZ", "TERM")
     env = {k: os.environ[k] for k in keep if k in os.environ}
-    env.update({
+    if getattr(cfg, "sandbox", True):
         # A private HOME inside the workspace. Claude Code writes config and
         # caches; without this it reaches into the operator's real home.
-        "HOME": str(ws / "home"),
+        home = str(ws / "home")
         # Deliberately NOT the operator's PATH: that points at ~/.local/bin,
         # which does not exist in the sandbox and would only invite the agent to
         # look for tools it should not have. The CLI is bound into ws/bin.
-        "PATH": f"{ws / 'bin'}:/usr/local/bin:/usr/bin:/bin",
+        path = f"{ws / 'bin'}:/usr/local/bin:/usr/bin:/bin"
+    else:
+        home = os.environ.get("HOME") or str(Path.home())
+        path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+    env.update({
+        "HOME": home,
+        "PATH": path,
         "ATTICUS_OUTPUT_DIR": str(out),
     })
     return env
@@ -249,7 +265,21 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
 
         (ws / "TASK.md").write_text(task_md)
 
-        cmd = [cfg.claude_bin, "-p", "--output-format", "text",
+        # With the sandbox on, wrap_sandbox binds the CLI at ws/bin/claude and
+        # the agent's PATH finds it there. With it OFF there is no ws/bin, and
+        # the agent's PATH is the operator's — but `claude` typically lives in
+        # ~/.local/bin, which resolves for the pipeline yet not from a bare
+        # command name under a scrubbed PATH. Resolve it to an absolute path on
+        # the host now so the invocation works either way.
+        claude_bin = cfg.claude_bin
+        if not getattr(cfg, "sandbox", True):
+            resolved = shutil.which(cfg.claude_bin)
+            if resolved:
+                claude_bin = resolved
+            else:
+                log(f"    sandbox off and {cfg.claude_bin!r} is not on PATH — "
+                    f"the agent will likely fail to start")
+        cmd = [claude_bin, "-p", "--output-format", "text",
                "--permission-mode", "acceptEdits",
                "--add-dir", str(out)]
         if cfg.claude_model:
@@ -264,7 +294,7 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
             log("    no spend ceiling set (ATTICUS_MAX_BUDGET_USD is blank)")
         cmd = wrap_sandbox(cmd, ws, out, cfg, log=log)
 
-        env = agent_env(ws, out)
+        env = agent_env(ws, out, cfg)
 
         log(f"    running agent (timeout {cfg.exec_timeout}s)…")
         try:
@@ -284,7 +314,26 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
             raise ExecutionError(
                 f"agent exited {proc.returncode}: {err}", retryable=True)
 
-        produced = [p for p in out.rglob("*") if p.is_file()]
+        # Collection runs in the PIPELINE namespace — the one place where
+        # ~/.ssh (the vault deploy key) and the vault itself DO exist. The agent
+        # ran sandboxed and cannot see them, but it CAN plant a symlink inside
+        # output/ (output/x -> ~/.ssh/atticus_vault) and let collection here
+        # follow it out. So: refuse any symlink, prove every survivor still
+        # resolves inside output/ (a PARENT could be a symlinked directory), and
+        # copy without following links. This is the exfiltration boundary.
+        out_real = out.resolve()
+        produced = []
+        for p in sorted(out.rglob("*")):
+            rel = p.relative_to(out)
+            if p.is_symlink():
+                log(f"    refused symlink: {rel}")
+                continue
+            if not p.is_file():
+                continue                      # skip dirs, fifos, sockets, devices
+            if not p.resolve().is_relative_to(out_real):
+                log(f"    refused path escaping output/: {rel}")
+                continue
+            produced.append(p)
         if not produced:
             # The agent may have answered in prose without writing a file.
             # Salvage it rather than losing the work.
@@ -301,7 +350,10 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
             rel = src.relative_to(out)
             dst = dest_outdir / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+            # follow_symlinks=False belt-and-braces: `src` is already proven a
+            # non-symlink regular file inside output/, but a copy that never
+            # dereferences cannot resurrect the exfiltration the filter blocks.
+            shutil.copy2(src, dst, follow_symlinks=False)
             total += src.stat().st_size
 
         return {"files": len(produced), "bytes": total, "stdout_tail": tail,

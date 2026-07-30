@@ -19,6 +19,11 @@ from pathlib import Path
 # and is refused after the upload.
 API_MAX_SECONDS = 1400
 
+# OpenAI's documented per-request byte ceiling. Lives here, next to the seconds
+# limit, because the pipeline (processor/transcribe.py) and the standalone CLI
+# (tools/transcribe_audio.py) both need it and had each defined their own copy.
+API_MAX_BYTES = 25 * 1024 * 1024
+
 # A 12-hour recording at the default chunk length is 36 parts. Hundreds means
 # a misconfiguration, and every part is a paid request.
 MAX_CHUNKS = 200

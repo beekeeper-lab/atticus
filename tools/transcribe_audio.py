@@ -42,6 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "processor"))
 from audio import (  # noqa: E402
+    API_MAX_BYTES,
     API_MAX_SECONDS,
     AudioToolMissing,
     join_transcripts,
@@ -51,9 +52,9 @@ from audio import (  # noqa: E402
 
 MODEL_DEFAULT = os.environ.get("TRANSCRIBE_AUDIO_MODEL") or "gpt-4o-mini-transcribe"
 
-# OpenAI's documented per-request ceiling. Override with --max-bytes if the
-# limit moves; the API's own rejection is the backstop either way.
-API_MAX_BYTES = 25 * 1024 * 1024
+# The per-request byte ceiling (API_MAX_BYTES) now lives in processor/audio.py,
+# shared with the pipeline. Override with --max-bytes if the limit moves; the
+# API's own rejection is the backstop either way.
 
 # Extensions the transcription endpoint accepts directly. Anything outside
 # this set is a normalization candidate rather than an immediate failure.
@@ -209,12 +210,12 @@ def validate(src: Path, info: dict, size: int, max_bytes: int,
                       f"audio is {d / 3600:.1f}h long, beyond the {MAX_DURATION_S // 3600}h "
                       f"sanity limit",
                       "Raise MAX_DURATION_S if this is genuinely intended.")
-    if size > max_bytes:
+    if size > max_bytes and not allow_chunking:
         raise Failure(
             Err.UnsupportedAudioFormat,
             f"{size:,} bytes exceeds the {max_bytes:,}-byte single-request limit",
-            "Chunking is not implemented in this version. Split the recording, "
-            "or re-encode it smaller (mono 16 kHz) and try again.",
+            "Pass --chunk to split it and transcribe the parts in order, or "
+            "re-encode it smaller (mono 16 kHz) and try again.",
         )
     # Duration, not just size. The API caps DURATION independently, and a small
     # speech-bitrate file sails past the size check and is rejected after the
@@ -435,6 +436,15 @@ def transcribe_chunked(audio: Path, info: dict, args, log: Log) -> tuple[str, di
                 slice_audio(audio, piece, start, dur)
             except AudioToolMissing as e:
                 raise Failure(Err.DependencyMissing, str(e))
+            # A piece can still be over the byte limit if the audio is dense —
+            # verify before paying for an upload the API will reject.
+            psize = piece.stat().st_size
+            if psize > args.max_bytes:
+                raise Failure(
+                    Err.UnsupportedAudioFormat,
+                    f"chunk {i} is {psize:,} bytes, over the {args.max_bytes:,}-"
+                    f"byte limit",
+                    "Lower --chunk-seconds, or re-encode smaller (mono 16 kHz).")
             log.say(f"  part {i}/{len(plan)}  "
                     f"{human_duration(start)}-{human_duration(start + dur)}")
             # One failed part fails the whole file rather than returning a
@@ -559,19 +569,22 @@ def run(args) -> int:
             log.say(f"Normalizing ({reason})...")
             tmpdir = Path(tempfile.mkdtemp(prefix="transcribe-audio."))
             upload = normalize(src, tmpdir, log)
-            if upload.stat().st_size > args.max_bytes:
+            if upload.stat().st_size > args.max_bytes and not args.chunk:
                 raise Failure(
                     Err.UnsupportedAudioFormat,
                     f"even after normalizing, {upload.stat().st_size:,} bytes "
                     f"exceeds the {args.max_bytes:,}-byte limit",
-                    "Chunking is not implemented in this version.")
+                    "Pass --chunk to split it into parts under the limit.")
 
         log.say(f"Transcribing with {args.model}...")
         chunk_meta = {}
-        if args.chunk and (info["duration_seconds"] or 0) > API_MAX_SECONDS:
-            # Too long for one request and the caller asked for chunking. The
-            # normalize-and-retry fallback below does not apply: each part is
-            # sliced from a file ffprobe has already validated.
+        too_long = (info["duration_seconds"] or 0) > API_MAX_SECONDS
+        too_big = upload.stat().st_size > args.max_bytes
+        if args.chunk and (too_long or too_big):
+            # Too long OR too big for one request, and the caller asked for
+            # chunking. (validate() deferred the byte-size rejection so we could
+            # reach here.) The normalize-and-retry fallback below does not apply:
+            # each part is sliced from a file ffprobe has already validated.
             text, chunk_meta, elapsed = transcribe_chunked(upload, info, args, log)
         else:
             try:
