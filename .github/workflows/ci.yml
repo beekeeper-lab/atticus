@@ -80,8 +80,14 @@ jobs:
             # systemd silently ignored the line on the host. That is how the
             # ADR-003 credential control or a timer schedule could be lost with
             # every check still passing.
+            # 'Command X is not executable' is the ExecStart binary missing on a
+            # bare runner — the ingest unit points at a Playwright venv python
+            # that only exists on a deployed host. This job was RED on main
+            # before this filter existed, which made every other check in it
+            # moot, so the noise has to be named precisely rather than broadly.
             out=$(systemd-analyze verify "$u" 2>&1 \
-                  | grep -viE 'Unknown section|command not found' || true)
+                  | grep -viE 'Unknown section|command not found|Command .* is not executable' \
+                  || true)
             if [[ -n "$out" ]]; then
               problems+="--- $u"$'\n'"$out"$'\n'
             fi
