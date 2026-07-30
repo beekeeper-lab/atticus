@@ -57,7 +57,13 @@ class Log:
 def notify(cfg, text, log, **kw):
     # Forward key= (and any other _notify kwarg) so a recurring condition can be
     # throttled to one alarm per window instead of firing every 5-minute pass.
-    _notify(cfg, text, log=log.warn, title="Atticus processor", **kw)
+    #
+    # setdefault, not a literal: the title used to be hardcoded here, so any
+    # caller passing its own title= raised "got multiple values for keyword
+    # argument" — swallowed by the caller's own try/except and surfacing only as a
+    # mysteriously undelivered alarm.
+    kw.setdefault("title", "Atticus processor")
+    return _notify(cfg, text, log=log.warn, **kw)
 
 
 def primary_doc(outdir: Path) -> Path | None:
@@ -150,6 +156,61 @@ class _ResultTarget:
 #  stages
 # ---------------------------------------------------------------------------
 
+def _alarm_budget_thresholds(cfg, log):
+    """Announce each budget threshold the month's api spend has just passed.
+
+    Called right after transcription is recorded, because transcription is where
+    api spend actually moves — the adjudicator adds fractions of a cent, and its
+    contribution is picked up by the next recording's check.
+
+    Never lets an accounting problem fail a recording that already succeeded: the
+    transcript is written and the money is spent either way.
+    """
+    try:
+        crossed = usage.newly_crossed(cfg.vault, cfg)
+        if not crossed:
+            return
+        state = usage.budget_state(cfg.vault, cfg)
+        for t in crossed:
+            final = state["enabled"] and t >= state["budget_usd"]
+            if final:
+                body = (f"Atticus has spent ${state['spent_usd']:.2f} of its "
+                        f"${state['budget_usd']:.2f} API budget for "
+                        f"{state['month']}.\n\n"
+                        f"TRANSCRIPTION IS NOW STOPPED. Recordings keep arriving "
+                        f"in the vault and will be processed once the budget is "
+                        f"raised (ATTICUS_API_BUDGET_USD) or the month rolls "
+                        f"over. Nothing is lost.")
+                title, tags, priority = ("Atticus — API budget SPENT",
+                                         "rotating_light", "high")
+            else:
+                remaining = state.get("remaining_usd")
+                tail = (f" ${remaining:.2f} left of ${state['budget_usd']:.2f}."
+                        if remaining is not None else "")
+                body = (f"Atticus API spend for {state['month']} has passed "
+                        f"${t:.2f} (now ${state['spent_usd']:.2f}).{tail}\n\n"
+                        f"This is transcription and the wake adjudicator only — "
+                        f"the agent runs on your Claude subscription and is not "
+                        f"counted here. Run `atticus-usage` for the breakdown.")
+                title, tags, priority = ("Atticus — API budget warning",
+                                         "warning", "default")
+            log.warn(f"  ! api spend passed ${t:.2f} "
+                     f"(${state['spent_usd']:.4f} of ${state['budget_usd']:.2f})")
+            notify(cfg, body, log, key=f"budget-{state['month']}-{t:.2f}",
+                   title=title, tags=tags, priority=priority)
+            # Marked whether or not delivery succeeded, and that is a deliberate
+            # trade. Retrying until it lands would re-announce the same crossing
+            # every 5-minute pass for the rest of the month if ntfy is
+            # unreachable or unset — the alarm-fatigue failure this codebase
+            # already avoids elsewhere. notify() logs its own failures loudly, the
+            # standing state is always in `atticus-usage`, and the threshold that
+            # actually matters ($budget) also stops transcription, which raises a
+            # separate per-recording alarm. So a missed push cannot hide it.
+            usage.mark_alerted(cfg.vault, t, state["spent_usd"], log=log.warn)
+    except Exception as e:                          # noqa: BLE001
+        log.warn(f"  ! budget threshold check failed: {type(e).__name__}: {e}")
+
+
 def stage_transcribe(rec, cfg, log):
     log.info(f"  transcribe: {rec.audio.name}")
 
@@ -207,6 +268,8 @@ def stage_transcribe(rec, cfg, log):
                  usd=usage.transcription_usd(transcribed, cfg.stt_model),
                  audio_seconds=round(transcribed, 1),
                  chunks=trunc.get("chunks"), log=log.warn)
+
+    _alarm_budget_thresholds(cfg, log)
 
     write_atomic(rec.transcript_path(cfg.vault), text + "\n")
     words = len(text.split())

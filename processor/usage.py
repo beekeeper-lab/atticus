@@ -25,6 +25,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 API, SUBSCRIPTION = "api", "subscription"
+# Bookkeeping events that are neither money nor quota — currently just the record
+# of which budget alerts have already fired. Excluded from every total, so a
+# marker can live in the same append-only ledger without skewing a report.
+META = "meta"
 
 # OpenAI list prices, USD per minute of audio. Overridable, because a price
 # change should not require a code edit to keep the accounting honest.
@@ -79,8 +83,9 @@ def record(vault: Path, *, kind: str, billing: str, stem: str = "",
     rather than inferred: a caller that has to name it cannot accidentally file
     subscription tokens as money.
     """
-    if billing not in (API, SUBSCRIPTION):
-        raise ValueError(f"billing must be {API!r} or {SUBSCRIPTION!r}, got {billing!r}")
+    if billing not in (API, SUBSCRIPTION, META):
+        raise ValueError(f"billing must be one of {API!r}, {SUBSCRIPTION!r}, "
+                         f"{META!r} — got {billing!r}")
     event = {"at": _utcnow(), "month": month_key(), "kind": kind,
              "billing": billing, "stem": stem, "model": model,
              "usd": round(float(usd or 0.0), 6), "host": _host()}
@@ -145,6 +150,37 @@ def budget_state(vault: Path, cfg) -> dict:
     }
 
 
+def newly_crossed(vault: Path, cfg) -> list[float]:
+    """Alert thresholds this month's api spend has passed and not yet announced.
+
+    "Not yet announced" is recorded in the LEDGER, not in a notify stamp file.
+    notify()'s throttle is a time window (default 6h), which is the wrong shape
+    here: once spend is over a threshold it stays over, so a time-based throttle
+    would re-announce the same crossing every 6 hours for the rest of the month.
+    A ledger marker is month-scoped, survives a cleared /tmp, is committed with
+    everything else, and resets by itself when the month rolls over.
+
+    Returns ascending thresholds so a single pass that jumps two of them
+    announces both, in order, rather than silently skipping one.
+    """
+    thresholds = sorted(float(t) for t in getattr(cfg, "budget_alert_usd", []) or [])
+    if not thresholds:
+        return []
+    spent = api_spend(vault)
+    already = {round(float(e.get("threshold_usd") or 0), 4)
+               for e in load(vault, month_key())
+               if e.get("kind") == "budget-alert"}
+    return [t for t in thresholds
+            if spent >= t and round(t, 4) not in already]
+
+
+def mark_alerted(vault: Path, threshold: float, spent: float, log=None):
+    """Record that a threshold has been announced, so it is announced once."""
+    record(vault, kind="budget-alert", billing=META,
+           threshold_usd=round(float(threshold), 4),
+           spent_usd=round(float(spent), 6), log=log)
+
+
 def summarise(vault: Path, month: str | None = None) -> dict:
     """Report shape: api money by kind, subscription tokens by model."""
     events = load(vault, month or month_key())
@@ -172,7 +208,10 @@ def summarise(vault: Path, month: str | None = None) -> dict:
             "api_total_usd": round(sum(r["usd"] for r in api.values()), 6),
             "subscription_imputed_usd": round(
                 sum(r["imputed_usd"] for r in sub.values()), 6),
-            "events": len(events)}
+            # Consumption events only. META markers (budget alerts already sent)
+            # live in the same ledger and would otherwise inflate this count.
+            "events": sum(1 for e in events
+                          if e.get("billing") in (API, SUBSCRIPTION))}
 
 
 def from_claude_json(payload: dict) -> dict:
