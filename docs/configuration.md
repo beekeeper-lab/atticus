@@ -14,6 +14,9 @@ copies.
 | `ATTICUS_ALLOWED_TOOLS` | `WebSearch,WebFetch,Read,Write,Edit,Glob,Grep,Bash` | Tools the agent may use, comma-separated. WebSearch/WebFetch are granted deliberately. Denying them bought NO security: the sandbox leaves the network namespace intact because research needs it, an… |
 | `ATTICUS_AUDIO_RETENTION_DAYS` | `30` | Expire raw audio after this many days. 0 = keep forever. Transcripts and agent output are NEVER expired — only the audio. The vault contains recordings of other people who did not consent to perman… |
 | `ATTICUS_BACKLOG_ALARM_MINUTES` | *(empty)* | Warn if a recording sits in inbox/ unprocessed longer than this. The queue's benefit — the processor may be offline, work waits — is also its failure mode: a dead processor looks exactly like an id… |
+| `ATTICUS_CHUNK_LONG_AUDIO` | `off` | Chunk long recordings instead of truncating them. OFF by default, because truncation is correct for a COMMAND: the wake phrase comes first, so everything past the opening seconds is silence or ambi… |
+| `ATTICUS_CHUNK_OVERLAP_SECONDS` | `10` |  |
+| `ATTICUS_CHUNK_SECONDS` | `1200` | Chunk length and overlap, seconds. The API caps a request at 1400s, so chunk_seconds is clamped to that. Chunks overlap because a hard cut lands mid-word about as often as not, and a word split acr… |
 | `ATTICUS_CLAUDE_BIN` | `claude` | ── execution ──────────────────────────────────────────────────────── Leave model unset to use the Claude Code default. |
 | `ATTICUS_CLAUDE_MODEL` | *(empty)* |  |
 | `ATTICUS_EXEC_TIMEOUT` | `1800` |  |
@@ -50,4 +53,4 @@ copies.
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*39 settings.*
+*42 settings.*
