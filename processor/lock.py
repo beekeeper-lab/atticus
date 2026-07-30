@@ -20,12 +20,29 @@ class AlreadyRunning(RuntimeError):
 
 
 @contextmanager
-def single_instance(name: str, log=print):
-    # Under ProtectSystem=strict the runtime dir is read-only unless the unit
-    # declares RuntimeDirectory=, so fall back rather than crash. The fallback
-    # must be STABLE and shared, or a manual run and a timed run would take
-    # different locks and the race this exists to prevent would still happen.
+def single_instance(name: str, log=print, vault=None):
+    # THE VAULT FIRST, when we know it. Everything below is a fallback, and the
+    # fallbacks proved insufficient in production on 2026-07-30:
+    #
+    #   the unit has PrivateTmp=yes and NO XDG_RUNTIME_DIR in its Environment,
+    #   so a timed pass locked /tmp/atticus-<uid>/processor.lock inside its OWN
+    #   private /tmp, while a manual pass locked
+    #   $XDG_RUNTIME_DIR/atticus/processor.lock. Two different files, no mutual
+    #   exclusion, and the 15:05 and 15:10 timer passes both walked into a record
+    #   a manual pass was actively executing.
+    #
+    # The vault is the contended resource and is visible identically to every
+    # participant regardless of PrivateTmp, RuntimeDirectory or which shell
+    # launched the process. .git/ keeps it out of the working tree, so `add -A`
+    # can never stage it. The docstring above already required the location be
+    # "STABLE and shared"; only this actually is.
     candidates = []
+    if vault is not None:
+        v = Path(vault)
+        if (v / ".git").is_dir():
+            candidates.append(v / ".git")
+        else:
+            candidates.append(v)        # local-only vault (tests)
     if os.environ.get("XDG_RUNTIME_DIR"):
         candidates.append(Path(os.environ["XDG_RUNTIME_DIR"]) / "atticus")
     candidates.append(Path(f"/tmp/atticus-{os.getuid()}"))  # noqa: S108
@@ -43,16 +60,24 @@ def single_instance(name: str, log=print):
             continue
     if d is None:
         raise RuntimeError(f"no writable location for the {name} lock")
-    path = d / f"{name}.lock"
-    fh = path.open("w")
+    path = d / f"atticus-{name}.lock" if d.name == ".git" else d / f"{name}.lock"
+    # "a" not "w": opening for write TRUNCATES the holder's recorded pid before
+    # we know whether we can take the lock, so a failed acquisition used to wipe
+    # the very information the error message wants.
+    fh = path.open("a+")
     try:
         try:
             fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
+            fh.seek(0)
+            holder = (fh.read() or "").strip().splitlines()
+            who = f" (held by {holder[0]})" if holder else ""
             raise AlreadyRunning(
-                f"another {name} pass holds {path} — exiting rather than "
+                f"another {name} pass holds {path}{who} — exiting rather than "
                 f"racing it")
-        fh.write(f"{os.getpid()}\n")
+        fh.seek(0)
+        fh.truncate()
+        fh.write(f"pid {os.getpid()} on {os.uname().nodename}\n")
         fh.flush()
         yield
     finally:

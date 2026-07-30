@@ -71,7 +71,27 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=%h/atticus %h/.claude %h/.cache
-ProtectKernelTunables=true
+# ProtectKernelTunables is DELIBERATELY OFF on this unit, and turning it on
+# breaks the agent sandbox completely.
+#
+# It mounts /proc/sys read-only, which locks mount attributes on the unit's
+# /proc. bwrap then cannot mount a fresh procfs inside its namespace and dies
+# with "Can't mount proc on /newroot/proc: Operation not permitted" — so
+# execute.py fails before the agent starts, on every single recording.
+#
+# Bisected 2026-07-30 with systemd-run: baseline rc=0, +ProtectKernelTunables
+# rc=1 with that exact error, +ProtectKernelModules rc=0. The directive had been
+# in this file since the first commit but was never LOADED until install.sh
+# rewrote the installed unit at 11:46 that morning; the agent had run fine the
+# previous evening under the older installed copy. First real recording after
+# the reinstall failed.
+#
+# The trade is not close. This setting stops the pipeline process writing kernel
+# tunables it never writes; enabling it disables the mount namespace that
+# contains an agent executing text derived from ambient audio. The sandbox wins.
+# ingest keeps the setting — it runs no bwrap.
+# ProtectKernelTunables=true   # ← do not re-enable; see above
+ProtectKernelModules=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true

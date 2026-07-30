@@ -575,8 +575,17 @@ def main():
 
 
 def _guarded():
+    # Vault-relative lock, for the same reason as the processor's — see lock.py.
+    vault = None
     try:
-        with single_instance("ingest"):
+        vault = Config().vault
+    except Exception as e:                          # noqa: BLE001
+        # Not fatal to locking: fall back to the runtime-dir lock and let main()
+        # report the config problem properly a moment later.
+        print(f"lock: cannot resolve the vault ({type(e).__name__}); "
+              f"using a fallback lock location", file=sys.stderr)
+    try:
+        with single_instance("ingest", vault=vault):
             return main()
     except AlreadyRunning as e:
         print(f"skipped: {e}", file=sys.stderr)

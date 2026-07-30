@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
@@ -100,6 +101,32 @@ def doctor_main():
         d.ok("agent sandbox ENABLED")
     else:
         d.b("ATTICUS_SANDBOX is off — the agent can read every credential here")
+
+    # The agent authenticates with the operator's own Claude Code credential, and
+    # it is mounted read-only so the CLI cannot refresh an expired access token
+    # from inside the sandbox — it exits 1 with EMPTY stdout and stderr, which
+    # says nothing. Every recording then fails until a human logs in. Check it
+    # here, where the answer is cheap, rather than discovering it on a recording.
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "processor"))
+        from execute import credential_expiry
+        expired, when = credential_expiry()
+        if when is None:
+            d.w("cannot read the Claude Code credential expiry — the agent may "
+                "fail to authenticate")
+        elif expired:
+            d.b(f"Claude Code credential EXPIRED at "
+                f"{when.isoformat(timespec='seconds')} — every agent run will "
+                f"fail. Run `claude` interactively to renew it.")
+        else:
+            hrs = (when - datetime.now(UTC)).total_seconds() / 3600
+            msg = f"Claude Code credential valid for {hrs:.1f}h"
+            d.ok(msg) if hrs > 1 else d.w(msg + " — renew it soon")
+    except Exception as e:                          # noqa: BLE001
+        # Never let a diagnostic crash the diagnostics — but say what happened,
+        # rather than swallowing it. A bare ImportError catch here hid a NameError
+        # and the check silently printed nothing at all.
+        d.w(f"credential check failed: {type(e).__name__}: {e}")
 
     if cfg.notify_url:
         d.ok("failure notifications configured")

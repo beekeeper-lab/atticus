@@ -17,8 +17,10 @@ Exit: 0 clean · 1 some records failed · 2 usage/config error · 3 vault unreac
 """
 import argparse
 import json
+import os
 import sys
 import traceback
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -31,7 +33,7 @@ import wake                                                  # noqa: E402
 from notify import clear as _notify_clear, notify as _notify  # noqa: E402
 from vault import (                                          # noqa: E402
     EXECUTED, EXECUTING, FAILED, PUBLISHED, RAW, RETRY_WAIT, ROUTED,
-    TRANSCRIBED, Git, VaultSyncError, load_records, write_atomic,
+    TRANSCRIBED, Git, VaultSyncError, load_records, utcnow, write_atomic,
 )
 
 LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
@@ -274,6 +276,54 @@ def stage_execute(rec, cfg, log, dry_run=False):
                 budget_usd=res.get("budget_usd"))
 
 
+def _execution_is_live(rec, cfg, log) -> bool:
+    """Is some process still working on this EXECUTING record?
+
+    EXECUTING alone cannot distinguish "abandoned mid-run" from "in progress
+    right now", and treating the second as the first is destructive: on
+    2026-07-30 two timer passes walked into a record a manual pass was actively
+    executing and failed it, writing a spurious failures/ entry for a run that
+    then completed and published normally.
+
+    The owning pass stamps host, pid and time when it enters EXECUTING. A run is
+    live if that stamp is this host, the pid still exists, and it has not been
+    going longer than the agent timeout allows. Anything else is abandoned.
+
+    Deliberately conservative about the cross-host case: a stamp from ANOTHER
+    host is treated as live until the timeout lapses, because declaring a remote
+    peer's live run dead would double-execute it.
+    """
+    owner = rec.data.get("executing_by") or {}
+    started = owner.get("at")
+    if not started:
+        return False                    # pre-stamp record, or none written
+    try:
+        age = (datetime.now(UTC)
+               - datetime.fromisoformat(str(started).replace("Z", "+00:00"))
+               ).total_seconds()
+    except ValueError:
+        return False
+    # Generous margin over the agent timeout: the pipeline still has to collect
+    # and commit after the agent returns.
+    if age > getattr(cfg, "exec_timeout", 1800) + 600:
+        log.warn(f"    execution stamp is {age / 60:.0f} min old — treating the "
+                 f"run as abandoned")
+        return False
+    host = owner.get("host")
+    if host and host != os.uname().nodename:
+        return True                     # another host's run; let its timeout rule
+    pid = owner.get("pid")
+    if not isinstance(pid, int):
+        return False
+    try:
+        os.kill(pid, 0)                 # signal 0 only tests existence
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True                     # exists, owned by someone else
+    return True
+
+
 def process(rec, cfg, git, log, dry_run=False) -> bool:
     """Drive one record as far as it will go. True if it ends published."""
     log.info(f"▶ {rec.stem}  [{rec.status}]")
@@ -297,7 +347,7 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
                 return True
             git.commit_push(f"route {rec.stem}")
 
-        if rec.status == EXECUTING:
+        if rec.status == EXECUTING and not _execution_is_live(rec, cfg, log):
             # A previous pass died mid-agent-run. The agent may already have had
             # side effects — it has Bash and network, and a skill that sends or
             # files something would have done so — so re-running is not free and
@@ -308,11 +358,20 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
                 "agent run). Not auto-retried: the agent may have completed side "
                 "effects. Inspect the run, then re-arm with --retry.",
                 retryable=False)
+        if rec.status == EXECUTING:
+            log.info("  … another pass is executing this record; leaving it be")
+            return False
 
         if rec.status == ROUTED:
             # Committed BEFORE the agent starts, so an interrupted run is
-            # distinguishable from one that never began.
-            rec.advance(EXECUTING)
+            # distinguishable from one that never began. The stamp is what lets a
+            # later pass tell "abandoned" from "still running" — see
+            # _execution_is_live().
+            rec.advance(EXECUTING, executing_by={
+                "host": os.uname().nodename,
+                "pid": os.getpid(),
+                "at": utcnow(),
+            })
             git.commit_push(f"executing {rec.stem}")
             stage_execute(rec, cfg, log, dry_run)
 
@@ -524,8 +583,20 @@ def main():
 
 
 def _guarded():
+    # Resolve the vault BEFORE locking, so the lock can live in it. The lock has
+    # to cover a manual pass racing a timed one, and only a vault-relative path
+    # is visible identically to both — see lock.py. A config error here is not
+    # fatal to locking; main() reports it properly a moment later.
+    vault = None
     try:
-        with single_instance("processor"):
+        vault = Config().vault
+    except Exception as e:                          # noqa: BLE001
+        # Not fatal to locking: fall back to the runtime-dir lock and let main()
+        # report the config problem properly a moment later.
+        print(f"lock: cannot resolve the vault ({type(e).__name__}); "
+              f"using a fallback lock location", file=sys.stderr)
+    try:
+        with single_instance("processor", vault=vault):
             return main()
     except AlreadyRunning as e:
         print(f"skipped: {e}", file=sys.stderr)
