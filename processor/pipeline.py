@@ -134,12 +134,22 @@ class _ResultTarget:
 
 def stage_transcribe(rec, cfg, log):
     log.info(f"  transcribe: {rec.audio.name}")
-    text = stt.transcribe(rec.audio, cfg)
+    # A recording left running is normal operator error, and only its opening
+    # seconds can contain a command — the wake phrase has to come first. So an
+    # over-long recording is truncated, never rejected: rejecting would discard
+    # a real instruction silently.
+    with stt.bounded_audio(rec.audio, cfg, rec.data.get("duration_seconds"),
+                           log=log.info) as (upload, trunc):
+        text = stt.transcribe(upload, cfg)
     write_atomic(rec.transcript_path(cfg.vault), text + "\n")
     words = len(text.split())
     log.info(f"    {words} words: {text[:90]}{'…' if len(text) > 90 else ''}")
-    rec.advance(TRANSCRIBED, word_count=words,
+    rec.advance(TRANSCRIBED, word_count=words, **trunc,
                 transcript_path=str(rec.transcript_path(cfg.vault).relative_to(cfg.vault)))
+    if trunc:
+        notify(cfg, f"Truncated a {trunc['truncated_from_seconds']:.0f}s recording "
+                    f"to its first {trunc['transcribed_seconds']}s — "
+                    f"was the device left running?\n\n{text[:150]}", log)
 
 
 def stage_route(rec, cfg, log):

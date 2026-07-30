@@ -98,6 +98,23 @@ class Config:
         self.exec_timeout = int(g("ATTICUS_EXEC_TIMEOUT", "1800"))
         self.skills_dir = Path(g("ATTICUS_SKILLS_DIR", str(REPO / "skills")))
 
+        # Upper bound on how much of a recording is ever transcribed.
+        #
+        # A command is 10-30 seconds and the wake phrase must be at the START,
+        # so everything past a couple of minutes is silence or ambient audio
+        # nobody meant to capture. Observed failure: a recording left running
+        # for 39.6 minutes, of which the first ~12s was the actual command.
+        #
+        # We TRUNCATE rather than reject, because rejecting would have silently
+        # discarded a real instruction — the same failure as a misheard wake
+        # word. It is also a security bound: it caps how much of the operator's
+        # day can ever reach the transcription API or the agent, whatever the
+        # device does.
+        self.max_command_seconds = int(g("ATTICUS_MAX_COMMAND_SECONDS", "180"))
+        # Absurd length — do not even download. Plaud reports duration in the
+        # listing, so this check is free.
+        self.max_ingest_seconds = int(g("ATTICUS_MAX_INGEST_SECONDS", "7200"))
+
         # Sanity gate — below this many words we refuse to execute.
         self.min_words = int(g("ATTICUS_MIN_WORDS", "3"))
         # Optional wake phrase. Empty = execute everything that transcribes.

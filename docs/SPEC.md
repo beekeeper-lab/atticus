@@ -1,7 +1,7 @@
 # Atticus — Voice-to-Agent Pipeline Specification
 
-**Status:** Draft v1
-**Last updated:** 2026-07-28
+**Status:** v1 — working end to end on real recordings
+**Last updated:** 2026-07-29
 **Owner:** Gregg Reed
 
 ---
@@ -249,7 +249,6 @@ atticus/
 ├── README.md
 ├── docs/
 │   ├── SPEC.md                ← this file, source of truth
-│   ├── spec.html              readable rendering of the spec
 │   └── decisions/             ADRs
 ├── ingest/                    Plaud → vault poller
 ├── processor/                 transcribe → route → execute
