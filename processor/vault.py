@@ -16,6 +16,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+class MalformedRecord(RuntimeError):
+    """A record that cannot be trusted. Never skipped silently — success
+    criterion S5 says no recording is dropped without being noticed."""
+
+
+REQUIRED_FIELDS = ("plaud_id", "recorded_at", "audio_filename")
+
+
 RAW, TRANSCRIBED, ROUTED, EXECUTED, PUBLISHED, FAILED = (
     "raw", "transcribed", "routed", "executed", "published", "failed"
 )
@@ -66,7 +74,26 @@ class Record:
     # ---- artifact paths -------------------------------------------------
     @property
     def audio(self) -> Path:
-        return self.meta_path.parent / self.data["audio_filename"]
+        """Resolved and CONTAINED.
+
+        `audio_filename` originates upstream. A value containing `../` — from a
+        malformed record or a compromised listing — would otherwise point
+        anywhere the process can write. Require a bare filename and prove the
+        resolved path stays inside the record's own directory.
+        """
+        name = self.data.get("audio_filename", "")
+        if not name or name != Path(name).name or name in (".", ".."):
+            raise MalformedRecord(
+                f"{self.meta_path}: audio_filename must be a bare filename, "
+                f"got {name!r}")
+        base = self.meta_path.parent.resolve()
+        candidate = (base / name).resolve()
+        try:
+            candidate.relative_to(base)
+        except ValueError:
+            raise MalformedRecord(
+                f"{self.meta_path}: audio_filename escapes its directory: {name!r}")
+        return candidate
 
     def _processed(self, vault: Path) -> Path:
         return vault / "processed" / self.ym
@@ -99,15 +126,35 @@ class Record:
         write_atomic(self.meta_path, json.dumps(self.data, indent=2) + "\n")
 
 
-def load_records(vault: Path, status: str | None = None) -> list[Record]:
+def load_records(vault: Path, status: str | None = None,
+                 on_bad=None) -> list[Record]:
+    """Load records, REPORTING anything unreadable rather than skipping it.
+
+    This used to `continue` past malformed JSON, which meant a corrupted
+    metadata file silently vanished from the queue — directly contradicting
+    success criterion S5, "no recording is silently dropped". Bad records are
+    now surfaced through `on_bad` so the caller can quarantine, alarm, and exit
+    non-zero.
+    """
     inbox = vault / "inbox"
     if not inbox.is_dir():
         return []
     out = []
     for p in sorted(inbox.rglob("*.json")):
         try:
-            rec = Record(p, json.loads(p.read_text()))
-        except (json.JSONDecodeError, OSError):
+            data = json.loads(p.read_text())
+            if not isinstance(data, dict):
+                raise MalformedRecord(f"{p}: metadata is not an object")
+            missing = [f for f in REQUIRED_FIELDS if not data.get(f)]
+            if missing:
+                raise MalformedRecord(f"{p}: missing required field(s) {missing}")
+            rec = Record(p, data)
+            _ = rec.audio          # forces the containment check
+        except (json.JSONDecodeError, OSError, MalformedRecord) as e:
+            if on_bad is not None:
+                on_bad(p, e)
+            else:
+                raise
             continue
         if status is None or rec.status == status:
             out.append(rec)
@@ -118,6 +165,16 @@ def load_records(vault: Path, status: str | None = None) -> list[Record]:
 # ---------------------------------------------------------------------------
 #  git
 # ---------------------------------------------------------------------------
+
+class VaultSyncError(RuntimeError):
+    """Committed locally, but the remote does not have it.
+
+    Raised rather than returned, because every caller ignored the old False and
+    let the record advance anyway — reporting success for work the other half of
+    the pipeline cannot see. A recording must not move to its next distributed
+    stage unless the previous state is durably visible in the remote.
+    """
+
 
 def _tail(proc, n: int = 300) -> str:
     """The last of git's own complaint, for a log line."""
@@ -221,11 +278,31 @@ class Git:
         if not self.is_repo():
             return False
         self._run("add", "-A", check=False)
-        if not self._run("status", "--porcelain", check=False).stdout.strip():
-            return True  # nothing to do
+        dirty = bool(self._run("status", "--porcelain", check=False).stdout.strip())
+        if not dirty:
+            # A clean tree does NOT mean we are in sync. This used to return
+            # success without looking at the remote, so a commit stranded by an
+            # earlier failed push was never retried by any later pass either —
+            # and for a record that reached its terminal state, no further commit
+            # would ever come. Push if we are ahead.
+            if self.has_remote() and self._ahead():
+                self.log("clean tree but local is ahead of the remote — pushing")
+                return self._push_with_retry(None)
+            return True
         self._run("commit", "-m", message, check=False)
         if not self.has_remote():
             return True  # local-only vault (tests) — commit is enough
+        return self._push_with_retry(message)
+
+    def _ahead(self) -> bool:
+        """True when the local branch has commits the remote does not."""
+        r = self._run("rev-list", "--count", "@{u}..HEAD", check=False)
+        try:
+            return int((r.stdout or "0").strip()) > 0
+        except ValueError:
+            return False        # no upstream configured; nothing to be ahead of
+
+    def _push_with_retry(self, message):
         last = None
         for attempt in range(1, self.retries + 1):
             last = self._run("push", check=False)
@@ -234,9 +311,9 @@ class Git:
             # Another host pushed between our pull and our push. Rebase onto
             # it, auto-resolving only the benign ingest collisions.
             if not self.pull():
-                self.log(f"push abandoned — unresolved conflict: {_tail(last)}")
-                return False        # a real conflict — do not loop on it
+                raise VaultSyncError(
+                    f"push abandoned — unresolved conflict: {_tail(last)}")
             time.sleep(min(2 ** attempt, 8))
-        self.log(f"push failed after {self.retries} attempt(s); the commit is "
-                 f"local only: {_tail(last)}")
-        return False
+        raise VaultSyncError(
+            f"push failed after {self.retries} attempt(s); "
+            f"{'the commit is' if message else 'commits are'} local only: {_tail(last)}")

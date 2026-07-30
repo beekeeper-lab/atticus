@@ -1,0 +1,22 @@
+Atticus
+Copyright 2026 Gregg Reed
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+--------------------------------------------------------------------------------
+
+This licence covers THIS WORK ONLY.
+
+It grants no rights in any third-party service this software talks to. In
+particular, the Plaud web fetcher (`ingest/plaud_web.py`) calls undocumented
+endpoints belonging to Plaud AI. Whether you may lawfully do so is governed by
+your agreement with that vendor, not by this licence, and those endpoints may
+change or be withdrawn without notice. See SECURITY.md.
+
+Likewise, the BLE protocol notes in docs/decisions/ were derived from a vendor's
+own published Android SDK for interoperability. They describe observed
+behaviour; they grant no rights in the vendor's software.

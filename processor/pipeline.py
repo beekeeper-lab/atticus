@@ -11,7 +11,7 @@ rather than redoing work, and a failure in one stage never costs the others.
     pipeline.py --status       show the queue, change nothing
     pipeline.py --dry-run      everything except the agent call
 
-Exit: 0 clean · 1 some records failed · 2 usage/config error
+Exit: 0 clean · 1 some records failed · 2 usage/config error · 3 vault unreachable
 """
 import argparse
 import json
@@ -22,12 +22,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config import Config                                    # noqa: E402
+from lock import AlreadyRunning, single_instance             # noqa: E402
 import execute as ex                                         # noqa: E402
 import transcribe as stt                                     # noqa: E402
 from notify import notify as _notify                          # noqa: E402
 from vault import (                                          # noqa: E402
     EXECUTED, FAILED, PUBLISHED, RAW, ROUTED, TRANSCRIBED,
-    Git, load_records, write_atomic,
+    Git, MalformedRecord, VaultSyncError, load_records, write_atomic,
 )
 
 LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
@@ -214,6 +215,13 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
             notify_result(cfg, rec, log)
             return True
 
+    except VaultSyncError:
+        # Deliberately NOT caught as a record failure. The transcript or artifact
+        # is correct; what failed is durability. Marking the record failed would
+        # quarantine good work and hide a vault problem behind a per-record
+        # error. Let it abort the pass so the exit code and the alarm are about
+        # the real fault.
+        raise
     except (stt.TranscriptionError, ex.ExecutionError) as e:
         kind = getattr(e, "kind", "execution")
         rec.fail(cfg.vault, rec.status, str(e), getattr(e, "retryable", False))
@@ -232,7 +240,12 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
 # ---------------------------------------------------------------------------
 
 def cmd_status(cfg, log):
-    recs = load_records(cfg.vault)
+    bad = []
+    recs = load_records(cfg.vault, on_bad=lambda p, e: bad.append((p, e)))
+    if bad:
+        print(f"  ** {len(bad)} MALFORMED record(s) — not processable **")
+        for p, e in bad:
+            print(f"     {p.name}: {e}")
     if not recs:
         print(f"vault {cfg.vault}: empty")
         return 0
@@ -280,10 +293,28 @@ def main():
     if not args.no_pull:
         git.pull()
 
-    todo = [r for r in load_records(cfg.vault)
+    bad = []
+
+    def on_bad(path, err):
+        # Loud, quarantined, and fatal to the exit code. A record we cannot
+        # parse is exactly the case S5 exists to prevent.
+        log.error(f"  ✗ MALFORMED RECORD {path.name}: {err}")
+        bad.append((path, err))
+        try:
+            write_atomic(cfg.vault / "failures" / f"{path.stem}.malformed.json",
+                         json.dumps({"path": str(path), "error": str(err),
+                                     "at": __import__("vault").utcnow()}, indent=2) + "\n")
+        except OSError:
+            pass
+
+    todo = [r for r in load_records(cfg.vault, on_bad=on_bad)
             if r.status not in (PUBLISHED, FAILED)]
+    if bad:
+        notify(cfg, f"Atticus: {len(bad)} unreadable recording metadata file(s) "
+                    f"quarantined — they are NOT being processed.\n\n"
+                    + "\n".join(str(p.name) for p, _ in bad[:5]), log)
     if args.once:
-        todo = [r for r in load_records(cfg.vault)
+        todo = [r for r in load_records(cfg.vault, on_bad=on_bad)
                 if args.once in (r.id, r.stem)]
         if not todo:
             print(f"no record matching {args.once!r}", file=sys.stderr)
@@ -294,11 +325,29 @@ def main():
         return 0
 
     log.info(f"{len(todo)} record(s) to process")
-    failed = sum(0 if process(r, cfg, git, log, args.dry_run) else 1 for r in todo)
+    failed = 0
+    for r in todo:
+        try:
+            if not process(r, cfg, git, log, args.dry_run):
+                failed += 1
+        except VaultSyncError as e:
+            log.error(f"VAULT SYNC FAILED — stopping the pass: {e}")
+            notify(cfg, f"Atticus cannot reach the vault remote. Work is "
+                        f"committed locally and invisible downstream.\n\n{e}", log)
+            return 3
     if failed:
         log.warn(f"{failed} record(s) failed")
-    return 1 if failed else 0
+    return 1 if (failed or bad) else 0
+
+
+def _guarded():
+    try:
+        with single_instance("processor"):
+            return main()
+    except AlreadyRunning as e:
+        print(f"skipped: {e}", file=sys.stderr)
+        return 0          # not a failure — the other pass is doing the work
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_guarded())
