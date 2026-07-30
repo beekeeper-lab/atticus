@@ -44,7 +44,7 @@ in the vault — only the prompt is cut.
 positional heuristic can separate a command from speech that immediately
 follows it. If you keep talking for two sentences after the request, those two
 sentences reach the agent. A real transcript in the vault contains the sentence
-*"hey Atticus, send a signal message to Bill"*, spoken as an example of a future
+*"hey Atticus, send a message to <name>"*, spoken as an example of a future
 capability. It is harmless only because no Signal skill exists yet. **Adding a
 side-effecting skill makes that sentence executable.**
 

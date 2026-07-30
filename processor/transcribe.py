@@ -254,7 +254,7 @@ def extract_command(text: str, cfg) -> tuple[str, dict]:
 
     The preamble ASKS the model to ignore trailing speech. That is guidance, not
     a control: the transcript that motivated this held 389 words of which ~25
-    were the command, and included "hey Atticus, send a signal message to Bill"
+    were the command, and included "hey Atticus, send a message to <name>"
     spoken as an example of a future capability.
 
     Two bounds, whichever bites first: a sentence count and a character cap.

@@ -135,7 +135,7 @@ The rest is device sync and poll intervals.
 
 Adding a capability is adding a directory, so this is where the leverage is:
 
-- **Signal** — *"Atticus, send Diana a message saying…"* via `signal-cli`
+- **Signal** — *"Atticus, send <name> a message saying…"* via `signal-cli`
 - **Outlook / email** — read, summarise, draft, send
 - **Azure DevOps** — *"file a ticket on the DDI project that does X"*, then
   produce an HTML record of the ticket it filed

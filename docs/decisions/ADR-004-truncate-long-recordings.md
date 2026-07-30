@@ -75,7 +75,7 @@ were the command; the remaining ~365 were ambient conversation, and all of it
 reached the agent. In that instance the agent correctly ignored the digression —
 the published report contained zero references to it — but that is a favourable
 observation, not a guarantee. The transcript even contained the phrase *"hey
-Atticus, send a signal message to Bill"*, spoken as an example of a future
+Atticus, send a message to <name>"*, spoken as an example of a future
 capability. No Signal skill exists yet, so nothing could act on it. **Once one
 does, that sentence becomes an executable instruction sitting in an unrelated
 task's prompt.**
