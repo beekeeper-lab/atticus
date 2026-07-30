@@ -34,8 +34,9 @@ jobs:
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
-          bwrap --ro-bind /usr /usr --dev /dev -- /usr/bin/true \
-            && echo "bwrap works" || { echo "::error::bwrap cannot namespace"; exit 1; }
+          # No hand-rolled probe here: the "security tests actually ran" step
+          # below is the real check, and it cannot drift from the wrapper the
+          # code ships.
 
       - name: Lint
         run: uv run ruff check .
