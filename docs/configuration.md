@@ -40,10 +40,10 @@ copies.
 | `ATTICUS_SITE_BASE_URL` | *(empty)* | Public base URL of the vault browser, no trailing slash. Used to build a tappable link to the page a recording produced: <base>/docs/<stem>/<file>.html Blank = no links in notifications, which is c… |
 | `ATTICUS_SKILLS_DIR` | *(empty)* |  |
 | `ATTICUS_STT_MODEL` | `gpt-4o-transcribe` | gpt-4o-transcribe ($0.006/min) not gpt-4o-mini-transcribe ($0.003/min). Different job from dictation: nobody is waiting on this, so latency is free and accuracy is worth buying. A misheard word her… |
-| `ATTICUS_STT_PROMPT` | *(empty)* | Steering prompt. Measurably improves punctuation and capitalization — carried over from hyprwhspr's config and extended for instruction-shaped audio. Change with care. |
+| `ATTICUS_STT_PROMPT` | `Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules. The speaker is dictating a short instruction or request.` | Steering prompt. Measurably improves punctuation and capitalization — carried over from hyprwhspr's config and extended for instruction-shaped audio. Change with care. |
 | `ATTICUS_STT_TIMEOUT` | `60` |  |
 | `ATTICUS_STT_URL` | `https://api.openai.com/v1/audio/transcriptions` | ── transcription ──────────────────────────────────────────────────── Same endpoint and model as the machine's existing dictation (hyprwhspr), deliberately: one transcription stack, not two. The AP… |
-| `ATTICUS_VAULT_PATH` | *(empty)* | Absolute path to the atticus-vault checkout on THIS host. Each host has its own clone; the paths need not match. |
+| `ATTICUS_VAULT_PATH` | `<repo>/.scratch-vault` | Absolute path to the atticus-vault checkout on THIS host. Each host has its own clone; the paths need not match. |
 | `ATTICUS_WAKE_ADJUDICATOR` | `on` | Probabilistic wake-word recovery. When the strict gate fails, ask a small model whether the first word could be a MISHEARING of the wake phrase. Phonetics only, one word in, one token out, and it f… |
 | `ATTICUS_WAKE_ADJUDICATOR_MODEL` | `gpt-4o-mini` |  |
 | `ATTICUS_WAKE_ADJUDICATOR_THRESHOLD` | `50` |  |

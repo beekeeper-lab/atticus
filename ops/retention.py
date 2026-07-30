@@ -23,6 +23,7 @@ change to the queue model and is on the roadmap, not done.
     retention.py               expire and commit
 """
 import argparse
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -30,7 +31,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "processor"))
 
-from config import Config                       # noqa: E402
+from config import Config, _parse_env          # noqa: E402
 from vault import Git, load_records             # noqa: E402
 
 
@@ -42,8 +43,25 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
+    # Refuse to run against the wrong tree. Config falls back to REPO/.scratch-vault
+    # when ATTICUS_VAULT_PATH is unset, and this job DELETES audio — a silent
+    # "nothing to expire" against the dev scratch vault while the real vault
+    # keeps every recording forever is the exact privacy failure it exists to
+    # prevent. Check the same two sources Config reads.
+    if not (os.environ.get("ATTICUS_VAULT_PATH")
+            or _parse_env(REPO / "ops/.env").get("ATTICUS_VAULT_PATH")):
+        print("error: ATTICUS_VAULT_PATH is unset — refusing to run against the "
+              "scratch-vault fallback and silently report nothing to expire. "
+              "Set it in ops/.env or the environment.", file=sys.stderr)
+        return 2
+
     cfg = Config()
     days = args.days if args.days is not None else cfg.audio_retention_days
+    if days < 0:
+        print(f"error: retention days must be >= 0, got {days} — a negative "
+              "window puts the cutoff in the future and would expire ALL "
+              "published audio at once", file=sys.stderr)
+        return 2
     if not days:
         print("retention disabled (ATTICUS_AUDIO_RETENTION_DAYS=0) — "
               "audio is kept indefinitely")
@@ -63,10 +81,15 @@ def main():
         try:
             when = datetime.fromisoformat(
                 rec.data.get("recorded_at", "").replace("Z", "+00:00"))
-        except ValueError:
+            # A zone-less timestamp cannot be compared against an aware cutoff —
+            # the comparison below raises TypeError mid-loop, AFTER earlier audio
+            # was already unlinked, with no commit. Treat naive as unparseable.
+            if when.tzinfo is None:
+                raise ValueError("naive recorded_at (no timezone)")
+        except (ValueError, TypeError) as e:
             # Say so rather than skipping silently — the same principle that
             # made load_records() stop swallowing malformed metadata.
-            print(f"  ? {rec.stem}: unparseable recorded_at, not expiring",
+            print(f"  ? {rec.stem}: unparseable recorded_at ({e}), not expiring",
                   file=sys.stderr)
             continue
         if when > cutoff:
@@ -81,6 +104,22 @@ def main():
             print(f"  ? {rec.stem}: {e}", file=sys.stderr)
             continue
         if not audio.is_file():
+            # The audio is already gone — removed out of band, or a crash
+            # between unlink and save(). The metadata still claims audio it no
+            # longer has. Marking it stops the record looking perpetually
+            # unprocessed and keeps the metadata honest; skipping it silently
+            # (the old behaviour) meant audio_expired_at was never set.
+            print(f"  ? {rec.stem}: audio {audio.name} already absent — "
+                  f"{'would mark' if args.dry_run else 'marking'} expired",
+                  file=sys.stderr)
+            if not args.dry_run:
+                rec.data["audio_expired_at"] = (
+                    datetime.now(UTC).replace(microsecond=0)
+                    .isoformat().replace("+00:00", "Z"))
+                rec.data["audio_retention_days"] = days
+                rec.data["audio_missing"] = True
+                rec.save()
+                expired += 1
             continue
 
         size = audio.stat().st_size

@@ -28,12 +28,23 @@ were correctly not executed.
 
 *Known weakness:* transcription mishears the wake word. Three of nine attempts
 in one day came back as "Advocates", "Abacus" and "Artemis" — each silently
-filing a real command as a note. `ATTICUS_WAKE_ALIASES` exact-matches known
-mishearings. Fuzzy matching is deliberately **not** used: measured against the
-real failure, "advocates" scores 0.375 similarity to "atticus" — *lower* than
-unrelated words like "status" (0.615). Any threshold loose enough to catch the
-real mistake fires on ordinary speech, and a false positive runs an agent on
-words never addressed to it.
+filing a real command as a note. Recovery is a **model adjudicator, on by
+default** (`ATTICUS_WAKE_ADJUDICATOR`), which widens the gate rather than
+replacing it: it runs **only after the strict exact-match has already failed**,
+so it can admit a mishearing but never reject a real match. It asks a small
+model whether the transcribed first word is a plausible mishearing of the wake
+phrase, scores 0–100, and admits at or above `ATTICUS_WAKE_ADJUDICATOR_THRESHOLD`
+(default 50). It **fails closed** — no key, no network, a timeout, a non-200, or
+any non-integer reply all mean "no". Verdicts are **cached under `~/.cache`**, so
+a recurring mishearing costs one call and the system learns its own aliases;
+`ATTICUS_WAKE_ALIASES` remains as a deterministic override but now defaults empty.
+Note the trade this opens: a **cached verdict can open the gate without a call**,
+and a **bounded slice of transcript context** (the few words following the
+candidate, capped) is sent to OpenAI alongside the single candidate word to tell
+"research this" from a request addressed to a person. Fuzzy string matching is
+still deliberately **not** used — measured against the real failure, "advocates"
+scores 0.375 similarity to "atticus", *lower* than unrelated words like "status"
+(0.615), so any threshold loose enough to catch it fires on ordinary speech.
 
 **Bounded prompts.** `ATTICUS_MAX_COMMAND_SECONDS` caps how much audio is ever
 transcribed; `ATTICUS_MAX_COMMAND_CHARS` and `ATTICUS_MAX_COMMAND_SENTENCES` cap

@@ -1,0 +1,32 @@
+[Unit]
+Description=Atticus audio retention — expire raw audio past the retention window
+Documentation=https://github.com/beekeeper-lab/atticus/blob/main/docs/SPEC.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/atticus
+ExecStart=/usr/bin/python3 %h/atticus/ops/retention.py
+
+EnvironmentFile=-%h/.config/ai/env
+EnvironmentFile=-%h/atticus/ops/.env
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+# This job commits and pushes the audio removal to the vault, so it needs ssh.
+# `ssh -F <file>` skips /etc/ssh/ssh_config outright — the same fix the other
+# units carry, and load-bearing for every push. Do not remove it.
+Environment="GIT_SSH_COMMAND=ssh -F %h/.ssh/config"
+
+# Deliberately NOT sandboxed the way the processor is. It writes and pushes the
+# vault, runs no agent, and executes no transcript. Sandbox mount-namespace
+# options on a USER unit make root-owned ssh config read as nobody and break the
+# push (see the processor unit's comment); this job stays out of that namespace.
+NoNewPrivileges=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=atticus-retention
+
+[Install]
+WantedBy=default.target

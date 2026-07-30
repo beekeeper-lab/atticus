@@ -101,12 +101,21 @@ grant_vault() {
     warn "vault path unknown — edit ReadWritePaths in $unit by hand"
     return
   fi
-  if grep -qE "^ReadWritePaths=.*(^| )${VAULT}( |$)" "$unit"; then
+  # Match the path LITERALLY on the active ReadWritePaths line. The old ERE had
+  # a dead `(^| )` branch right after `.*` (so an already-present path was never
+  # detected and got appended a second time) and interpolated $VAULT unescaped
+  # into both the grep ERE and the sed replacement — a path containing & or |
+  # corrupted the sed. grep -qF is literal; check it as the first path (=$VAULT)
+  # or as an appended one (a leading space before it).
+  if grep '^ReadWritePaths=' "$unit" | grep -qF -- " $VAULT" \
+     || grep '^ReadWritePaths=' "$unit" | grep -qF -- "=$VAULT"; then
     ok "vault already writable by $(basename "$unit")"
     return
   fi
-  sed -i "s|^ReadWritePaths=\(.*\)$|ReadWritePaths=\1 $VAULT|" "$unit"
-  grep -qE "^ReadWritePaths=.* ${VAULT}( |$)" "$unit" \
+  # Escape & (means "the match") and | (our sed delimiter) in the replacement.
+  local esc; esc=$(printf '%s' "$VAULT" | sed 's/[&|]/\\&/g')
+  sed -i "s|^ReadWritePaths=\(.*\)$|ReadWritePaths=\1 $esc|" "$unit"
+  grep '^ReadWritePaths=' "$unit" | grep -qF -- " $VAULT" \
     && ok "granted $(basename "$unit") write access to the vault" \
     || die "failed to patch ReadWritePaths in $unit"
 }
@@ -175,10 +184,19 @@ PATH will not find it; add its directory to Environment=PATH in the service"
   install_units atticus-processor.service atticus-processor.timer
   grant_vault "$UNITS/atticus-processor.service"
 
-  # The heartbeat watches everything else. It alarms on ABSENCE, which is the
-  # one failure mode none of the other alarms can see.
-  install_units atticus-heartbeat.service atticus-heartbeat.timer
+  # Audio retention. Without a scheduled unit, ATTICUS_AUDIO_RETENTION_DAYS
+  # (default 30) is a privacy policy that silently never runs — the vault holds
+  # recordings of other people. Not sandboxed like the processor: it writes and
+  # pushes the vault, so grant_vault does not apply (no ProtectSystem line).
+  install_units atticus-retention.service atticus-retention.timer
 fi
+
+# ---- heartbeat (both roles) -----------------------------------------------
+# The heartbeat watches everything else and alarms on ABSENCE, the one failure
+# none of the other alarms can see. It belongs on EVERY host: an ingest-only
+# box with no heartbeat is unwatched, and it now checks only the units that are
+# actually loaded, so it will not false-alarm about a role this host lacks.
+install_units atticus-heartbeat.service atticus-heartbeat.timer
 
 # ---- enable ---------------------------------------------------------------
 echo
@@ -194,9 +212,12 @@ fi
 if (( DO_PROCESSOR )); then
   systemctl --user enable --now atticus-processor.timer
   ok "processor timer enabled (every 5 min)"
-  systemctl --user enable --now atticus-heartbeat.timer
-  ok "heartbeat enabled (hourly)"
+  systemctl --user enable --now atticus-retention.timer
+  ok "retention timer enabled (daily)"
 fi
+# Heartbeat runs on every host, whatever its role.
+systemctl --user enable --now atticus-heartbeat.timer
+ok "heartbeat enabled (hourly)"
 echo
 systemctl --user list-timers 'atticus-*' --no-pager 2>/dev/null | head -5
 

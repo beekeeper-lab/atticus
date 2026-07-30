@@ -65,10 +65,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: systemd unit files parse
+        shell: bash
         run: |
+          set -o pipefail
+          problems=""
           for u in ops/*.service ops/*.timer; do
-            systemd-analyze verify "$u" 2>&1 | grep -viE 'Unknown (lvalue|section)|command not found' || true
+            # Filter the lints that are expected under `systemd-analyze verify`
+            # off a checkout (units reference %h paths and binaries not present
+            # on the runner). Anything left is a real defect. `|| true` keeps a
+            # non-zero verify from aborting the capture; the emptiness test below
+            # is what actually gates.
+            out=$(systemd-analyze verify "$u" 2>&1 \
+                  | grep -viE 'Unknown (lvalue|section)|command not found' || true)
+            if [[ -n "$out" ]]; then
+              problems+="--- $u"$'\n'"$out"$'\n'
+            fi
           done
+          if [[ -n "$problems" ]]; then
+            echo "systemd unit verification found problems:"
+            printf '%s\n' "$problems"
+            exit 1
+          fi
           echo "checked $(ls ops/*.service ops/*.timer | wc -l) unit files"
 
   secrets:
@@ -78,8 +95,21 @@ jobs:
         with:
           fetch-depth: 0
       - name: No credential-shaped strings in history
+        shell: bash
         run: |
-          if git log -p --all | grep -aoiE 'sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----'; then
-            echo "::error::credential-shaped string found in history"; exit 1
+          set -o pipefail
+          PATTERN='sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[osu]_[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+          # Dump history to a file first: `set -e` makes a git failure abort the
+          # step (the old pipe swallowed it and printed "history clean"), and a
+          # file lets grep read it without the SIGPIPE that `grep -q` in a pipe
+          # would turn into a pipefail non-zero. grep -q never echoes the match,
+          # so the credential itself stays OUT of the public CI log (the old
+          # `grep -aoiE` printed it).
+          git log -p --all > history.txt
+          if grep -qaiE "$PATTERN" history.txt; then
+            echo "::error::credential-shaped string found in git history — content withheld; rotate the key and clean history"
+            echo "commits to inspect (content NOT shown):"
+            git log --oneline --all -iG "$PATTERN" || true
+            exit 1
           fi
           echo "history clean"
