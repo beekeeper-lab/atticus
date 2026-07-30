@@ -128,3 +128,28 @@ def test_pr_sh_still_sources_the_guard():
     body = (REPO / "ops/pr.sh").read_text()
     assert "lib/check-staged.sh" in body
     assert "check_staged" in body
+
+
+def test_the_shape_that_actually_leaked_is_refused(staged):
+    """The guard missed the real thing. On 2026-07-30 a presigned S3 URL with
+    AWSALB session cookies leaked into the journal; when a test file first
+    captured that value, this guard refused the file only because of an unrelated
+    'sk-' literal sitting nearby. Long base64 containing '+' is now its own rule.
+    """
+    import base64
+    blob = base64.b64encode(bytes(range(120))).decode()
+    r = staged({"leak.log": f"audio: {blob}\n"})
+    assert r.returncode == 1, "the leaked shape was NOT refused"
+    assert "credential-shaped" in r.stderr
+
+
+@pytest.mark.parametrize("keep", [
+    "processed/2026/07/2026-07-30T191634Z_e0856e43be5a/report.html",
+    "73cc1f8a9c926011869123e7f054deb0",
+    "sha256:7c3725678342",
+])
+def test_the_new_rule_does_not_refuse_ordinary_repo_content(staged, keep):
+    """A guard that blocks normal commits gets disabled, which is worse than no
+    guard. Paths, plaud_ids and hash prefixes must all still land."""
+    r = staged({"notes.md": f"see {keep} for details\n"})
+    assert r.returncode == 0, r.stderr

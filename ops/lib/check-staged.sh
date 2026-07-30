@@ -22,7 +22,15 @@ CHECK_STAGED_CRED_RE+='|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]
 CHECK_STAGED_CRED_RE+='|A(KIA|SIA)[0-9A-Z]{16}'
 CHECK_STAGED_CRED_RE+='|xox[abprs]-[A-Za-z0-9-]{10,}'
 CHECK_STAGED_CRED_RE+='|https?://ntfy\.sh/[A-Za-z0-9_-]{8,}'
-CHECK_STAGED_CRED_RE+='|-----BEGIN [A-Z ]*PRIVATE KEY-----)'
+CHECK_STAGED_CRED_RE+='|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+# Long opaque base64 runs containing '+' — the shape of the presigned-URL and
+# AWSALB cookie material that actually leaked into the journal on 2026-07-30.
+# Every named rule above missed it, and so did this guard when the leak was first
+# committed to a test file: it refused the file only because of an unrelated
+# `sk-` literal. '+' is the tell — it does not occur in paths, hex ids or the
+# record stems this repo is full of.
+CHECK_STAGED_CRED_RE+='|[A-Za-z0-9/]{16,}\+[A-Za-z0-9+/]{16,}'
+CHECK_STAGED_CRED_RE+=')'
 
 check_staged() {
   local repo="${1:-.}"
