@@ -70,13 +70,18 @@ jobs:
           set -o pipefail
           problems=""
           for u in ops/*.service ops/*.timer; do
-            # Filter the lints that are expected under `systemd-analyze verify`
-            # off a checkout (units reference %h paths and binaries not present
-            # on the runner). Anything left is a real defect. `|| true` keeps a
-            # non-zero verify from aborting the capture; the emptiness test below
-            # is what actually gates.
+            # Filter only the lints that are genuinely expected under
+            # `systemd-analyze verify` off a checkout: %h paths and binaries that
+            # do not exist on the runner. Anything left is a real defect.
+            #
+            # "Unknown lvalue" is NOT filtered any more. It used to be, and that
+            # is precisely the lint a misspelled directive produces — so
+            # `InaccessiblePath=` or `OnCalender=` would pass CI green while
+            # systemd silently ignored the line on the host. That is how the
+            # ADR-003 credential control or a timer schedule could be lost with
+            # every check still passing.
             out=$(systemd-analyze verify "$u" 2>&1 \
-                  | grep -viE 'Unknown (lvalue|section)|command not found' || true)
+                  | grep -viE 'Unknown section|command not found' || true)
             if [[ -n "$out" ]]; then
               problems+="--- $u"$'\n'"$out"$'\n'
             fi

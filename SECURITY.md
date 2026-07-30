@@ -67,9 +67,30 @@ The agent runs under `bwrap` in its own mount namespace with a private `HOME`.
 Inside it can see the scratch workspace (read-write), `/usr` and `/etc`
 (read-only), the Claude CLI binary, its credential, and the skills directories.
 
-It cannot see `~/.ssh`, `~/.config/ai/env`, the vault, or anything else in the
-operator's home. This is enforced and tested — see `tests/security/`, which
-exists so that a claim in the documentation cannot quietly become false.
+It cannot see `~/.ssh`, `~/.config/ai/env`, the vault *filesystem*, or anything
+else in the operator's home. This is enforced and tested — see
+`tests/security/`, which exists so that a claim in the documentation cannot
+quietly become false.
+
+**Two important qualifications, because the sentence above was previously read
+as broader than it is.**
+
+*The vault's **contents** are reachable over the network even though its
+filesystem is not.* The namespace shares the host network by default, so
+anything served on `127.0.0.1` is reachable — and the vault's own web UI serves
+the searchable text of every document, including the gated notes the wake gate
+declined to execute, with an API write token embedded in each page. "Cannot see
+the vault" is true of paths and false of HTTP. `ATTICUS_SANDBOX_NET=none`
+removes the network entirely and closes this; the durable fix is a network
+namespace with an allowlist proxy, which keeps research working while denying
+loopback and the tailnet.
+
+*The Claude Code credential is inside the boundary by construction.*
+`~/.claude/.credentials.json` is bind-mounted read-only so the CLI can
+authenticate, and it contains a refresh token. An agent acting on injected
+instructions has `Bash` and egress, so treat that credential as reachable:
+rotate it if you suspect a run was influenced, and prefer a short-lived or
+per-run token if you extend this.
 
 Earlier versions asserted this and did not deliver it: the vault deploy key was
 readable and the agent has a shell, so "the agent never touches git" was
@@ -89,6 +110,17 @@ Stated plainly, because a threat model that lists only wins is marketing.
 
 - **Network egress.** The agent has full internet access; it is doing research.
   Anything it can reach, it can reach. There is no egress filtering.
+- **Network *ingress* on this host.** The same shared namespace means loopback
+  and the tailnet are reachable *inward*: the vault web UI, its write API, and
+  any other local service. This is the same omission as egress, but it is easy to
+  miss because the sandbox denies the vault's files. `ATTICUS_SANDBOX_NET=none`
+  is the switch when no skill needs the internet.
+- **Prompt injection.** The transcript is fenced and labelled as untrusted data
+  and the fence markers are stripped from the transcript so it cannot forge
+  them — but a model is not obliged to honour a fence. `Bash` is in the default
+  tool list and the permission mode is `acceptEdits`, so assume anything spoken
+  near the pin can run arbitrary commands *inside the sandbox*. The namespace is
+  the control; the fence only raises the bar.
 - **Privilege escalation.** The sandbox is a filesystem and environment
   boundary. The agent runs as the same uid as the pipeline.
 - **`ATTICUS_SANDBOX=off`.** A supported setting that disables all of the above.

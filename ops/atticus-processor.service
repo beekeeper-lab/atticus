@@ -50,7 +50,12 @@ TimeoutStartSec=3600
 # Confirmed that this blinds the processor while the ingest unit still reads the
 # session normally. Do not remove it, and do not add the path to
 # ReadWritePaths "for convenience".
-InaccessiblePaths=%h/.local/share/claude-fetchers
+# The leading '-' is load-bearing: without it, a host where this directory does
+# not exist fails namespace setup outright (status 226/NAMESPACE) and every
+# activation dies. install.sh only creates it for the *ingest* role, so
+# `./ops/install.sh processor` on a fresh box — the documented two-host layout —
+# passed preflight and then never ran a single pass.
+InaccessiblePaths=-%h/.local/share/claude-fetchers
 
 # Modest hardening. The agent needs network and needs to write the vault,
 # so this is a blast-radius reduction, not a sandbox.

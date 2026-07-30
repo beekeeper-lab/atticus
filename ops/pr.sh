@@ -15,6 +15,7 @@ set -euo pipefail
 
 die(){ printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 ok(){  printf '  \033[32m✓\033[0m %s\n' "$*"; }
+warn(){ printf '  \033[33m!\033[0m %s\n' "$*" >&2; }
 
 TITLE="${1:-}"; BODY="${2:-}"
 [[ -n "$TITLE" ]] || die 'usage: ops/pr.sh "Short title" ["body"]'
@@ -40,17 +41,16 @@ if git diff --cached --quiet; then
   die "nothing staged — no changes to land"
 fi
 
-# Never let a credential through, whatever .gitignore says.
-if git diff --cached | grep -qE '(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[osu]_[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'; then
+# Never let a credential or an ignored path through, whatever .gitignore says.
+# The guard itself lives in ops/lib/check-staged.sh so it can be unit-tested —
+# inline here it was only reachable by landing a real PR, which is why a security
+# control shipped untested. See tests/unit/test_check_staged.py.
+# shellcheck source=ops/lib/check-staged.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/check-staged.sh"
+if ! check_staged "$(git rev-parse --show-toplevel)"; then
   git reset -q
-  die "credential-shaped string in the staged diff — refusing. Unstaged; inspect with: git diff"
+  die "refusing to land. Unstaged; inspect with: git diff"
 fi
-for f in $(git diff --cached --name-only); do
-  case "$f" in
-    ops/.env|*/ops/.env|.env|docs/recon/*|.scratch-vault/*)
-      git reset -q; die "refusing to commit $f" ;;
-  esac
-done
 
 echo "Landing on $BASE via PR"
 
@@ -80,9 +80,26 @@ URL=$(gh pr create --base "$BASE" --head "$BRANCH" \
         --title "$TITLE" --body "${BODY:-$TITLE}" 2>&1 | tail -1)
 ok "PR $URL"
 
-gh pr merge "$BRANCH" --squash --delete-branch >/dev/null 2>&1 \
-  || die "merge failed — the PR is open at $URL, resolve there"
-ok "squash-merged"
+# --auto, so the merge waits for required status checks instead of racing them.
+# This used to squash-merge immediately in the statement after `gh pr create`,
+# which meant every CI job in ci.yml — ruff, pytest, the security-tests-must-run
+# gate, shellcheck, unit verification, the full-history secret scan — ran AFTER
+# the change was already on main. CI gated nothing.
+#
+# --auto requires branch protection with required checks on $BASE; without it
+# GitHub rejects the flag, so fall back to an immediate merge and say so rather
+# than leaving the PR silently open.
+if gh pr merge "$BRANCH" --squash --delete-branch --auto >/dev/null 2>&1; then
+  ok "queued for auto-merge once checks pass: $URL"
+  echo "   (it will land on $BASE by itself; this checkout stays on $BASE)"
+else
+  warn "auto-merge unavailable (no required checks configured on $BASE) —"
+  warn "merging now, so CI results arrive after the fact. Enable branch"
+  warn "protection with required status checks to make CI actually gate."
+  gh pr merge "$BRANCH" --squash --delete-branch >/dev/null 2>&1 \
+    || die "merge failed — the PR is open at $URL, resolve there"
+  ok "squash-merged"
+fi
 
 git checkout -q "$BASE"
 git pull -q --rebase origin "$BASE"

@@ -32,7 +32,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "processor"))
 
 from config import Config, _parse_env          # noqa: E402
-from vault import Git, load_records             # noqa: E402
+from notify import clear as alarm_clear, notify  # noqa: E402
+from vault import Git, VaultSyncError, load_records  # noqa: E402
 
 
 def main():
@@ -142,6 +143,14 @@ def main():
 
     if not expired:
         print(f"nothing older than {days} days to expire")
+        # Still sweep. A previous run could have died after unlink()+save() but
+        # before the commit below: audio_expired_at is already set, so this run
+        # skips every record, `expired` is 0, and it used to return HERE — with
+        # the deletions sitting uncommitted until some unrelated `add -A` swept
+        # them in under a misleading message. check_sync() counts unpushed
+        # COMMITS, not a dirty tree, so that state was invisible.
+        if not args.dry_run:
+            _sync(cfg, "retention: commit deletions stranded by an earlier run")
         return 0
 
     print(f"\n{expired} recording(s), {freed / 1e6:.1f} MB "
@@ -149,11 +158,40 @@ def main():
     if args.dry_run:
         return 0
 
-    git = Git(cfg.vault, cfg.git_name, cfg.git_email, cfg.push_retries)
-    git.commit_push(f"retention: expire {expired} recording(s) older than {days}d")
+    if not _sync(cfg, f"retention: expire {expired} recording(s) older "
+                      f"than {days}d"):
+        return 1
     print("NOTE: git history still contains these blobs. See this file's "
           "docstring for why, and what would actually remove them.")
     return 0
+
+
+def _sync(cfg, message: str) -> bool:
+    """Commit and push, alarming on failure.
+
+    This module never imported notify, so a VaultSyncError here was an uncaught
+    traceback to the journal and nothing else — for the one job that enforces a
+    privacy policy. The unit's own comment says a privacy policy that silently
+    stops running is exactly the failure the design exists to prevent, so it
+    needs the same alarm treatment as every other stage.
+    """
+    git = Git(cfg.vault, cfg.git_name, cfg.git_email, cfg.push_retries)
+    try:
+        if git.commit_push(message):
+            alarm_clear("retention")
+            return True
+        # False means only "not a git repo" — a local-only vault, which the rest
+        # of the codebase treats as benign and heartbeat's vault-path check
+        # reports on. Deletions already happened on disk, which is the point.
+        print("  note: vault is not a git repo; deletions are local only")
+        return True
+    except VaultSyncError as e:
+        problem = str(e)
+    print(f"  ! retention could not sync: {problem}", file=sys.stderr)
+    notify(cfg, f"Atticus retention could not push: audio may have been "
+                f"deleted locally without reaching the remote.\n\n{problem}",
+           log=print, key="retention", title="Atticus retention — sync failed")
+    return False
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ So this asks the opposite question: has anything actually happened lately?
 Exit: 0 healthy · 1 problems found (and alarmed)
 """
 import argparse
+import hashlib
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -113,9 +114,36 @@ def main():
         except Exception as e:                  # noqa: BLE001
             problems.append(f"{label} check crashed: {type(e).__name__}: {e}")
 
+    # 0. Is the vault path even right?
+    #
+    # This had no check at all, and every downstream one reads as healthy when
+    # the path is wrong: load_records() returns [] for a missing inbox, so
+    # check_stuck finds nothing, and check_sync returns early with no .git. A
+    # typo'd or stale ATTICUS_VAULT_PATH therefore produced a completely green
+    # heartbeat while the real vault accumulated unprocessed work — and these
+    # repos DID move into PLAUD/, which is the move that killed the site timer.
+    # retention.py refuses the UNSET case; nothing caught the WRONG one.
+    def check_vault_path():
+        if not cfg.vault.is_dir():
+            problems.append(f"ATTICUS_VAULT_PATH does not exist: {cfg.vault}")
+        elif not (cfg.vault / "inbox").is_dir():
+            problems.append(f"{cfg.vault} has no inbox/ — not a vault, so every "
+                            "other check below is meaningless")
+        else:
+            notes.append(f"vault present at {cfg.vault}")
+    check("vault-path", check_vault_path)
+
     # 1. Are the timers even scheduled?
+    #
+    # retention was NOT in this list, and its own unit comment says "a privacy
+    # policy that silently stops running is exactly the failure this whole file
+    # exists to prevent" — yet a dead retention timer was invisible here. The
+    # vault-site timer is worse: it is the unit that actually sat parked at
+    # next_elapse=infinity for 76 minutes and motivated this file, and it was
+    # never watched either. unit_exists() skips whatever this host does not have.
     def check_scheduled():
-        for t in ("atticus-ingest.timer", "atticus-processor.timer"):
+        for t in ("atticus-ingest.timer", "atticus-processor.timer",
+                  "atticus-retention.timer", "atticus-vault-site.timer"):
             if not unit_exists(t):
                 continue        # this host does not have that role
             if not timer_is_scheduled(t):
@@ -126,7 +154,13 @@ def main():
 
     # 2. Has anything run recently — AND did the last run succeed?
     def check_recent():
-        for u in ("atticus-ingest.service", "atticus-processor.service"):
+        # Per-unit quiet budgets. retention is on a DAILY timer, so the 6h
+        # default that suits the 5- and 15-minute timers would false-alarm every
+        # single run — and an alarm that always fires is one the operator learns
+        # to ignore, which costs more than the check is worth.
+        budgets = {"atticus-retention.service": 36.0}
+        for u in ("atticus-ingest.service", "atticus-processor.service",
+                  "atticus-retention.service"):
             if not unit_exists(u):
                 continue        # this host does not have that role
             last, ok = unit_last_run(u)
@@ -138,8 +172,10 @@ def main():
                 # every exit, so "ran recently" is not "ran successfully".
                 problems.append(f"{u} last run exited non-zero (crash-looping?)")
             quiet = (now - last).total_seconds() / 3600
-            if quiet > args.max_quiet_hours:
-                problems.append(f"{u} last completed {quiet:.1f}h ago")
+            budget = budgets.get(u, args.max_quiet_hours)
+            if quiet > budget:
+                problems.append(f"{u} last completed {quiet:.1f}h ago "
+                                f"(budget {budget:.0f}h)")
             elif ok:
                 notes.append(f"{u} ran {quiet:.1f}h ago")
     check("units-recent", check_recent)
@@ -155,7 +191,16 @@ def main():
         if bad:
             problems.append(f"{len(bad)} malformed record(s) in the vault")
 
-        cutoff = now - timedelta(hours=args.max_stuck_hours)
+        # ATTICUS_BACKLOG_ALARM_MINUTES was documented in ops/.env,
+        # ops/.env.example and docs/configuration.md as T-74's mitigation and was
+        # read by NO code — the operator believed an alarm was armed that did not
+        # exist. This is that knob, and it also replaces a hardcoded 2h. The CLI
+        # flag still wins when passed explicitly.
+        backlog_min = getattr(cfg, "backlog_alarm_minutes", 0)
+        stuck_hours = args.max_stuck_hours
+        if backlog_min > 0 and "--max-stuck-hours" not in sys.argv:
+            stuck_hours = backlog_min / 60
+        cutoff = now - timedelta(hours=stuck_hours)
         for r in recs:
             if r.status in ("published", "failed", "retry_wait"):
                 continue
@@ -174,7 +219,8 @@ def main():
                 problems.append(f"{r.stem} has an unreadable ingested_at ({raw!r})")
                 continue
             if when < cutoff:
-                problems.append(f"{r.stem} stuck in '{r.status}' since {raw}")
+                problems.append(f"{r.stem} stuck in '{r.status}' since {raw} "
+                                f"(backlog threshold {stuck_hours * 60:.0f} min)")
     check("stuck-in-flight", check_stuck)
 
     # 4. Is the vault actually in sync?
@@ -203,16 +249,27 @@ def main():
         print(f"  BAD  {p}")
 
     if problems and not args.dry_run:
+        # Key on WHAT is wrong, not merely "heartbeat". A single shared key meant
+        # a 09:00 "1 malformed record" alarm suppressed a 09:40 "timer parked at
+        # infinity" — strictly worse news — until ~15:00. Per-condition keys are
+        # the pattern poller.py already uses (plaud-auth / vault-push /
+        # too-long-<id>). Hashed so the key is stable for the same set of
+        # conditions but changes the moment a new one appears.
+        fingerprint = hashlib.sha256(
+            "\n".join(sorted(p.split(" since ")[0].split(" (budget")[0]
+                             for p in problems)).encode()
+        ).hexdigest()[:12]
         # log=print so the watcher's OWN failure is not silent, and check the
         # return: a heartbeat that cannot deliver its alarm is the worst case.
         delivered = notify(
             cfg, "Atticus heartbeat found problems:\n\n" + "\n".join(problems),
             title="Atticus heartbeat", tags="rotating_light", priority="high",
-            key="heartbeat", log=print)
+            key=f"heartbeat-{fingerprint}", log=print)
         if not delivered:
             if not getattr(cfg, "notify_url", None):
                 print("  BAD  alarm NOT delivered — ATTICUS_NOTIFY_URL is unset")
-            elif throttled("heartbeat", getattr(cfg, "alarm_throttle_hours", 6)):
+            elif throttled(f"heartbeat-{fingerprint}",
+                           getattr(cfg, "alarm_throttle_hours", 6)):
                 pass    # already alarmed this window; healthy, notify logged why
             else:
                 print("  BAD  alarm NOT delivered — notify() failed (see above)")

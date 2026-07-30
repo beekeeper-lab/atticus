@@ -1,8 +1,11 @@
 """Speech-to-text via the OpenAI REST endpoint.
 
-Deliberately the same path the machine's dictation already uses
-(hyprwhspr, rest-api backend, gpt-4o-mini-transcribe) rather than a second
-transcription stack. Same endpoint, same model, same steering prompt.
+Deliberately the same path the machine's dictation already uses (hyprwhspr,
+rest-api backend) rather than a second transcription stack. Same endpoint and
+the same steering prompt — but a LARGER model: dictation runs
+`gpt-4o-mini-transcribe` because the user is watching a cursor and fixes typos
+as they appear, whereas here a misheard word silently becomes an autonomous
+agent's instruction. See SPEC §2.3 for the cost/error-asymmetry argument.
 
 Guards borrowed from ScribeVault's WhisperService: a pre-upload size check so
 a too-large file fails immediately instead of after a slow upload, and
@@ -222,7 +225,7 @@ def sanity_check(text: str, cfg) -> tuple[bool, str]:
     """Decide whether a transcript is safe to hand to an autonomous agent.
 
     The transcript becomes the prompt, so garbage in means an agent acting on
-    garbage. gpt-4o-mini-transcribe returns plain text with no confidence
+    garbage. gpt-4o-transcribe returns plain text with no confidence
     signal (verbose_json with no_speech_prob is whisper-1 only), so this is
     heuristic by necessity — length and wake phrase, not model confidence.
     """
@@ -234,7 +237,7 @@ def sanity_check(text: str, cfg) -> tuple[bool, str]:
         head = " ".join(words[:5]).lower().strip(" ,.:;!?")
         head = _drop_fillers(head)
         triggers = [cfg.wake_phrase, *getattr(cfg, "wake_aliases", [])]
-        if not any(head.startswith(t) for t in triggers if t):
+        if not any(_triggers_at_start(head, t) for t in triggers if t):
             return False, f"no wake phrase {cfg.wake_phrase!r} — filed as a note, not executed"
 
 
@@ -246,6 +249,40 @@ def sanity_check(text: str, cfg) -> tuple[bool, str]:
 # built…"), and a false positive runs an agent on speech never aimed at it.
 # A false negative only files a note, which is recoverable and visible.
 _FILLERS = ("um", "uh", "er", "erm", "okay", "ok", "hey", "alright", "right")
+
+
+def _triggers_at_start(head: str, trigger: str) -> bool:
+    """True when `head` begins with `trigger` on a word boundary.
+
+    Plain startswith() admitted "Atticusville" and "Atticus's" as the wake
+    phrase. Harmless for a long distinctive phrase; a real false accept for a
+    short alias, where the gate is the only thing standing between ambient
+    speech and an autonomous agent.
+    """
+    if not head.startswith(trigger):
+        return False
+    rest = head[len(trigger):]
+    return rest == "" or not (rest[0].isalnum() or rest[0] == "'")
+
+
+def leading_words(text: str, n: int) -> list[str]:
+    """The opening words of a transcript, lowercased, with filler removed.
+
+    sanity_check strips filler before matching but the adjudicator path did not,
+    so "Okay, Artemis, research…" asked whether "Okay" was a mishearing of the
+    wake phrase while handing over "artemis research…" as the context — a
+    nonsense question with a near-certain hold, on precisely the mishearing the
+    adjudicator exists to recover. Both paths now start from the same words.
+    """
+    head = _drop_fillers(" ".join(text.split()).lower().strip(" ,.:;!?"))
+    out = []
+    for raw in head.split():
+        tok = raw.strip(" ,.:;!?\"'()[]—-")
+        if tok:
+            out.append(tok)
+        if len(out) >= n:
+            break
+    return out
 
 
 def _drop_fillers(head: str) -> str:

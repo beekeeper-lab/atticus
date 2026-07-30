@@ -118,12 +118,16 @@ The rest is device sync and poll intervals.
   vendor cloud while their phone app is *foregrounded* — not while charging, not
   merely with the phone unlocked. See [`docs/transport-tests.md`](docs/transport-tests.md)
   for the matrix and the verdict. This is the biggest open problem.
-- **The agent has no web access** in the unattended run, so research output is
-  knowledge-only with a caveat banner. Granting it is a deliberate decision, not
-  an oversight — see the roadmap.
-- **Recordings over ~23 minutes** can't be transcribed in one request. Atticus
-  truncates to the first 180 seconds rather than failing, because a command is
-  10–30 seconds and the wake word must come first. Chunking is not built.
+- **The agent has full network egress**, granted deliberately (see "Recently
+  completed"). It is bounded by nothing but the sandbox's mount namespace, so it
+  can also reach **loopback services on this host** — including this vault's own
+  web UI. `ATTICUS_SANDBOX_NET=none` closes that at the cost of research; a
+  netns plus an allowlist proxy is the real fix and is on the roadmap.
+- **Recordings over ~23 minutes** can't be transcribed in one request. By
+  default Atticus truncates to the first 180 seconds rather than failing,
+  because a command is 10–30 seconds and the wake word must come first.
+  Chunking for long-form recordings exists but is opt-in — globally, or per
+  recording with `"chunk_audio": true`.
 - **A misheard wake word silently files a real command as a note.** Observed
   once ("Atticus" → "Advocates"). The full transcript is always kept, so nothing
   is lost, but the command doesn't run.

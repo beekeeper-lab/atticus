@@ -67,9 +67,16 @@ def test_sandbox_is_available_where_it_is_required():
 
 
 def test_env_allowlist_excludes_credentials(tmp_path, monkeypatch):
-    """A1 — nothing credential-shaped survives into the agent's environment."""
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-should-never-appear")
-    monkeypatch.setenv("ATTICUS_NOTIFY_URL", "https://ntfy.sh/secret-topic")
+    """A1 — nothing credential-shaped survives into the agent's environment.
+
+    The fake values are ASSEMBLED rather than written literally. ops/pr.sh's
+    credential guard scans the staged diff for exactly these shapes, and it has
+    no exemption mechanism on purpose — a bypass for "it's only a test" is a hole,
+    since a test file is a perfectly ordinary place to paste a real key by
+    accident. Concatenating keeps the guard absolutely strict.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-" + "should-never-appear")
+    monkeypatch.setenv("ATTICUS_NOTIFY_URL", "https://" + "ntfy.sh/secret-topic")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "nope")
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_nope")
 
@@ -176,3 +183,58 @@ def test_vault_path_never_reaches_the_prompt():
     task = ex.build_task("do a thing")
     assert "atticus-vault" not in task
     assert "./output/" in task
+
+
+@needs_bwrap
+def test_the_vault_is_neither_readable_nor_writable(tmp_path):
+    """A2's acceptance criterion says "and that the vault is not writable", and
+    nothing probed the vault path at all — the item was ticked regardless.
+
+    This matters beyond exfiltration: the vault IS the queue, so an agent able to
+    write it could advance another recording's status, plant a task file, or
+    forge output for a recording it was never given.
+    """
+    from config import Config
+    vault = Config().vault
+    out = _run_in_sandbox(
+        tmp_path,
+        f'test -e {vault} && echo EXISTS || echo ABSENT; '
+        f'ls -A {vault} 2>/dev/null | wc -l; '
+        f'touch {vault}/.agent-probe 2>/dev/null && echo WROTE || echo NOWRITE')
+    assert out.split() == ["ABSENT", "0", "NOWRITE"], \
+        f"vault reachable from inside the sandbox: {out!r}"
+    assert not (vault / ".agent-probe").exists(), \
+        "the agent wrote into the real vault"
+
+
+@needs_bwrap
+def test_the_rest_of_dot_claude_is_not_exposed(tmp_path):
+    """Only the credential and the allowlisted global skills may be bound.
+
+    ~/.claude also holds history.jsonl, settings.json and sessions/ — none of
+    which the agent needs, and all of which describe the operator's other work.
+    """
+    out = _run_in_sandbox(
+        tmp_path,
+        'cat ~/.claude/history.jsonl 2>/dev/null | wc -c; '
+        'cat ~/.claude/settings.json 2>/dev/null | wc -c; '
+        'ls -A ~/.claude/sessions 2>/dev/null | wc -l')
+    assert out.split() == ["0", "0", "0"], f"extra ~/.claude material: {out!r}"
+
+
+@needs_bwrap
+def test_sandbox_net_none_removes_the_network(tmp_path):
+    """The loopback-ingress hole: the shared netns makes local services — the
+    vault web UI and its write token among them — reachable from a sandbox that
+    supposedly cannot see the vault. This asserts the switch actually switches.
+    """
+    cfg = types.SimpleNamespace(sandbox=True, sandbox_net="none",
+                                claude_bin="claude", global_skills=[])
+    cmd = ex.wrap_sandbox(["/bin/bash", "-c",
+                           "getent hosts example.com >/dev/null 2>&1 "
+                           "&& echo NET || echo NONET"],
+                          tmp_path, tmp_path / "output", cfg)
+    assert "--unshare-net" in cmd
+    p = subprocess.run(cmd, env=ex.agent_env(tmp_path, tmp_path / "output"),
+                       capture_output=True, text=True, timeout=60)
+    assert p.stdout.strip() == "NONET", f"network still reachable: {p.stdout!r}"

@@ -55,6 +55,13 @@ so this is buildable without sudo.
       *Acceptance:* a security test runs a probe **through the real execute
       path** and asserts `~/.ssh/atticus_vault` and `~/.config/ai/env` are
       unreadable, and that the vault is not writable.
+      *Note (2026-07-30):* this was ticked before the vault half of that
+      criterion had any test — an audit found nothing probed the vault path at
+      all. `test_the_vault_is_neither_readable_nor_writable` now covers it, and
+      the sandbox-off case was checked to confirm the assertion is sensitive to
+      the boundary rather than vacuous. The same audit found that "no vault"
+      holds for the *filesystem* only: the shared network namespace leaves the
+      vault's contents reachable over loopback HTTP. See `SECURITY.md`.
 
 - [x] **A3. Correct every overstated isolation claim.**
       `execute.py`'s docstring ("sees … nothing else"), `README.md`, `SPEC.md`,

@@ -1,7 +1,7 @@
 # Atticus — Voice-to-Agent Pipeline Specification
 
-**Status:** v1 — working end to end on real recordings
-**Last updated:** 2026-07-29
+**Status:** DESIGN RECORD for v1 — not the source of truth
+**Last updated:** 2026-07-30
 **Owner:** Gregg Reed
 
 ---
@@ -11,6 +11,21 @@
 > `docs/configuration.md`, **those are current and this is history.** The
 > transport verdict in `docs/transport-tests.md` supersedes every hands-off sync
 > assumption below.
+>
+> **This file was also labelled "source of truth" in two places, including by
+> `CLAUDE.md`.** That contradiction is why several stale details here were read
+> as current for a while. Corrected 2026-07-30, along with four factual errors
+> that a disclaimer does not protect anyone from — a reader does not apply "this
+> might be history" to a JSON schema or a poll interval. Fixed: the ledger is
+> per-host (`seen-<host>.jsonl`), the metadata field is `audio_filename` not
+> `audio_path`, the poll interval is 15 minutes not 2, and `ori_ready` does not
+> gate the download.
+>
+> **Go here for** *why* a decision was made, the W0–W9 task breakdown, the
+> Plaud-surface analysis (§7), the Mac question (§6), and the contingent iOS work
+> (W8). **Do not trust it for** a schema, an interval, a file path, or a
+> credential boundary. Sections §2.3 (transcription model) and §4.3 (concurrent
+> push) are still cited by live code comments and remain current.
 
 ## 1. Intent
 
@@ -254,8 +269,9 @@ atticus/
 ├── CLAUDE.md                  project context for agent sessions
 ├── README.md
 ├── docs/
-│   ├── SPEC.md                ← this file, source of truth
-│   └── decisions/             ADRs
+│   ├── SPEC.md                ← this file, DESIGN RECORD (see the note at top)
+│   ├── configuration.md       every setting, generated from the code
+│   └── decisions/             ADRs — current, and they supersede this file
 ├── ingest/                    Plaud → vault poller
 ├── processor/                 transcribe → route → execute
 ├── ops/                       systemd units, env templates, install scripts
@@ -283,7 +299,8 @@ atticus-vault/
 ├── failures/2026/07/
 │   └── 2026-07-28T142211Z_<plaud_id>.error.json
 └── .state/
-    └── seen.jsonl              append-only ledger of processed Plaud IDs
+    ├── seen-<host>.jsonl       append-only ledger, ONE PER HOST
+    └── seen.jsonl              legacy single-host ledger, still read
 ```
 
 Audio stays in the vault permanently. Git is the durability story; no separate
@@ -313,7 +330,7 @@ backup tier for v1.
   "ingested_at": "2026-07-28T14:26:03Z",
   "transport": "wifi-cloud",
   "duration_seconds": 47,
-  "audio_path": "inbox/2026/07/2026-07-28T142211Z_abc123.mp3",
+  "audio_filename": "2026-07-28T142211Z_abc123.mp3",
   "audio_sha256": "…",
   "status": "raw",
   "attempts": 0
@@ -335,17 +352,20 @@ interval is argued in `ingest/README.md`; the short version is that arrivals are
 human-triggered bursts hours apart, so a tighter poll buys nothing).
 
 1. `plaud_web.py list --days 2 --json` → candidate list
-2. Filter against `.state/seen.jsonl`
+2. Filter against `.state/seen-<host>.jsonl` (union of every host's ledger,
+   plus the legacy `seen.jsonl`)
 3. For each new ID: `plaud_web.py audio <id>` → time-limited download URL
 4. Download to `inbox/YYYY/MM/`, verify size, compute SHA-256
 5. Write metadata JSON with `status: raw`
-6. Append ID to `seen.jsonl`, commit, push
+6. Append ID to this host's `seen-<host>.jsonl`, commit, push
 
 Design notes:
 
 - **Poll, don't push.** No webhook is documented for personal Plaud accounts.
-  Webhooks appear only in the enterprise workflow product. 2-minute polling is
-  cheap and the latency floor is set by device sync anyway.
+  Webhooks appear only in the enterprise workflow product. Polling is cheap and
+  the latency floor is set by device sync anyway. **The interval is 15 minutes**
+  — an earlier draft here said 2, which every other document and the unit file
+  contradict; see `ingest/README.md` for the argument.
 - **Ledger before commit, commit before processing.** The recording is durable
   in git before any work is attempted on it.
 - Download URLs are time-limited — fetch immediately, never persist the URL.
@@ -451,7 +471,14 @@ naively treating either as seconds produces plausible-looking garbage.
 **Application errors arrive as HTTP 200** with a non-zero `status` field, so the
 transport layer checks the body, not just the status line.
 
-#### T-06b — the remaining unknown
+#### T-06b — the remaining unknown *(RESOLVED — kept for the reasoning)*
+
+> **Resolved on arrival day.** Audio is `GET /file/temp-url/{id}` → a presigned
+> S3 URL, fetched **without** an Authorization header; prefer `temp_url` (MP3),
+> since `temp_url_opus` is often absent. **`ori_ready` turned out NOT to be a
+> download gate** — it is `false` on files that fetch perfectly well, and an
+> early revision that refused to download on it was simply wrong. Everything
+> below is the reasoning as it stood before that was known.
 
 The download path was never triggered because the account has no exportable
 recording. `ori_ready: false` on every demo file is the concrete form of E5:
@@ -918,7 +945,7 @@ whisper otherwise" fallback is cheap. Not v1 — noted so it is not rediscovered
 |---|----------|-------------|--------|
 | Q1 | ~~Does `--json` exist on the CLI?~~ **Moot** — CLI is paywalled (ADR-002) | — | — |
 | Q2 | Does the browser session survive copy to WarDog and work headless? | T-22 | W4 |
-| Q12 | Does `ori_ready` gate the download, and what flips it? (E5) | T-06b | **fetcher correctness** |
+| Q12 | ~~Does `ori_ready` gate the download?~~ **Answered: NO.** It is `false` on files that fetch fine; an early revision refused to download on it and was wrong. See `CLAUDE.md` and `plaud_web.py`. | T-06b | — |
 | Q9 | ~~What is the web API's actual shape?~~ **Answered** except the download path | T-06 | — |
 | Q10 | Does audio export return an existing object, or start a server-side job? (E5) | T-06b | fetcher design |
 | Q3 | Does BLE sync complete with the app suspended? | T-34 | transport choice |

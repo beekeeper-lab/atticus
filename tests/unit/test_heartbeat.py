@@ -135,3 +135,55 @@ def test_missing_units_are_skipped_not_alarmed(monkeypatch, tmp_path, capsys):
     assert rc == 0
     assert "never fire" not in out
     assert "no record of ever completing" not in out
+
+
+def test_a_timer_parked_at_infinity_alarms(monkeypatch, tmp_path, capsys):
+    """The one failure this whole file was written around, previously untested.
+
+    atticus-vault-site.timer sat enabled AND active with next_elapse=infinity for
+    76 minutes on 2026-07-29. A timer that never fires cannot alarm about not
+    firing, which makes it the failure that defeats every other safeguard here.
+    FakeSystemctl already supported scheduled=False; no test ever used it, so a
+    regression in timer_is_scheduled()'s string-slicing would go unnoticed.
+    """
+    vault = _empty_vault(tmp_path)
+    monkeypatch.setenv("ATTICUS_VAULT_PATH", str(vault))
+    monkeypatch.setattr(hb.subprocess, "run",
+                        FakeSystemctl(loaded=True, scheduled=False))
+    monkeypatch.setattr(sys, "argv", ["heartbeat.py", "--dry-run"])
+
+    rc = hb.main()
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "NO next elapse" in out
+    assert "atticus-processor.timer" in out
+
+
+def test_retention_and_site_timers_are_watched(monkeypatch, tmp_path, capsys):
+    """Neither was in the watch list. retention enforces a privacy policy whose
+    own unit comment says silently not running is the failure to prevent, and the
+    site timer is the one that actually broke."""
+    vault = _empty_vault(tmp_path)
+    monkeypatch.setenv("ATTICUS_VAULT_PATH", str(vault))
+    monkeypatch.setattr(hb.subprocess, "run",
+                        FakeSystemctl(loaded=True, scheduled=False))
+    monkeypatch.setattr(sys, "argv", ["heartbeat.py", "--dry-run"])
+
+    hb.main()
+    out = capsys.readouterr().out
+    assert "atticus-retention.timer" in out
+    assert "atticus-vault-site.timer" in out
+
+
+def test_a_wrong_vault_path_is_not_reported_healthy(monkeypatch, tmp_path, capsys):
+    """load_records() returns [] for a missing inbox and check_sync returns early
+    with no .git, so a typo'd ATTICUS_VAULT_PATH used to produce a fully green
+    heartbeat while the real vault accumulated unprocessed work."""
+    monkeypatch.setenv("ATTICUS_VAULT_PATH", str(tmp_path / "does-not-exist"))
+    monkeypatch.setattr(hb.subprocess, "run", FakeSystemctl())
+    monkeypatch.setattr(sys, "argv", ["heartbeat.py", "--dry-run"])
+
+    rc = hb.main()
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "does not exist" in out

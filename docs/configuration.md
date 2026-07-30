@@ -13,7 +13,7 @@ copies.
 | `ATTICUS_ALARM_THROTTLE_HOURS` | `6` | One alarm per condition per this many hours. The ingest timer rediscovers a dead session every 15 minutes; alarming each time is how you learn to ignore the alarm. |
 | `ATTICUS_ALLOWED_TOOLS` | `WebSearch,WebFetch,Read,Write,Edit,Glob,Grep,Bash` | Tools the agent may use, comma-separated. WebSearch/WebFetch are granted deliberately. Denying them bought NO security: the sandbox leaves the network namespace intact because research needs it, an… |
 | `ATTICUS_AUDIO_RETENTION_DAYS` | `30` | Expire raw audio after this many days. 0 = keep forever. Transcripts and agent output are NEVER expired — only the audio. The vault contains recordings of other people who did not consent to perman… |
-| `ATTICUS_BACKLOG_ALARM_MINUTES` | *(empty)* | Warn if a recording sits in inbox/ unprocessed longer than this. The queue's benefit — the processor may be offline, work waits — is also its failure mode: a dead processor looks exactly like an id… |
+| `ATTICUS_BACKLOG_ALARM_MINUTES` | `60` | Warn if a recording sits in inbox/ unprocessed longer than this. The queue's benefit — the processor may be offline, work waits — is also its failure mode: a dead processor looks exactly like an id… |
 | `ATTICUS_CHUNK_LONG_AUDIO` | `off` | Chunk long recordings instead of truncating them. OFF by default, because truncation is correct for a COMMAND: the wake phrase comes first, so everything past the opening seconds is silence or ambi… |
 | `ATTICUS_CHUNK_OVERLAP_SECONDS` | `10` |  |
 | `ATTICUS_CHUNK_SECONDS` | `1200` | Chunk length and overlap, seconds. The API caps a request at 1400s, so chunk_seconds is clamped to that. Chunks overlap because a hard cut lands mid-word about as often as not, and a word split acr… |
@@ -24,12 +24,16 @@ copies.
 | `ATTICUS_FETCHER_TIMEOUT` | `300` |  |
 | `ATTICUS_GIT_AUTHOR_EMAIL` | `atticus@localhost` |  |
 | `ATTICUS_GIT_AUTHOR_NAME` | `Atticus Processor` | Git identity for automated commits. Distinguish the hosts so the vault history shows which side of the pipeline made each commit. ingest    → "Atticus Ingest" processor → "Atticus Processor" When b… |
+| `ATTICUS_GLOBAL_SKILLS` | `html-artifact-output,dataviz` | Which of the operator's GLOBAL (~/.claude/skills) skills the agent may see. Binding the whole directory handed it an inventory of unrelated infrastructure — M365 addresses, ntfy topics, provider co… |
+| `ATTICUS_HOST` | *(empty)* | Overrides the hostname used to name this host's dedupe ledger (.state/seen-<host>.jsonl) and to identify it in alarms. Blank = the real hostname, which is almost always what you want. Set it only i… |
 | `ATTICUS_LOG_LEVEL` | `INFO` | DEBUG \| INFO \| WARNING \| ERROR |
 | `ATTICUS_MAX_BUDGET_USD` | `2.00` | Hard spend ceiling per recording, in USD. One sentence spoken near the device should not be able to run up an unbounded bill; wall-clock alone is a poor proxy because a research fan-out spends fast… |
 | `ATTICUS_MAX_COMMAND_CHARS` | `600` | Hard bound on the prompt handed to the agent, cut at a sentence boundary. The FULL transcript is still written to the vault — this only limits how much ambient speech can reach an autonomous agent.… |
 | `ATTICUS_MAX_COMMAND_SECONDS` | `180` | ── length guards ──────────────────────────────────────────────────── A command is 10-30 seconds and the wake phrase must come FIRST, so everything past a couple of minutes is silence or ambient au… |
-| `ATTICUS_MAX_COMMAND_SENTENCES` | `6` |  |
+| `ATTICUS_MAX_COMMAND_SENTENCES` | `6` | The other half of the same bound, and whichever bites first wins. Undocumented until 2026-07-30 even though it is one of the two prompt-scoping limits — the character cap was documented and the sen… |
 | `ATTICUS_MAX_INGEST_SECONDS` | `7200` | Pathological length — ingest will not even download it. Plaud reports duration in the listing, so this check is free. 0 disables it. |
+| `ATTICUS_MAX_OUTPUT_BYTES` | `52428800` | Total bytes across all collected files. 50 MB — generous for an HTML report, far below anything that would bloat the vault's history irreversibly. |
+| `ATTICUS_MAX_OUTPUT_FILES` | `50` | Ceiling on what a single utterance may commit. The vault is git, where deletion is deliberately hard, so unbounded agent output is permanent. The whole collection is refused rather than committing … |
 | `ATTICUS_MIN_WORDS` | `3` | Refuse to execute transcripts shorter than this. |
 | `ATTICUS_NOTIFICATION_DETAIL` | `full` | How much of what you said appears in a push notification. title   - just "Atticus finished" and the link. Nothing spoken. summary - the first 60 characters. full    - up to 180 characters (default)… |
 | `ATTICUS_NOTIFY_NOTES` | `false` | Push for GATED notes too. Off by default: a wearable overhears a lot and notes are the common case. Turn on to catch the failure that matters — a misheard wake word silently filing a real command a… |
@@ -37,20 +41,22 @@ copies.
 | `ATTICUS_PUSH_RETRIES` | `3` | Both hosts push to the same repo. Bounded retry on rebase conflict before quarantining and notifying. See SPEC §4.3. |
 | `ATTICUS_RESULT_NOTIFY_URL` | *(empty)* | ── results ────────────────────────────────────────────────────────── Where finished-recording pushes go. Blank = reuse ATTICUS_NOTIFY_URL. Split them onto a separate topic if pipeline alarms start… |
 | `ATTICUS_SANDBOX` | `on` | Contain the agent in a bwrap mount namespace: no $HOME, no ~/.ssh, no ~/.config/ai/env, no vault. "off" is a real trade, not a formality — without it the agent can read every credential this host h… |
+| `ATTICUS_SANDBOX_NET` | `host` | Sandbox networking. "host" (default) shares the host network namespace, which research needs — but loopback is shared too, so the agent can reach local services including the vault's own web UI and… |
 | `ATTICUS_SITE_BASE_URL` | *(empty)* | Public base URL of the vault browser, no trailing slash. Used to build a tappable link to the page a recording produced: <base>/docs/<stem>/<file>.html Blank = no links in notifications, which is c… |
 | `ATTICUS_SKILLS_DIR` | *(empty)* |  |
 | `ATTICUS_STT_MODEL` | `gpt-4o-transcribe` | gpt-4o-transcribe ($0.006/min) not gpt-4o-mini-transcribe ($0.003/min). Different job from dictation: nobody is waiting on this, so latency is free and accuracy is worth buying. A misheard word her… |
-| `ATTICUS_STT_PROMPT` | `Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules. The speaker is dictating a short instruction or request.` | Steering prompt. Measurably improves punctuation and capitalization — carried over from hyprwhspr's config and extended for instruction-shaped audio. Change with care. |
+| `ATTICUS_STT_PROMPT` | `Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules. The speaker is dictating a short instruction or request, and often begins by saying the name "Atticus".` | Steering prompt. Measurably improves punctuation and capitalization — carried over from hyprwhspr's config and extended for instruction-shaped audio. Change with care. |
 | `ATTICUS_STT_TIMEOUT` | `60` |  |
 | `ATTICUS_STT_URL` | `https://api.openai.com/v1/audio/transcriptions` | ── transcription ──────────────────────────────────────────────────── Same endpoint and model as the machine's existing dictation (hyprwhspr), deliberately: one transcription stack, not two. The AP… |
 | `ATTICUS_VAULT_PATH` | `<repo>/.scratch-vault` | Absolute path to the atticus-vault checkout on THIS host. Each host has its own clone; the paths need not match. |
 | `ATTICUS_WAKE_ADJUDICATOR` | `on` | Probabilistic wake-word recovery. When the strict gate fails, ask a small model whether the first word could be a MISHEARING of the wake phrase. Phonetics only, one word in, one token out, and it f… |
 | `ATTICUS_WAKE_ADJUDICATOR_MODEL` | `gpt-4o-mini` |  |
-| `ATTICUS_WAKE_ADJUDICATOR_THRESHOLD` | `50` |  |
+| `ATTICUS_WAKE_ADJUDICATOR_THRESHOLD` | `75` | Score (0-100) at or above which a misheard first word is admitted. 75, not a bare majority: this widens the one control between ambient speech and an autonomous agent, and ADR-003 makes it load-bea… |
 | `ATTICUS_WAKE_ADJUDICATOR_TIMEOUT` | `15` |  |
 | `ATTICUS_WAKE_ALIASES` | *(empty)* | Known mishearings of the wake phrase, comma-separated, exact-matched. Observed: "Atticus, research the best Android phone options" transcribed as "Advocates research…" and was silently filed as a n… |
 | `ATTICUS_WAKE_PHRASE` | *(empty)* | Optional wake phrase. Empty = execute every transcript that passes the word count. Set it (e.g. "atticus") and only transcripts starting with it are executed — everything else is filed as an unexec… |
+| `ATTICUS_WAKE_VERDICT_TTL_HOURS` | `168` | How long an adjudicator verdict stays cached. Verdicts used to be cached FOREVER, so a single wrong admit permanently opened that (word, context) pair and later passes logged only "cached verdict …… |
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*42 settings.*
+*48 settings.*

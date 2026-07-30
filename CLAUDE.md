@@ -4,8 +4,15 @@ Voice-to-agent pipeline. Speak a task into a Plaud NotePin S; an agent on Forge
 executes it and publishes the result to a private repo. No interaction between
 "stop recording" and "read the output."
 
-**Read `docs/SPEC.md` first.** It is the source of truth for architecture,
-task breakdown, and open questions. This file is orientation only.
+**Current truth lives in this file, `README.md`, `docs/configuration.md` (every
+setting, generated from the code) and `docs/decisions/` (ADRs).** Read those
+first.
+
+`docs/SPEC.md` is the **design record**, not the source of truth — it says so
+itself and deliberately retains superseded reasoning. It used to be labelled
+both ways, which is how several of its stale details came to be read as current.
+Go there for *why* a decision was made, the W0–W9 task breakdown, and the
+contingent iOS work; do not trust it for a schema, an interval or a file path.
 
 ## Current state
 
@@ -93,17 +100,21 @@ Two deploy keys, one per host, both with write access.
   password. Ours uses a 1Password-backed browser session and stores none.
 - **Authenticate with Playwright, then call the JSON API** — do not scrape the
   DOM. Narrower and more stable target.
-- **Transcription is OpenAI `gpt-4o-mini-transcribe`, not Plaud and not local.**
+- **Transcription is OpenAI `gpt-4o-transcribe`, not Plaud and not local.**
   AutoFlow needs >200 words to fire, so short commands arrive with no Plaud
-  transcript at all. We use the *same* endpoint, model and steering prompt as
-  the machine's existing dictation (hyprwhspr) — one transcription stack, not
-  two. Key from `~/.config/ai/env`, never in this repo. This reverses an
-  earlier "local faster-whisper" decision; see SPEC §2.3 for why, including the
-  privacy consequence.
+  transcript at all. We use the *same* endpoint and steering prompt as the
+  machine's existing dictation (hyprwhspr) — one transcription stack, not two —
+  but a **larger model than dictation's `gpt-4o-mini-transcribe`**, because a
+  dictation typo is visible and instantly fixable while a misheard word here
+  becomes an autonomous agent's instruction. Do not "unify" these without
+  re-reading the cost/error table in SPEC §2.3. Key from `~/.config/ai/env`,
+  never in this repo. This reverses an earlier "local faster-whisper" decision;
+  see SPEC §2.3 for why, including the privacy consequence.
 - **Routing is the model's job, not ours.** `claude -p` runs in a workspace
-  with `.claude/skills/` linked to `skills/` and picks a matching skill from
-  its description. Adding a capability = adding a skill directory. There is no
-  routing table and there should not be one.
+  whose `.claude/skills/` is a **copy** of `skills/` (symlinks dangle inside the
+  mount namespace), and picks a matching skill from its description. Adding a
+  capability = adding a skill directory. There is no routing table and there
+  should not be one.
 - **The agent cannot touch git**, and this is now enforced, not asserted. It
   runs under `bwrap` in a mount namespace with its own `HOME`: no `~/.ssh`, no
   `~/.config/ai/env`, no vault. Stripping `GIT_SSH_COMMAND` from its environment
@@ -190,6 +201,20 @@ Concurrency there is handled by `pull --rebase` + bounded retry in
 
 The processor executes text derived from ambient audio. Anything spoken near
 the pin can become an instruction. Keep the blast radius small: unprivileged
-user, vault-scoped working directory, deny-by-default tool permissions, no
-credentials in scope beyond the vault deploy key. Every executed prompt is
-committed, so git history is the audit trail.
+user, a scratch workspace the agent cannot escape, an env allowlist, and no
+credentials in scope beyond the vault deploy key — which the agent cannot see.
+Every executed prompt is committed, and the agent's stdout is collected beside
+its output, so git history is the audit trail for both the instruction and what
+was done with it.
+
+**The tool list is NOT deny-by-default, and the docs used to claim it was.**
+`ATTICUS_ALLOWED_TOOLS` ships with `Bash` and the permission mode is
+`acceptEdits`, which is a deliberate trade — denying tools bought nothing while
+the agent had a shell and a network. The transcript is fenced as untrusted data
+in the prompt, but fencing is mitigation, not a control: treat arbitrary shell
+inside the sandbox as reachable from anything spoken near the pin, and rely on
+the namespace rather than the tool list.
+
+**Two secrets remain inside the sandbox boundary** — the Claude Code credential
+(bound in so the CLI can authenticate) and, because the network namespace is
+shared by default, anything served on loopback. See `SECURITY.md`.
