@@ -28,11 +28,20 @@ def _bwrap_actually_works() -> bool:
     if not shutil.which("bwrap"):
         return False
     try:
-        p = subprocess.run(
-            ["bwrap", "--ro-bind", "/usr", "/usr", "--dev", "/dev",
-             "--", "/usr/bin/true"],
-            capture_output=True, timeout=20)
-        return p.returncode == 0
+        # Probe through the REAL wrapper rather than a hand-rolled bwrap line.
+        # A hand-rolled one omitted the /lib64 symlink and failed with
+        # "execvp: No such file or directory" — which is what a missing dynamic
+        # linker looks like, not a missing binary. Testing the thing we actually
+        # ship cannot drift from it.
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            ws = Path(td)
+            (ws / "output").mkdir()
+            cfg = types.SimpleNamespace(sandbox=True, claude_bin="true")
+            cmd = ex.wrap_sandbox(["/usr/bin/true"], ws, ws / "output", cfg,
+                                  log=lambda m: None)
+            return subprocess.run(cmd, capture_output=True,
+                                  timeout=30).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
 
