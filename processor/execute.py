@@ -418,6 +418,23 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
                 raise ExecutionError(
                     f"agent exited {proc.returncode} with no output — {expiry}",
                     retryable=False)
+            # Budget exhaustion is DETERMINISTIC, so retrying is not a recovery
+            # strategy — it is spending the ceiling again to hit the same wall.
+            # Observed 2026-07-30: a research task exceeded $2.00, produced no
+            # output at all, and was queued to retry three more times at $2.00
+            # each. $8 spent, nothing gained, on money that is the operator's.
+            #
+            # The right response is a human decision: raise
+            # ATTICUS_MAX_BUDGET_USD for this task, narrow the request, or accept
+            # that it is too big. So: fail loudly, non-retryable, and say which.
+            if re.search(r"exceeded\s+usd\s+budget", err, re.I):
+                raise ExecutionError(
+                    f"the agent hit the ${cfg.max_budget_usd} spend ceiling "
+                    f"before producing any output, and stopped. NOT retried: the "
+                    f"same request would spend the ceiling again and stop in the "
+                    f"same place. Raise ATTICUS_MAX_BUDGET_USD, narrow the "
+                    f"request, or re-run it by hand with --retry.",
+                    retryable=False)
             if not err and not out_hint:
                 raise ExecutionError(
                     f"agent exited {proc.returncode} and wrote nothing to either "
