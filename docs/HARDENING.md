@@ -1,7 +1,7 @@
 # Hardening plan — v0.1.0-alpha
 
 **Status:** in progress — A1–A4, A6, B1, B3–B7, C1–C4, D1 landed 2026-07-29.
-Remaining: A5, B2, D2–D8.
+Remaining: A5, D2–D8.
 **Opened:** 2026-07-29
 **Source:** external review of the public repo, plus findings verified on Forge.
 
@@ -101,7 +101,7 @@ so this is buildable without sudo.
       advance and the pass exits non-zero; a second test asserts an
       ahead-but-clean repo still pushes.
 
-- [ ] **B2. `retryable` actually retries.**
+- [x] **B2. `retryable` actually retries.**
       New `retry_wait` state with `next_attempt_at`, backoff 5 min → 20 min →
       2 h → permanent. Add `--retry ID` and `--retry-all`.
       *Acceptance:* a simulated 503 lands in `retry_wait`, is skipped before its
