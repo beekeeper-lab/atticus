@@ -104,8 +104,11 @@ Two deploy keys, one per host, both with write access.
   with `.claude/skills/` linked to `skills/` and picks a matching skill from
   its description. Adding a capability = adding a skill directory. There is no
   routing table and there should not be one.
-- **The agent never touches git.** It writes to a scratch dir; the pipeline
-  copies and commits. No deploy key in its environment.
+- **The agent cannot touch git**, and this is now enforced, not asserted. It
+  runs under `bwrap` in a mount namespace with its own `HOME`: no `~/.ssh`, no
+  `~/.config/ai/env`, no vault. Stripping `GIT_SSH_COMMAND` from its environment
+  was never a control — the deploy key was readable and it has a shell.
+  `ATTICUS_SANDBOX=off` disables this and is a real trade, not a formality.
 - **`ios/` is a plain directory, not a submodule.** Split it out later if it
   ever ships independently.
 - **Poll, don't wait for webhooks.** Twice over: ingest polls Plaud (no webhook

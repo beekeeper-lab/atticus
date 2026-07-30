@@ -82,8 +82,11 @@ the transport can be replaced without touching the pipeline.
 **4. A wearable overhears things, so assume the input is hostile.** Only
 transcripts beginning with a wake word are executed; everything else is filed as
 an unexecuted note. This is load-bearing: of the first fifteen real recordings,
-most were correctly *not* executed. The agent also holds no git credential — it
-writes to a scratch directory and the pipeline commits on its behalf.
+most were correctly *not* executed. The agent also runs inside a mount namespace
+with its own `HOME`, where the vault, the SSH keys and the shared credential
+file do not exist — so "it cannot touch git" is enforced rather than asserted.
+It still has network access; see [`docs/HARDENING.md`](docs/HARDENING.md) for
+what is and is not guaranteed.
 
 **5. Every capability ends in the same artifact.** A research request produces an
 HTML report. A "file a ticket" skill would file the ticket *and* produce an HTML
