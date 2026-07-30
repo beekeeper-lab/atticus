@@ -63,8 +63,14 @@ def test_no_documented_setting_is_dead():
 
 
 def test_no_setting_is_undocumented():
-    """And every knob the code reads must be documented, or it is invisible."""
-    undocumented = _read_by_code() - _documented() - _ELSEWHERE
+    """And every knob the code reads must be documented, or it is invisible.
+
+    _KNOWN_INERT is subtracted from BOTH directions, not just the documented one:
+    those names are commented-out placeholders for the contingent W8 iOS work, and
+    redact.py names them so it can scrub their values if they ever get set. A name
+    that is not an active setting should not be demanded in either direction.
+    """
+    undocumented = _read_by_code() - _documented() - _ELSEWHERE - _KNOWN_INERT
     assert not undocumented, (
         f"read by code but absent from ops/.env.example: {sorted(undocumented)} "
         f"— add it, or docs/configuration.md will never mention it")

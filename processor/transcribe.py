@@ -20,6 +20,7 @@ from pathlib import Path
 
 import requests
 
+from redact import redact
 from audio import (
     API_MAX_BYTES,
     API_MAX_SECONDS,
@@ -211,8 +212,13 @@ def transcribe(audio: Path, cfg, *, attempts: int = 3) -> str:
                 last = TranscriptionError(f"upstream {resp.status_code}",
                                           retryable=True, kind="transient")
             else:
+                # Redacted: this string becomes last_error, which is COMMITTED
+                # to the vault, where deletion is deliberately hard. An API error
+                # body is unlikely to be secret-bearing but is not guaranteed
+                # not to be, and git is forever.
                 raise TranscriptionError(
-                    f"unexpected {resp.status_code}: {body[:120]}", kind="error")
+                    f"unexpected {resp.status_code}: {redact(body)[:120]}",
+                    kind="error")
 
         if attempt < attempts:
             time.sleep(min(2 ** attempt, 8))

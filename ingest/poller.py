@@ -43,6 +43,7 @@ sys.path.insert(0, str(REPO / "processor"))
 from config import Config          # noqa: E402
 from lock import AlreadyRunning, single_instance   # noqa: E402
 from notify import clear as alarm_clear, notify   # noqa: E402
+from redact import redact                         # noqa: E402
 from vault import Git, VaultSyncError, write_atomic, utcnow   # noqa: E402
 
 EXIT_OK, EXIT_PARTIAL, EXIT_CONFIG, EXIT_AUTH = 0, 1, 2, 3
@@ -71,8 +72,17 @@ class Fetcher:
         except subprocess.TimeoutExpired:
             raise FetcherError(f"fetcher timed out: {' '.join(args)}", F_TRANSIENT)
         if p.returncode != 0:
-            err = (p.stderr or p.stdout or "").strip()[-300:]
-            raise FetcherError(f"{self.path.name} {args[0]}: {err}", p.returncode)
+            # NEVER the raw tail. A library decides what goes in its error
+            # strings and libraries interpolate URLs: on 2026-07-30 this put a
+            # presigned S3 URL with its AWSALB session cookies into the journal,
+            # which is persistent — a short-lived credential became a durable
+            # one. Prefer the FIRST lines, where the actual message lives (the
+            # URL tends to be mid-traceback), and redact whatever survives.
+            raw = (p.stderr or p.stdout or "").strip()
+            lines = [ln for ln in raw.splitlines() if ln.strip()]
+            head = " | ".join(lines[:3])[:300] if lines else "(no output)"
+            raise FetcherError(
+                f"{self.path.name} {args[0]}: {redact(head)}", p.returncode)
         return p.stdout
 
     @staticmethod
