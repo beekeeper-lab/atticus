@@ -1,5 +1,6 @@
 """Shared fixtures. No test here touches a real network, vault, or API."""
 import json
+import os
 import subprocess
 import sys
 import types
@@ -11,41 +12,81 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(REPO / "processor"), str(REPO / "ingest"), str(REPO)]
 
 
+@pytest.fixture(autouse=True)
+def _scrubbed_env(monkeypatch):
+    """No ATTICUS_/PLAUD_ variable from the developer's shell may reach a test.
+
+    Autouse, so it cannot be forgotten. Without it, a real Config built below
+    would silently inherit this host's settings and the suite would pass or fail
+    depending on whose machine it ran on.
+    """
+    for k in list(os.environ):
+        if k.startswith(("ATTICUS_", "PLAUD_")):
+            monkeypatch.delenv(k, raising=False)
+
+
 @pytest.fixture
 def cfg(tmp_path):
-    """A config object with the real defaults, nothing live behind it."""
-    return types.SimpleNamespace(
-        vault=tmp_path / "vault",
-        wake_phrase="atticus",
-        wake_aliases=["advocates", "abacus", "artemis"],
-        # Adjudicator keys mirror config.py's real defaults so tests and prod
-        # cannot silently diverge (e.g. a threshold fallback disagreeing with
-        # the configured default). Individual tests override as needed.
-        wake_adjudicator=True,
-        wake_adjudicator_threshold=50,
-        wake_adjudicator_model="gpt-4o-mini",
-        wake_adjudicator_timeout=15,
-        openai_key="sk-test",
-        min_words=3,
-        max_command_chars=600,
-        max_command_sentences=6,
-        max_command_seconds=180,
-        max_ingest_seconds=7200,
-        max_budget_usd="2.00",
-        sandbox=True,
-        claude_bin="claude",
-        claude_model=None,
-        exec_timeout=60,
-        skills_dir=REPO / "skills",
-        notify_url=None,
-        result_notify_url=None,
-        site_base_url="",
-        notify_notes=False,
-        alarm_throttle_hours=6,
-        git_name="t", git_email="t@t", push_retries=1,
-        stt_url="http://127.0.0.1:1/none", stt_model="m", stt_prompt="p",
-        stt_timeout=1, log_level="INFO",
-    )
+    """The REAL Config, built against no env file, with test overrides applied.
+
+    This used to be a hand-written SimpleNamespace mirroring config.py's
+    defaults, and the mirror drifted twice — both times invisibly and both times
+    in the direction that weakened a test:
+
+      * `wake_adjudicator_threshold` stayed 50 after the shipped default became
+        75, so every adjudicator test measured a gate nobody runs.
+      * `wake_aliases` carried the three observed mishearings while the shipped
+        default is empty, which made test_gate.py assert the gate OPENS for
+        "Advocates…" — strictly wider than reality, in the most safety-critical
+        test file in the repo.
+
+    Deriving from Config makes both impossible: a renamed attribute raises here,
+    and a default can no longer disagree with itself.
+
+    It is built from **ops/.env.example**, not from an absent env file, and that
+    distinction matters. Several of config.py's own fallbacks are deliberately
+    fail-open for a bare process — `ATTICUS_WAKE_PHRASE` defaults to `""`, which
+    disables the gate entirely — while `.env.example` is the configuration a real
+    deployment actually starts from and is tracked in git. Testing against it
+    means the suite measures a correctly-configured Atticus, and any drift
+    between `.env.example` and `config.py` shows up here rather than in
+    production. The fail-open default gets its own explicit tests instead.
+
+    Tests override by assignment — `cfg.wake_phrase = ""` — exactly as before.
+    """
+    from config import Config
+    c = Config(env_file=REPO / "ops/.env.example")
+    # Only what a test genuinely must not inherit from the real defaults: a
+    # scratch vault, no live network, no real key, fast timeouts.
+    c.vault = tmp_path / "vault"
+    # openai_key is a lazy PROPERTY that reads the environment and then
+    # ~/.config/ai/env, and raises if it finds nothing. Priming the private cache
+    # keeps the real property logic intact — including its "must start with sk-"
+    # check, which a plain attribute override would have bypassed — while
+    # guaranteeing the operator's actual key is never loaded by a test.
+    c._openai_key = "sk-test"
+    c.stt_url = "http://127.0.0.1:1/none"
+    c.stt_model = "m"
+    c.stt_prompt = "p"
+    c.stt_timeout = 1
+    c.exec_timeout = 60
+    c.push_retries = 1
+    c.git_name, c.git_email = "t", "t@t"
+    c.notify_url = None
+    c.result_notify_url = None
+    c.site_base_url = ""
+    return c
+
+
+@pytest.fixture
+def partial_cfg(tmp_path):
+    """A deliberately incomplete config, for testing getattr() fallbacks.
+
+    A few call sites read settings with a default because they must tolerate a
+    caller that predates the setting. Those paths need an object that really is
+    missing the attribute, which the real Config never is.
+    """
+    return types.SimpleNamespace(vault=tmp_path / "vault", wake_phrase="atticus")
 
 
 @pytest.fixture

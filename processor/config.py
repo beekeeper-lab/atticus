@@ -58,6 +58,16 @@ class Config:
         # A recurring condition (dead Plaud session) is rediscovered every
         # tick. One alarm per window per condition, or you learn to ignore it.
         self.alarm_throttle_hours = float(g("ATTICUS_ALARM_THROTTLE_HOURS", "6"))
+        # T-74: the split's benefit — the processor can be down and work waits —
+        # is also its failure mode, because a dead processor looks exactly like
+        # an idle one. Nothing errors; recordings just pile up. This was
+        # documented in .env, .env.example and configuration.md and read by NO
+        # code, so the alarm the operator believed was armed did not exist.
+        # 0 disables.
+        # 60 to match ops/.env.example, which is what a real deployment starts
+        # from. Two different numbers in the two files is exactly the drift the
+        # derived test fixture now catches.
+        self.backlog_alarm_minutes = int(g("ATTICUS_BACKLOG_ALARM_MINUTES", "60"))
 
         # Results. A finished voice command is the whole point of the system, so
         # it gets a push carrying a link to the page it produced. Separate knob
@@ -97,12 +107,19 @@ class Config:
         self.stt_url = g("ATTICUS_STT_URL", "https://api.openai.com/v1/audio/transcriptions")
         self.stt_model = g("ATTICUS_STT_MODEL", "gpt-4o-transcribe")
         self.stt_timeout = int(g("ATTICUS_STT_TIMEOUT", "60"))
+        # Naming the wake word in the steering prompt is the cheapest available
+        # mishearing fix and it was missing: of nine attempts in one day three
+        # came back "Advocates", "Abacus" and "Artemis". Biasing the transcriber
+        # toward the word reduces the rate at source, which is strictly better
+        # than recovering afterwards with an LLM adjudicator — every recovery is
+        # a probabilistic call that can also admit ambient speech.
         self.stt_prompt = g(
             "ATTICUS_STT_PROMPT",
             "Transcribe with proper capitalization, including sentence "
             "beginnings, proper nouns, titles, and standard English "
             "capitalization rules. The speaker is dictating a short "
-            "instruction or request.",
+            "instruction or request, and often begins by saying the name "
+            "\"Atticus\".",
         )
 
         # Ingest (WarDog). The transport is a pluggable executable — see
@@ -137,6 +154,27 @@ class Config:
         # spoken near the device should not be able to run up an unbounded bill.
         # Blank disables it (and says so at startup rather than silently).
         self.max_budget_usd = (g("ATTICUS_MAX_BUDGET_USD", "2.00") or "").strip()
+        # Which of the operator's GLOBAL skills the agent may see. Binding the
+        # whole ~/.claude/skills directory gave it an inventory of unrelated
+        # infrastructure (M365 addresses, ntfy topics, provider cost sheets).
+        # Blank = bind everything, which is the old behaviour.
+        self.global_skills = [s.strip() for s in
+                              (g("ATTICUS_GLOBAL_SKILLS",
+                                 "html-artifact-output,dataviz")
+                               or "").split(",") if s.strip()]
+        # 'host' (default) shares the host network namespace — research works,
+        # but so does reaching loopback services, which includes the vault's own
+        # web UI and its write token. 'none' unshares the network entirely: the
+        # right setting when no skill in use needs the internet.
+        self.sandbox_net = (g("ATTICUS_SANDBOX_NET", "host") or "host").strip().lower()
+        # Ceiling on what one utterance can commit. The vault is git, where
+        # deletion is deliberately hard, so unbounded agent output is permanent.
+        # A plain literal, not str(50 * 1024 * 1024): gen-config-docs.py reads
+        # defaults out of this source with a regex that only matches string
+        # literals, so an expression here silently omits the knob from
+        # docs/configuration.md altogether.
+        self.max_output_files = int(g("ATTICUS_MAX_OUTPUT_FILES", "50"))
+        self.max_output_bytes = int(g("ATTICUS_MAX_OUTPUT_BYTES", "52428800"))  # 50 MB
         # `or` fallback, not g()'s default: ATTICUS_SKILLS_DIR ships BLANK in
         # ops/.env, and now that "" is preserved rather than collapsed, an empty
         # value would otherwise become Path("") == cwd. Blank means "use the
@@ -203,7 +241,20 @@ class Config:
         # Score at or above which a misheard word is admitted. Tuned against the
         # three real mishearings observed and a set of words that must NOT open
         # the gate — see tests/unit/test_wake.py.
-        self.wake_adjudicator_threshold = int(g("ATTICUS_WAKE_ADJUDICATOR_THRESHOLD", "50"))
+        #
+        # Raised from 50. At 50 the rule was "more likely than not", decided by a
+        # small model, on the control that ADR-003 makes load-bearing for
+        # credential safety now that the Plaud session shares this host. The
+        # practical gate for a non-matching first word was "sounds like a name
+        # and sounds like a task a computer would do" — which "Marcus, can you
+        # look up train times for me" satisfies. A false accept executes ambient
+        # speech; a false reject files a recoverable note. The costs are not
+        # symmetric, so neither should the threshold be.
+        self.wake_adjudicator_threshold = int(g("ATTICUS_WAKE_ADJUDICATOR_THRESHOLD", "75"))
+        # Verdicts were cached forever, so one wrong admit permanently opened
+        # that (word, context) pair and later passes logged only "cached verdict
+        # … admit". A TTL bounds the damage and forces re-adjudication.
+        self.wake_verdict_ttl_hours = int(g("ATTICUS_WAKE_VERDICT_TTL_HOURS", "168"))
         # Kept as a deterministic escape hatch, empty by default now that the
         # adjudicator does this job. Populate it to force a match without a call.
         self.wake_aliases = [w.strip().lower() for w in

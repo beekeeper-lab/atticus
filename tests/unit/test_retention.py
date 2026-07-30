@@ -126,3 +126,37 @@ def test_refuses_when_vault_path_unset(monkeypatch, tmp_path):
     monkeypatch.setattr(retention, "_parse_env", lambda p: {})
     monkeypatch.setattr(sys, "argv", ["retention.py", "--days", "1"])
     assert retention.main() == 2
+
+
+def test_recent_published_audio_is_KEPT(monkeypatch, tmp_path):
+    """The other direction, which had no test at all.
+
+    Every existing case used recorded_at=2020 against --days 1, so a units bug
+    (days read as hours, an inverted comparison, bad cutoff arithmetic) that
+    over-deleted would have passed the whole suite. This is the one job here that
+    destroys user data; the boundary deserves both sides.
+    """
+    from datetime import UTC, datetime, timedelta
+    recent = (datetime.now(UTC) - timedelta(days=2)).isoformat().replace("+00:00", "Z")
+    vault = _vault(tmp_path)
+    _write(vault, "keep-me", recorded_at=recent)
+
+    assert _run(monkeypatch, vault, "--days", "30") == 0
+    assert (vault.joinpath(*INBOX) / "keep-me.mp3").exists(), \
+        "audio inside the retention window must survive"
+    meta = json.loads((vault.joinpath(*INBOX) / "keep-me.json").read_text())
+    assert "audio_expired_at" not in meta
+
+
+def test_the_cutoff_is_days_not_hours(monkeypatch, tmp_path):
+    """A 5-day-old recording must survive --days 30 and die at --days 1."""
+    from datetime import UTC, datetime, timedelta
+    five = (datetime.now(UTC) - timedelta(days=5)).isoformat().replace("+00:00", "Z")
+    vault = _vault(tmp_path)
+    _write(vault, "five-days", recorded_at=five)
+
+    assert _run(monkeypatch, vault, "--days", "30") == 0
+    assert (vault.joinpath(*INBOX) / "five-days.mp3").exists()
+
+    assert _run(monkeypatch, vault, "--days", "1") == 0
+    assert not (vault.joinpath(*INBOX) / "five-days.mp3").exists()

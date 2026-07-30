@@ -15,7 +15,7 @@ def wcfg(cfg):
     cfg.wake_adjudicator_model = "gpt-4o-mini"
     cfg.wake_adjudicator_threshold = 50
     cfg.wake_adjudicator_timeout = 5
-    cfg.openai_key = "sk-test"
+    # openai_key is primed by the cfg fixture — it is a property with no setter.
     return cfg
 
 

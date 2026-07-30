@@ -30,8 +30,8 @@ import transcribe as stt                                     # noqa: E402
 import wake                                                  # noqa: E402
 from notify import clear as _notify_clear, notify as _notify  # noqa: E402
 from vault import (                                          # noqa: E402
-    EXECUTED, FAILED, PUBLISHED, RAW, RETRY_WAIT, ROUTED, TRANSCRIBED,
-    Git, VaultSyncError, load_records, write_atomic,
+    EXECUTED, EXECUTING, FAILED, PUBLISHED, RAW, RETRY_WAIT, ROUTED,
+    TRANSCRIBED, Git, VaultSyncError, load_records, write_atomic,
 )
 
 LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
@@ -165,7 +165,16 @@ def stage_transcribe(rec, cfg, log):
     if not isinstance(duration, (int, float)):
         duration = stt.probe_seconds(rec.audio)
 
-    if chunk_this and duration and duration > getattr(cfg, "max_command_seconds", 180):
+    if chunk_this and not duration:
+        # The operator explicitly asked for the document path. Silently falling
+        # through to the command path would blind-cut a 40-minute meeting to its
+        # first 180s and report success, which is the opposite of what was asked.
+        raise stt.TranscriptionError(
+            "chunking requested but the duration is unknown (metadata missing "
+            "and ffprobe failed) — refusing to truncate a document",
+            retryable=False)
+
+    if chunk_this and duration > getattr(cfg, "max_command_seconds", 180):
         text, trunc = stt.transcribe_long(rec.audio, cfg, duration, log=log.info)
     else:
         with stt.bounded_audio(rec.audio, cfg, rec.data.get("duration_seconds"),
@@ -177,9 +186,14 @@ def stage_transcribe(rec, cfg, log):
     rec.advance(TRANSCRIBED, word_count=words, **trunc,
                 transcript_path=str(rec.transcript_path(cfg.vault).relative_to(cfg.vault)))
     if trunc.get("truncated_from_seconds"):
+        # This alarm used to append text[:150] unconditionally — on the one code
+        # path that is ambient-speech-heavy by definition, while every other
+        # notification honours the privacy setting. Same rule here now.
+        detail = getattr(cfg, "notification_detail", "full")
+        excerpt = "" if detail == "title" else f"\n\n{text[:60 if detail == 'summary' else 150]}"
         notify(cfg, f"Truncated a {trunc['truncated_from_seconds']:.0f}s recording "
                     f"to its first {trunc['transcribed_seconds']}s — "
-                    f"was the device left running?\n\n{text[:150]}", log)
+                    f"was the device left running?{excerpt}", log)
     elif trunc.get("chunks"):
         log.info(f"    joined {trunc['chunks']} chunk(s) → {words} words")
 
@@ -193,10 +207,13 @@ def stage_route(rec, cfg, log):
     # whether the first word was PHONETICALLY a mishearing. Only reachable
     # after an exact-match failure, so this can widen the gate, never narrow it.
     if not ok and "no wake phrase" in reason:
-        heard = wake.first_token(text)
+        # Same filler-stripped view sanity_check matched against, so the word
+        # judged is the word that failed the gate — not "Okay".
+        opening = stt.leading_words(text, 1 + wake.CONTEXT_WORDS)
+        heard = wake.first_token(" ".join(opening))
         recovered, why = wake.adjudicate(
             heard, cfg, log=log.info,
-            following=" ".join(text.split()[1:1 + wake.CONTEXT_WORDS]))
+            following=" ".join(opening[1:]))
         log.info(f"    wake check: {why}")
         rec.data["wake_heard"] = heard
         rec.data["wake_adjudicated"] = recovered
@@ -280,7 +297,23 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
                 return True
             git.commit_push(f"route {rec.stem}")
 
+        if rec.status == EXECUTING:
+            # A previous pass died mid-agent-run. The agent may already have had
+            # side effects — it has Bash and network, and a skill that sends or
+            # files something would have done so — so re-running is not free and
+            # is NOT the safe default. Fail loudly, non-retryable, and let a
+            # human decide with `--retry` once they know what the run did.
+            raise ex.ExecutionError(
+                "interrupted mid-execution (crash, reboot or kill during the "
+                "agent run). Not auto-retried: the agent may have completed side "
+                "effects. Inspect the run, then re-arm with --retry.",
+                retryable=False)
+
         if rec.status == ROUTED:
+            # Committed BEFORE the agent starts, so an interrupted run is
+            # distinguishable from one that never began.
+            rec.advance(EXECUTING)
+            git.commit_push(f"executing {rec.stem}")
             stage_execute(rec, cfg, log, dry_run)
 
         if rec.status == EXECUTED:
@@ -342,7 +375,8 @@ def cmd_status(cfg, log):
     for r in recs:
         counts[r.status] = counts.get(r.status, 0) + 1
     print(f"vault {cfg.vault}  —  {len(recs)} record(s)")
-    for s in (RAW, TRANSCRIBED, ROUTED, EXECUTED, PUBLISHED, RETRY_WAIT, FAILED):
+    for s in (RAW, TRANSCRIBED, ROUTED, EXECUTING, EXECUTED, PUBLISHED,
+              RETRY_WAIT, FAILED):
         if counts.get(s):
             print(f"  {s:<12} {counts[s]}")
     pending = [r for r in recs if r.status not in (PUBLISHED, FAILED)]
@@ -380,6 +414,15 @@ def main():
     if args.status:
         return cmd_status(cfg, log)
 
+    if not cfg.wake_phrase:
+        # The gate is the only thing between ambient speech and an autonomous
+        # agent, and an empty phrase makes sanity_check pass EVERYTHING. The
+        # config dump below is DEBUG-only, so a deployment configured purely by
+        # environment — or with a hand-written ops/.env missing the line — used
+        # to execute every recording with nothing in the journal saying so.
+        log.warn("ATTICUS_WAKE_PHRASE is empty — the wake gate is OFF and every "
+                 "transcribed recording will be executed")
+
     log.debug(f"config: {json.dumps(cfg.redacted(), indent=2)}")
     git = Git(cfg.vault, cfg.git_name, cfg.git_email, cfg.push_retries,
               log=log.warn)
@@ -396,6 +439,9 @@ def main():
                         "on a stale tree and cannot see new recordings.",
                    log, key="pull")
             return 3
+        # Clear on recovery, or a pull that breaks again inside the throttle
+        # window opened by an earlier one stays silent for hours.
+        _notify_clear("pull")
 
     bad = []
 

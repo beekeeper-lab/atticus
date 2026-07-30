@@ -139,6 +139,13 @@ class PlaudAPI:
             raise AuthError(f"{resp.status} from {url} — session rejected")
         if resp.status >= 500:
             raise TransientError(f"{resp.status} from {url}")
+        # 429/408 are back-off signals, not evidence the API changed shape. They
+        # used to fall through to UpstreamChanged, whose handler tells the
+        # operator to re-run recon — an actively misleading diagnosis, and wasted
+        # work, for a poller that launches headless Chromium 96 times a day
+        # against an API we do not own.
+        if resp.status in (408, 429):
+            raise TransientError(f"{resp.status} from {url} — backing off")
         if resp.status != 200:
             raise UpstreamChanged(f"{resp.status} from {url}")
         try:
@@ -460,7 +467,15 @@ def main():
         if isinstance(e, PlaywrightError):
             print(f"transient (browser): {e}", file=sys.stderr)
             sys.exit(EXIT_NET)
-        raise
+        # Genuinely unexpected. Re-raising exited 1 with a traceback, which is
+        # not in the documented contract at all — while 5 ("unexpected, likely
+        # upstream changed") is documented in the module docstring and
+        # .env.example and was never actually emitted. Print the traceback for
+        # diagnosis, then exit with the code the contract promises.
+        import traceback
+        traceback.print_exc()
+        print(f"unexpected: {type(e).__name__}: {e}", file=sys.stderr)
+        sys.exit(EXIT_UNEXPECTED)
 
 
 if __name__ == "__main__":

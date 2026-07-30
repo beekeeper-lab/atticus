@@ -75,13 +75,40 @@ class Fetcher:
             raise FetcherError(f"{self.path.name} {args[0]}: {err}", p.returncode)
         return p.stdout
 
+    @staticmethod
+    def _json(out: str, what: str):
+        """Parse fetcher stdout, mapping garbage into the exit-code contract.
+
+        Non-JSON output raised JSONDecodeError, and a bare JSON list raised
+        AttributeError on data.get() — both OUTSIDE the FetcherError handler, so
+        a fetcher printing an unexpected shape produced a traceback and exit 1
+        rather than the documented partial-failure path.
+        """
+        try:
+            return json.loads(out or "{}")
+        except ValueError as e:
+            raise FetcherError(
+                f"fetcher {what} returned non-JSON output: {e}", F_CHANGED) from e
+
     def whoami(self):
-        return json.loads(self._run("whoami", "--json") or "{}")
+        data = self._json(self._run("whoami", "--json"), "whoami")
+        if not isinstance(data, dict):
+            raise FetcherError(f"whoami returned {type(data).__name__}, "
+                               f"expected an object", F_CHANGED)
+        return data
 
     def list(self, days: int):
-        out = self._run("list", "--days", str(days), "--json")
-        data = json.loads(out or "{}")
-        recs = data.get("recordings", data if isinstance(data, list) else [])
+        data = self._json(self._run("list", "--days", str(days), "--json"), "list")
+        if isinstance(data, list):
+            recs = data
+        elif isinstance(data, dict):
+            recs = data.get("recordings", [])
+        else:
+            raise FetcherError(f"list returned {type(data).__name__}, expected "
+                               f"an object or array", F_CHANGED)
+        if not isinstance(recs, list):
+            raise FetcherError(f"list.recordings is {type(recs).__name__}, "
+                               f"expected an array", F_CHANGED)
         for r in recs:
             missing = {"id", "created_at"} - set(r)
             if missing:
@@ -174,6 +201,24 @@ def _alarm_dead_session(cfg, err, log):
             "Set it; a dead session is otherwise silent.")
     elif sent:
         log("  ! alarm sent")
+
+
+def _sweep_dirty(git, log, cfg):
+    """Commit anything left uncommitted by an earlier interrupted pass.
+
+    Cheap when the tree is clean (commit_push short-circuits), and it is the only
+    thing that recovers a recording stranded between the ledger append and the
+    commit. Never fatal: the pass had no new work anyway.
+    """
+    try:
+        if git.commit_push("sweep: commit work stranded by an interrupted pass"):
+            return
+        log("  ! stranded work could not be pushed")
+    except VaultSyncError as e:
+        log(f"  ! sweep failed: {e}")
+    notify(cfg, f"Atticus ingest on {host_id()}: found recordings committed "
+                f"locally but not pushed. They are invisible downstream.",
+           log=log, key="vault-push", title="Atticus ingest — push failed")
 
 
 def safe_id(rec: dict) -> str:
@@ -294,7 +339,19 @@ def ingest_one(rec: dict, vault: Path, fetcher: Fetcher, log) -> dict:
     # B6: size > 0 is not proof it is audio. A saved HTML error page or a
     # truncated download passes that check and becomes a "recording" that only
     # fails later, in the processor, after it has been committed.
-    probe = verify_audio(audio, rec.get("duration_seconds"), log)
+    #
+    # verify_audio raises AFTER the fetcher has already renamed the file into
+    # inbox/, and the caller's failure path does not ledger the record — so the
+    # orphan sat in the working tree until the next successful recording's
+    # `add -A` committed it into vault history PERMANENTLY, while the bad
+    # recording re-downloaded every 15 minutes forever. Remove it on the way out.
+    try:
+        probe = verify_audio(audio, rec.get("duration_seconds"), log)
+    except FetcherError:
+        audio.unlink(missing_ok=True)
+        for stray in inbox.glob(f"{stem}*.part"):
+            stray.unlink(missing_ok=True)
+        raise
 
     if rec.get("md5"):
         log(f"    {size:,} bytes  sha256:{digest[:12]}…  (upstream md5 recorded)")
@@ -409,6 +466,15 @@ def main():
         f"{len(seen)} already seen · {len(fresh)} new")
 
     if not fresh:
+        # Nothing new, but the tree may still be dirty from an earlier pass that
+        # died between append_seen() and commit_push(): the id is in the local
+        # ledger, so `fresh` is empty forever after, and this used to return
+        # EXIT_OK without ever committing. The audio then sat uncommitted and
+        # invisible to the processor until some FUTURE recording's `add -A`
+        # happened to sweep it in — days, given bursty arrivals — while every
+        # pass reported clean. Sweep it now instead.
+        if not args.no_push:
+            _sweep_dirty(git, log, cfg)
         return EXIT_OK
 
     if args.dry_run:
@@ -417,6 +483,7 @@ def main():
         return EXIT_OK
 
     ok = failed = skipped = unpushed = 0
+    auth_died = False
     for rec in fresh:
         # Everything up to and including the download is wrapped: a single bad
         # record (unparseable created_at, filesystem-hostile id, failed fetch)
@@ -463,7 +530,15 @@ def main():
             log(f"  ✗ {rec.get('id')}: {e}")
             failed += 1
             if e.code == F_AUTH:
+                # ingest/README documents "alarms on exit 3", and this path did
+                # neither: it returned EXIT_PARTIAL and never alarmed, having
+                # ALREADY cleared the plaud-auth throttle earlier in the pass.
+                # The operator learned about a dead session only when the next
+                # pass's list() failed — or never, if every record hit this.
                 log("    session died mid-pass; stopping")
+                print(f"AUTH FAILURE — session died mid-pass: {e}", file=sys.stderr)
+                _alarm_dead_session(cfg, e, log)
+                auth_died = True
                 break
             continue
         append_seen(vault, rec["id"], res["stem"])
@@ -488,6 +563,14 @@ def main():
                     f"invisible downstream until it succeeds.",
                log=log, key="vault-push",
                title="Atticus ingest — push failed")
+    elif ok:
+        # Pushes are working again; clear the throttle so the NEXT failure alarms
+        # at once instead of being swallowed by a window opened hours ago. Only
+        # plaud-auth was ever cleared, which is why a fail/recover/fail pattern
+        # stayed silent — the exact shape notify.clear() exists to prevent.
+        alarm_clear("vault-push")
+    if auth_died:
+        return EXIT_AUTH
     return EXIT_PARTIAL if (failed or unpushed) else EXIT_OK
 
 

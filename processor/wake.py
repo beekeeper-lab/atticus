@@ -50,6 +50,7 @@ system effectively learns its own alias list without one being maintained.
 """
 import json
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 CACHE = Path.home() / ".cache/atticus/wake-verdicts.json"
@@ -99,6 +100,29 @@ def _load_cache() -> dict:
         return json.loads(CACHE.read_text())
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def _utcnow() -> str:
+    return (datetime.now(UTC).replace(microsecond=0)
+            .isoformat().replace("+00:00", "Z"))
+
+
+def _unpack(entry, ttl_hours: int) -> tuple[bool, bool]:
+    """(verdict, still_valid) for a cache entry.
+
+    A legacy bare bool has no timestamp, so it cannot be aged and is reported
+    invalid — re-adjudicated once, then stored in the current shape.
+    """
+    if not isinstance(entry, dict):
+        return bool(entry), False
+    verdict = bool(entry.get("verdict"))
+    if ttl_hours <= 0:
+        return verdict, True                    # TTL disabled: cache forever
+    try:
+        at = datetime.fromisoformat(str(entry.get("at", "")).replace("Z", "+00:00"))
+    except ValueError:
+        return verdict, False
+    return verdict, datetime.now(UTC) - at < timedelta(hours=ttl_hours)
 
 
 def _save_cache(d: dict):
@@ -160,9 +184,16 @@ def adjudicate(heard: str, cfg, log=print, following: str = "") -> tuple[bool, s
     # "Marcus, research X" and vice versa.
     key = f"{wake}|{heard.lower()}|{ctx[:80]}"
     cache = _load_cache()
-    if key in cache:
-        v = bool(cache[key])
-        return v, f"cached verdict for {heard!r}: {'admit' if v else 'hold'}"
+    hit = cache.get(key)
+    if hit is not None:
+        # Entries were stored as a bare bool and never expired, so one wrong
+        # admit opened that (word, context) pair permanently. Stored as
+        # {"verdict":…, "at":…} now; legacy bools are treated as expired so they
+        # get re-adjudicated once rather than trusted forever.
+        v, age_ok = _unpack(hit, getattr(cfg, "wake_verdict_ttl_hours", 168))
+        if age_ok:
+            return v, (f"cached verdict for {heard!r}: "
+                       f"{'admit' if v else 'hold'}")
 
     try:
         import requests
@@ -212,7 +243,7 @@ def adjudicate(heard: str, cfg, log=print, following: str = "") -> tuple[bool, s
     # caller passed a cfg without the attribute.
     threshold = cfg.wake_adjudicator_threshold
     verdict = score >= threshold
-    cache[key] = verdict
+    cache[key] = {"verdict": verdict, "at": _utcnow()}
     _save_cache(cache)
     return verdict, (f"{heard!r} scored {score}/100 against {wake!r} "
                      f"(threshold {threshold}) — {'admitted' if verdict else 'held'}")

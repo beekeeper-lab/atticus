@@ -9,7 +9,7 @@ agent.
 ```
 git pull --rebase
   → scan inbox/ for status:raw
-  → transcribe   gpt-4o-mini-transcribe        → transcribed
+  → transcribe   gpt-4o-transcribe             → transcribed
   → route        gate + build the prompt       → routed
   → execute      claude -p, scratch workspace  → executed
   → publish      commit output to the vault    → published
@@ -52,7 +52,7 @@ ATTICUS_VAULT_PATH=$PWD/.scratch-vault python3 processor/pipeline.py
 ## Transcription
 
 Deliberately the same path the machine's dictation already uses — same
-endpoint, same `gpt-4o-mini-transcribe` model, same capitalization prompt as
+endpoint and the same capitalization prompt as
 hyprwhspr. One transcription stack, not two. Key comes from
 `~/.config/ai/env`, never from a config file in this repo.
 
@@ -79,7 +79,7 @@ nonsense. Before executing:
 - **Optional wake phrase** (`ATTICUS_WAKE_PHRASE`) — if set, only transcripts
   starting with it are executed; everything else is filed as a note
 
-`gpt-4o-mini-transcribe` returns plain text with no confidence signal
+`gpt-4o-transcribe` returns plain text with no confidence signal
 (`verbose_json` with `no_speech_prob` is whisper-1 only), so the gate is
 heuristic by necessity. A gated recording is **published as a note, not
 failed** — it is a deliberate refusal to act, not an error.
@@ -90,9 +90,22 @@ becomes an instruction.
 ## Security
 
 - **The agent never touches git.** It writes into a scratch dir; the pipeline
-  copies and commits. No deploy key in its environment.
-- It runs in a temp workspace, not the vault — it sees the skills dir and an
-  empty output dir, nothing else.
-- `GIT_SSH_COMMAND`, `GIT_ASKPASS` and `SSH_AUTH_SOCK` are stripped from its env.
-- Wall-clock timeout (`ATTICUS_EXEC_TIMEOUT`, default 30 min).
-- Every executed prompt is committed — git history is the audit trail.
+  copies and commits. The deploy key does not exist inside its namespace.
+- It runs in a `bwrap` mount namespace with its own `HOME`: no `~/.ssh`, no
+  `~/.config/ai/env`, no operator home, no vault path. It sees a copy of the
+  skills dir and an empty output dir.
+- **Env is an allowlist**, not a strip-list. Stripping `GIT_SSH_COMMAND` /
+  `GIT_ASKPASS` / `SSH_AUTH_SOCK` was the old mechanism and was never a control
+  at all — the deploy key was readable and the agent has a shell.
+- Collection refuses symlinks and any path resolving outside `output/`, and caps
+  file count and total bytes. That copy step is the exfiltration boundary.
+- Wall-clock timeout (`ATTICUS_EXEC_TIMEOUT`, default 30 min) and a spend
+  ceiling (`ATTICUS_MAX_BUDGET_USD`).
+- Every executed prompt is committed, and the agent's stdout is saved as
+  `agent-stdout.txt` beside its output — git history is the audit trail for the
+  instruction *and* for what the agent did with it.
+
+**Not covered.** The network namespace is shared with the host by default, so
+the agent has full egress *and* can reach loopback services; and the Claude Code
+credential is bound in so the CLI can authenticate. `ATTICUS_SANDBOX_NET=none`
+closes the network half when no skill needs the internet. See `../SECURITY.md`.

@@ -14,7 +14,11 @@ WorkingDirectory=%h/atticus
 # transport via sys.executable, and the Plaud web fetcher needs Playwright.
 ExecStart=%h/.local/share/claude-fetchers/venv/bin/python %h/atticus/ingest/poller.py
 
-EnvironmentFile=-%h/.config/ai/env
+# NOT ~/.config/ai/env. That file holds OPENAI_API_KEY, which ingest never uses
+# — transcription and the wake adjudicator are both processor-side. Loading it
+# put an unnecessary credential in the environment of the one process that drives
+# a full browser against a third-party site, and the fetcher subprocess inherited
+# it. Credential minimisation: ingest needs the vault and the Plaud session only.
 EnvironmentFile=-%h/atticus/ops/.env
 
 # systemd USER units run with PATH=/usr/local/bin:/usr/bin — no ~/.local/bin.

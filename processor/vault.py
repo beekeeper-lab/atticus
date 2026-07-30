@@ -24,10 +24,26 @@ class MalformedRecord(RuntimeError):
 REQUIRED_FIELDS = ("plaud_id", "recorded_at", "audio_filename")
 
 
-RAW, TRANSCRIBED, ROUTED, EXECUTED, PUBLISHED, FAILED, RETRY_WAIT = (
-    "raw", "transcribed", "routed", "executed", "published", "failed",
-    "retry_wait"
+RAW, TRANSCRIBED, ROUTED, EXECUTING, EXECUTED, PUBLISHED, FAILED, RETRY_WAIT = (
+    "raw", "transcribed", "routed", "executing", "executed", "published",
+    "failed", "retry_wait"
 )
+
+# EXECUTING is committed before the agent starts. Status used to stay ROUTED for
+# the whole run, so a crash re-ran an agent that may already have had side
+# effects — and each retry re-spent the budget. A record found in EXECUTING at
+# scan time is therefore a crashed run, not work to redo: see pipeline.py.
+
+# How far along the pipeline each status is. Consulted when two hosts conflict on
+# the same record's metadata: the further-advanced side wins, so a rebase can
+# never revert a local advance back to `raw` and re-run paid transcription or a
+# second agent. Ties keep "first push wins" (upstream). failed/retry_wait sit
+# just above raw — they have been worked on, so they must not become raw again,
+# but a genuinely published version elsewhere still beats them.
+_PROGRESS = {
+    RAW: 0, FAILED: 1, RETRY_WAIT: 1, TRANSCRIBED: 2, ROUTED: 3,
+    EXECUTING: 4, EXECUTED: 5, PUBLISHED: 6,
+}
 
 # Backoff between attempts. `retryable` used to be recorded on the error and
 # then ignored: fail() set FAILED, the scan excluded FAILED, and nothing ever
@@ -240,11 +256,27 @@ class Git:
             "GIT_COMMITTER_NAME": name, "GIT_COMMITTER_EMAIL": email,
         }
 
-    def _run(self, *args, check=True):
-        return subprocess.run(
-            ["git", "-C", str(self.vault), *args],
-            capture_output=True, text=True, check=check, env=self.env,
-        )
+    # A hung git — half-open TCP to the remote, a dead VPN — used to block the
+    # pass forever. Under the timer systemd eventually reaps the unit, but a
+    # manual run hangs indefinitely while holding the processor lock, after
+    # which every timed pass exits 0 "skipped" and the whole pipeline is stalled
+    # while reporting healthy. atticus_cli.doctor already learned this lesson.
+    TIMEOUT_SECONDS = 180
+
+    def _run(self, *args, check=True, timeout=None):
+        t = self.TIMEOUT_SECONDS if timeout is None else timeout
+        try:
+            return subprocess.run(
+                ["git", "-C", str(self.vault), *args],
+                capture_output=True, text=True, check=check, env=self.env,
+                timeout=t,
+            )
+        except subprocess.TimeoutExpired:
+            self.log(f"git {' '.join(args)} exceeded {t}s — treating as failure")
+            if check:
+                raise
+            return subprocess.CompletedProcess(
+                list(args), 124, "", f"timed out after {t}s")
 
     def is_repo(self) -> bool:
         return (self.vault / ".git").exists()
@@ -256,6 +288,35 @@ class Git:
     # recording and differ only in ingest bookkeeping (ingested_at, which
     # host pulled it). Anything outside this set must never auto-resolve.
     BENIGN = ("inbox/", ".state/seen")
+
+    def _resolve_metadata(self, f: str):
+        """Keep whichever side of a conflicted record JSON is further along.
+
+        Stage 2 is ours/upstream, stage 3 is theirs/local. Unparseable on either
+        side falls back to upstream, which is the old behaviour and still safe.
+        """
+        sides = {}
+        for stage in (2, 3):
+            blob = self._run("show", f":{stage}:{f}", check=False)
+            if blob.returncode != 0:
+                continue
+            try:
+                sides[stage] = (json.loads(blob.stdout), blob.stdout)
+            except json.JSONDecodeError:
+                continue
+        if len(sides) != 2:
+            self._run("checkout", "--ours", "--", f, check=False)
+            return
+        ours, theirs = sides[2], sides[3]
+        rank = (_PROGRESS.get(theirs[0].get("status", RAW), 0)
+                - _PROGRESS.get(ours[0].get("status", RAW), 0))
+        if rank > 0:
+            self.log(f"  conflict on {f}: keeping local "
+                     f"{theirs[0].get('status')!r} over upstream "
+                     f"{ours[0].get('status')!r}")
+            (self.vault / f).write_text(theirs[1])
+        else:
+            self._run("checkout", "--ours", "--", f, check=False)
 
     def _resolve_benign(self) -> bool:
         """Auto-resolve an in-progress rebase iff every conflicted path is one
@@ -289,8 +350,14 @@ class Git:
                             lines.append(line)
                 (self.vault / f).write_text("\n".join(lines) + "\n" if lines else "")
             else:
-                # Metadata describing the same recording; first push wins.
-                self._run("checkout", "--ours", "--", f, check=False)
+                # Metadata describing the same recording. Blanket --ours was
+                # wrong: the processor writes *status* into inbox/**/*.json, so
+                # "ingest owns inbox/" does not hold for this file, and taking
+                # upstream could discard a local transcribed/executed advance
+                # while keeping its artifacts — sending the record back through
+                # paid transcription and a second agent run. Keep the further
+                # advanced side instead; ties still go to upstream.
+                self._resolve_metadata(f)
             self._run("add", "--", f, check=False)
         env = {**self.env, "GIT_EDITOR": "true"}
         done = subprocess.run(
@@ -319,8 +386,21 @@ class Git:
         """
         if not self.is_repo():
             return False
-        self._run("add", "-A", check=False)
-        dirty = bool(self._run("status", "--porcelain", check=False).stdout.strip())
+        # These two used to run with their return codes discarded, and that was
+        # the worst silent failure in the system. If `add` fails — most often
+        # because the other role holds .git/index.lock, which is routine now
+        # that both run on one host — then `status` fails too, its empty stdout
+        # reads as a clean tree, `_ahead()` finds nothing, and this function
+        # returned True having committed NOTHING. The caller marked the record
+        # done, the ledger was already written, and the work sat uncommitted and
+        # invisible to the other stage with no error anywhere.
+        add = self._run("add", "-A", check=False)
+        if add.returncode != 0:
+            raise VaultSyncError(f"git add failed: {_tail(add)}")
+        st = self._run("status", "--porcelain", check=False)
+        if st.returncode != 0:
+            raise VaultSyncError(f"git status failed: {_tail(st)}")
+        dirty = bool(st.stdout.strip())
         if not dirty:
             # A clean tree does NOT mean we are in sync. This used to return
             # success without looking at the remote, so a commit stranded by an
@@ -331,7 +411,11 @@ class Git:
                 self.log("clean tree but local is ahead of the remote — pushing")
                 return self._push_with_retry(None)
             return True
-        self._run("commit", "-m", message, check=False)
+        commit = self._run("commit", "-m", message, check=False)
+        if commit.returncode != 0:
+            # We know the tree was dirty, so "nothing to commit" is not the
+            # explanation — a hook, a bad identity, or a read-only vault is.
+            raise VaultSyncError(f"git commit failed: {_tail(commit)}")
         if not self.has_remote():
             return True  # local-only vault (tests) — commit is enough
         return self._push_with_retry(message)
