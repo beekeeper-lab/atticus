@@ -1,6 +1,6 @@
 # Hardening plan — v0.1.0-alpha
 
-**Status:** in progress — A1, A2, A3 landed 2026-07-29
+**Status:** in progress — A1–A3, B1, B3–B7, D1 landed 2026-07-29
 **Opened:** 2026-07-29
 **Source:** external review of the public repo, plus findings verified on Forge.
 
@@ -84,7 +84,7 @@ so this is buildable without sudo.
 
 ## B — Correctness. Blocks trusting it unattended.
 
-- [ ] **B1. Push failures stop the transition.**
+- [x] **B1. Push failures stop the transition.**
       `commit_push` raises `VaultSyncError` rather than returning `False` into a
       void. **Also fix the second hole:** a clean tree returns success without
       checking whether local is ahead of remote, so a stranded commit is never
@@ -99,32 +99,32 @@ so this is buildable without sudo.
       *Acceptance:* a simulated 503 lands in `retry_wait`, is skipped before its
       deadline, and is picked up after it.
 
-- [ ] **B3. Never silently skip a record.**
+- [x] **B3. Never silently skip a record.**
       `load_records()` and `load_seen()` currently `continue` past malformed
       JSON, contradicting success criterion S5. Quarantine, log, alarm, and exit
       non-zero.
       *Acceptance:* a corrupt metadata file produces an alarm and a non-zero
       exit, not silence.
 
-- [ ] **B4. Path containment and ID sanitisation.**
+- [x] **B4. Path containment and ID sanitisation.**
       Upstream IDs flow into filesystem stems unsanitised. Require
       `audio_filename == Path(audio_filename).name`, resolve and assert
       containment, and normalise IDs to a conservative charset while keeping the
       original in metadata.
       *Acceptance:* a metadata file with `../` in `audio_filename` is rejected.
 
-- [ ] **B5. Single-instance lock per role.**
+- [x] **B5. Single-instance lock per role.**
       systemd prevents overlap for one unit; manual runs and second hosts do not.
       *Acceptance:* a second concurrent invocation exits cleanly rather than
       double-processing.
 
-- [ ] **B6. Verify downloaded audio is audio.**
+- [x] **B6. Verify downloaded audio is audio.**
       Size > 0 is not proof; a saved HTML error page passes. `ffprobe` it, record
       `detected_codec` and `verified_duration_seconds`, and alarm when the
       duration disagrees materially with upstream metadata.
       *Acceptance:* a text file served as audio is refused at ingest.
 
-- [ ] **B7. Stream the checksum** instead of `read_bytes()` on whole files.
+- [x] **B7. Stream the checksum** instead of `read_bytes()` on whole files.
       *Acceptance:* hashing a 9.5 MB file does not load it into memory.
 
 ## C — Reproducibility. Blocks anyone else succeeding.
@@ -148,7 +148,9 @@ so this is buildable without sudo.
 
 ## D — Alpha polish
 
-- [ ] **D1. LICENSE** ⚠️ *needs your decision*
+- [x] **D1. LICENSE** — Apache-2.0, chosen for the state-your-changes
+      requirement given this repo publishes security claims. `NOTICE` records
+      that the licence grants no rights in Plaud's service.
 - [ ] **D2. SECURITY.md** — threat model, ambient-audio sensitivity, prompt
       injection, third-party data exposure, unofficial-endpoint fragility,
       disclosure process.

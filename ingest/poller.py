@@ -30,6 +30,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -40,8 +41,9 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "processor"))
 
 from config import Config          # noqa: E402
+from lock import AlreadyRunning, single_instance   # noqa: E402
 from notify import clear as alarm_clear, notify   # noqa: E402
-from vault import Git, write_atomic, utcnow   # noqa: E402
+from vault import Git, VaultSyncError, write_atomic, utcnow   # noqa: E402
 
 EXIT_OK, EXIT_PARTIAL, EXIT_CONFIG, EXIT_AUTH = 0, 1, 2, 3
 F_OK, F_USAGE, F_AUTH, F_TRANSIENT, F_CHANGED = 0, 2, 3, 4, 5
@@ -183,6 +185,64 @@ def make_stem(rec: dict) -> str:
     return f"{dt.strftime('%Y-%m-%dT%H%M%SZ')}_{str(rec['id'])[:12]}"
 
 
+def sha256_stream(path: Path, chunk: int = 1 << 20) -> str:
+    """Hash without loading the file. A 40-minute recording is ~10 MB today and
+    a chunked meeting could be far more; there is no reason to hold any of it."""
+    h = sha256()
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def verify_audio(path: Path, claimed_seconds, log) -> dict:
+    """Confirm the download is really decodable audio.
+
+    Returns metadata to fold into the record. Non-fatal when ffprobe is absent —
+    this must not become a hard dependency of ingest — but a file that ffprobe
+    can read and finds NO audio stream in is refused, because that is the saved
+    error-page case.
+    """
+    exe = shutil.which("ffprobe")
+    if not exe:
+        return {"audio_verified": False}
+    try:
+        p = subprocess.run(
+            [exe, "-v", "error", "-show_entries",
+             "stream=codec_type,codec_name:format=duration",
+             "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=120)
+        data = json.loads(p.stdout or "{}") if p.returncode == 0 else {}
+    except (OSError, ValueError, subprocess.SubprocessError):
+        data = {}
+
+    streams = [s for s in data.get("streams", []) if s.get("codec_type") == "audio"]
+    if not streams:
+        raise FetcherError(
+            f"downloaded file is not decodable audio: {path.name} "
+            f"({path.stat().st_size:,} bytes) — a saved error page or truncated "
+            f"download looks exactly like this", F_CHANGED)
+
+    try:
+        observed = round(float(data.get("format", {}).get("duration")), 1)
+    except (TypeError, ValueError):
+        observed = None
+
+    out = {"audio_verified": True,
+           "detected_codec": streams[0].get("codec_name"),
+           "verified_duration_seconds": observed}
+
+    # Disagreement means the download is short, or upstream metadata is wrong.
+    # Either way the operator should know before it is transcribed.
+    if observed and isinstance(claimed_seconds, (int, float)) and claimed_seconds:
+        drift = abs(observed - claimed_seconds)
+        if drift > max(5, claimed_seconds * 0.1):
+            log(f"    ! duration mismatch: upstream says {claimed_seconds}s, "
+                f"file is {observed}s")
+            out["duration_mismatch"] = True
+    return out
+
+
 def ingest_one(rec: dict, vault: Path, fetcher: Fetcher, log) -> dict:
     stem = make_stem(rec)
     dt = datetime.fromisoformat(rec["created_at"].replace("Z", "+00:00"))
@@ -196,8 +256,13 @@ def ingest_one(rec: dict, vault: Path, fetcher: Fetcher, log) -> dict:
     log(f"  ↓ {stem}  ({rec.get('duration_seconds', '?')}s)")
     fetcher.audio(rec["id"], audio)
 
-    digest = sha256(audio.read_bytes()).hexdigest()
+    digest = sha256_stream(audio)
     size = audio.stat().st_size
+
+    # B6: size > 0 is not proof it is audio. A saved HTML error page or a
+    # truncated download passes that check and becomes a "recording" that only
+    # fails later, in the processor, after it has been committed.
+    probe = verify_audio(audio, rec.get("duration_seconds"), log)
 
     if rec.get("md5"):
         log(f"    {size:,} bytes  sha256:{digest[:12]}…  (upstream md5 recorded)")
@@ -214,6 +279,7 @@ def ingest_one(rec: dict, vault: Path, fetcher: Fetcher, log) -> dict:
         "audio_sha256": digest,
         "bytes": size,
         "duration_seconds": rec.get("duration_seconds"),
+        **probe,
         "upstream_name": rec.get("name") or "",
         "upstream_md5": rec.get("md5"),
         "ingested_by": host_id(),
@@ -359,7 +425,12 @@ def main():
                 break
             continue
         append_seen(vault, rec["id"], res["stem"])
-        if not args.no_push and not git.commit_push(f"ingest {res['stem']}"):
+        try:
+            pushed = args.no_push or git.commit_push(f"ingest {res['stem']}")
+        except VaultSyncError as e:
+            log(f"  ! vault sync failed: {e}")
+            pushed = False
+        if not pushed:
             # The audio is safe in a local commit, so this is not data loss —
             # but Forge only ever sees the vault through the remote, so an
             # unpushed recording will never be processed. Loud, not fatal:
@@ -378,5 +449,14 @@ def main():
     return EXIT_PARTIAL if (failed or unpushed) else EXIT_OK
 
 
+def _guarded():
+    try:
+        with single_instance("ingest"):
+            return main()
+    except AlreadyRunning as e:
+        print(f"skipped: {e}", file=sys.stderr)
+        return 0
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_guarded())
