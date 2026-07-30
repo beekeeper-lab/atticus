@@ -22,7 +22,7 @@ TITLE="${1:-}"; BODY="${2:-}"
 cd "$(git rev-parse --show-toplevel)" || die "not in a git repo"
 
 # --- guardrails -------------------------------------------------------------
-if [[ -f README.md ]] && grep -qi 'Private. Data only' README.md 2>/dev/null; then
+if [[ -f README.md ]] && grep -qi 'machine-written' README.md 2>/dev/null; then
   die "this looks like atticus-vault. The vault does NOT use PRs — see the
        header of this script. Commit directly; the safe-push wrapper handles
        concurrency."
@@ -41,7 +41,7 @@ if git diff --cached --quiet; then
 fi
 
 # Never let a credential through, whatever .gitignore says.
-if git diff --cached | grep -qE '(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'; then
+if git diff --cached | grep -qE '(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[osu]_[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'; then
   git reset -q
   die "credential-shaped string in the staged diff — refusing. Unstaged; inspect with: git diff"
 fi

@@ -55,7 +55,33 @@ def defaults_from_code() -> dict:
         out[m.group(1)] = m.group(2).strip('"')
     for m in re.finditer(r'g\(\s*"([A-Z_]+)"\s*\)', src):
         out.setdefault(m.group(1), "")
+    out.update(resolve_special())
     return out
+
+
+def resolve_special() -> dict:
+    """Defaults that are not a single string literal, so the source regex above
+    reads them as (empty) or truncates them: ATTICUS_VAULT_PATH is
+    `str(REPO / ".scratch-vault")`, ATTICUS_STT_PROMPT is a concatenated
+    literal. Instantiate Config against an EMPTY env file with a scrubbed
+    environment, so we read the code's own defaults rather than this host's."""
+    import os
+    saved = dict(os.environ)
+    try:
+        for k in list(os.environ):
+            if k.startswith(("ATTICUS_", "PLAUD_")):
+                del os.environ[k]
+        from config import Config
+        # A path that cannot exist → _parse_env returns {}, so no host .env leaks.
+        c = Config(env_file=REPO / "ops/.does-not-exist.env")
+        return {
+            "ATTICUS_STT_PROMPT": c.stt_prompt,
+            # Report the fallback as repo-relative, not this checkout's abs path.
+            "ATTICUS_VAULT_PATH": str(c.vault).replace(str(REPO), "<repo>"),
+        }
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
 
 
 def build() -> str:

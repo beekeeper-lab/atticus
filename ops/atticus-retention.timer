@@ -1,0 +1,25 @@
+[Unit]
+Description=Expire raw audio past the retention window, daily
+Documentation=https://github.com/beekeeper-lab/atticus/blob/main/docs/SPEC.md
+
+[Timer]
+# Daily is right: retention is measured in days (ATTICUS_AUDIO_RETENTION_DAYS,
+# default 30), so a single pass a day expires everything that crossed the line.
+#
+# OnCalendar, NOT OnUnitActiveSec — the same bug fix the processor timer spells
+# out. A monotonic reference is lost on a daemon-reload, after which systemd
+# parks the timer at next_elapse=infinity and it never fires again while still
+# reporting enabled and active. A privacy policy that silently stops running is
+# exactly the failure this whole file exists to prevent.
+OnCalendar=daily
+
+# Catch up after downtime rather than skipping a day of expirations. Only works
+# with OnCalendar= — systemd.timer(5) says Persistent= is a no-op on monotonic
+# timers.
+Persistent=true
+
+RandomizedDelaySec=300
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
