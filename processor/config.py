@@ -94,6 +94,11 @@ class Config:
 
         # Execution
         self.claude_bin = g("ATTICUS_CLAUDE_BIN", "claude")
+        # Contain the agent in its own mount namespace. Off is a real choice
+        # with a real cost: without it the agent can read every credential on
+        # the host, including the vault deploy key.
+        self.sandbox = (g("ATTICUS_SANDBOX", "on").lower()
+                        not in ("0", "off", "false", "no"))
         self.claude_model = g("ATTICUS_CLAUDE_MODEL", "") or None
         self.exec_timeout = int(g("ATTICUS_EXEC_TIMEOUT", "1800"))
         self.skills_dir = Path(g("ATTICUS_SKILLS_DIR", str(REPO / "skills")))
