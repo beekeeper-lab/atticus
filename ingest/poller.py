@@ -33,7 +33,7 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime, UTC
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 
@@ -176,13 +176,35 @@ def _alarm_dead_session(cfg, err, log):
         log("  ! alarm sent")
 
 
+def safe_id(rec: dict) -> str:
+    """The Plaud id is spliced into the audio path, the .json path, and the
+    fetcher's -o argument. A changed or hostile id containing "/" or ".." would
+    escape inbox/YYYY/MM — vault.py defends the audio_filename side, ingest did
+    not. Allow only [A-Za-z0-9]; reject loudly if nothing survives."""
+    sid = re.sub(r"[^A-Za-z0-9]", "", str(rec.get("id", "")))[:12]
+    if not sid:
+        raise FetcherError(f"record id has no filesystem-safe characters: "
+                           f"{rec.get('id')!r}", F_CHANGED)
+    return sid
+
+
+def parse_created_at(rec: dict) -> datetime:
+    """created_at drives both the vault filename and the inbox month directory.
+    A malformed value used to raise an uncaught ValueError mid-loop, stalling
+    every later record permanently. Fail loudly as a per-record FetcherError
+    instead — and never substitute now(UTC), which would mint a different stem
+    each pass and defeat the duplicate check."""
+    try:
+        return datetime.fromisoformat(str(rec["created_at"]).replace("Z", "+00:00"))
+    except (KeyError, ValueError, TypeError) as e:
+        raise FetcherError(f"unparseable created_at {rec.get('created_at')!r}: "
+                           f"{e}", F_CHANGED) from e
+
+
 def make_stem(rec: dict) -> str:
     """2026-07-28T142211Z_<id12> — sorts chronologically, unique per recording."""
-    try:
-        dt = datetime.fromisoformat(rec["created_at"].replace("Z", "+00:00"))
-    except ValueError:
-        dt = datetime.now(UTC)
-    return f"{dt.strftime('%Y-%m-%dT%H%M%SZ')}_{str(rec['id'])[:12]}"
+    dt = parse_created_at(rec)
+    return f"{dt.strftime('%Y-%m-%dT%H%M%SZ')}_{safe_id(rec)}"
 
 
 def sha256_stream(path: Path, chunk: int = 1 << 20) -> str:
@@ -212,8 +234,18 @@ def verify_audio(path: Path, claimed_seconds, log) -> dict:
              "stream=codec_type,codec_name:format=duration",
              "-of", "json", str(path)],
             capture_output=True, text=True, timeout=120)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        # A ffprobe crash or timeout is a TOOL failure, not evidence of a bad
+        # download — misclassifying it as "not audio" refused good files every
+        # pass. Non-fatal per the docstring: skip verification, don't refuse.
+        log(f"    ! ffprobe {type(e).__name__} — skipping audio verification "
+            f"for {path.name}")
+        return {"audio_verified": False}
+    # A non-zero exit (e.g. ffprobe cannot parse a saved error page) still means
+    # ffprobe ran, so it stays in the refuse path below via an empty stream set.
+    try:
         data = json.loads(p.stdout or "{}") if p.returncode == 0 else {}
-    except (OSError, ValueError, subprocess.SubprocessError):
+    except ValueError:
         data = {}
 
     streams = [s for s in data.get("streams", []) if s.get("codec_type") == "audio"]
@@ -245,7 +277,7 @@ def verify_audio(path: Path, claimed_seconds, log) -> dict:
 
 def ingest_one(rec: dict, vault: Path, fetcher: Fetcher, log) -> dict:
     stem = make_stem(rec)
-    dt = datetime.fromisoformat(rec["created_at"].replace("Z", "+00:00"))
+    dt = parse_created_at(rec)
     ym = dt.strftime("%Y/%m")
     inbox = vault / "inbox" / ym
 
@@ -386,39 +418,49 @@ def main():
 
     ok = failed = skipped = unpushed = 0
     for rec in fresh:
-        # Belt and braces. The ledger is the primary guard, but two hosts can
-        # both list a recording before either has pushed. If the pull brought
-        # the other host's metadata, honour it rather than downloading twice.
-        stem = make_stem(rec)
-
-        # Absurd length — do not spend the download. Plaud reports duration in
-        # the listing, so this costs nothing. The processor truncates merely-long
-        # recordings; this is the separate case of something pathological.
-        secs = rec.get("duration_seconds")
-        if (cfg.max_ingest_seconds and isinstance(secs, (int, float))
-                and secs > cfg.max_ingest_seconds):
-            log(f"  ⊘ {stem}: {secs / 60:.0f} min exceeds the "
-                f"{cfg.max_ingest_seconds / 60:.0f} min ingest limit — not downloaded")
-            # Ledger it so this is not re-evaluated every 15 minutes. Delete the
-            # line to reconsider it after raising the limit.
-            append_seen(vault, rec["id"], f"{stem} (skipped: too long)")
-            notify(cfg, f"Skipped a {secs / 60:.0f}-minute recording on "
-                        f"{host_id()} — over the ingest limit, not downloaded.",
-                   log=log, key="too-long")
-            skipped += 1
-            continue
-
-        dt = datetime.fromisoformat(rec["created_at"].replace("Z", "+00:00"))
-        if (vault / "inbox" / dt.strftime("%Y/%m") / f"{stem}.json").exists():
-            log(f"  = {stem} already in the vault (another host) — recording locally")
-            append_seen(vault, rec["id"], stem)
-            skipped += 1
-            continue
+        # Everything up to and including the download is wrapped: a single bad
+        # record (unparseable created_at, filesystem-hostile id, failed fetch)
+        # counts as `failed` and the loop continues, rather than an uncaught
+        # error killing the whole pass and stalling every later record.
         try:
+            # Belt and braces. The ledger is the primary guard, but two hosts
+            # can both list a recording before either has pushed. If the pull
+            # brought the other host's metadata, honour it rather than
+            # downloading twice.
+            stem = make_stem(rec)
+
+            # Absurd length — do not spend the download. Plaud reports duration
+            # in the listing, so this costs nothing. The processor truncates
+            # merely-long recordings; this is the separate case of something
+            # pathological.
+            secs = rec.get("duration_seconds")
+            if (cfg.max_ingest_seconds and isinstance(secs, (int, float))
+                    and secs > cfg.max_ingest_seconds):
+                log(f"  ⊘ {stem}: {secs / 60:.0f} min exceeds the "
+                    f"{cfg.max_ingest_seconds / 60:.0f} min ingest limit — not downloaded")
+                # Ledger it so this is not re-evaluated every 15 minutes. Delete
+                # the line to reconsider it after raising the limit.
+                append_seen(vault, rec["id"], f"{stem} (skipped: too long)")
+                # Per-recording throttle key — a shared "too-long" key silenced
+                # every oversized recording after the first for 6h, so a second
+                # one vanished with only a journal line.
+                notify(cfg, f"Skipped a {secs / 60:.0f}-minute recording on "
+                            f"{host_id()} — over the ingest limit, not downloaded.",
+                       log=log, key=f"too-long-{safe_id(rec)}")
+                skipped += 1
+                continue
+
+            dt = parse_created_at(rec)
+            if (vault / "inbox" / dt.strftime("%Y/%m") / f"{stem}.json").exists():
+                log(f"  = {stem} already in the vault (another host) — recording locally")
+                append_seen(vault, rec["id"], stem)
+                skipped += 1
+                continue
+
             res = ingest_one(rec, vault, fetcher, log)
         except FetcherError as e:
             # Do NOT add to the ledger — an unfetched recording must be retried.
-            log(f"  ✗ {rec['id']}: {e}")
+            log(f"  ✗ {rec.get('id')}: {e}")
             failed += 1
             if e.code == F_AUTH:
                 log("    session died mid-pass; stopping")

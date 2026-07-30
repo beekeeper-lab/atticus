@@ -134,9 +134,17 @@ def doctor_main():
     if (cfg.vault / ".git").exists():
         env = {**os.environ,
                "GIT_SSH_COMMAND": f"ssh -F {Path.home()}/.ssh/config"}
-        r = subprocess.run(["git", "-C", str(cfg.vault), "push", "--dry-run"],
-                           capture_output=True, text=True, env=env, timeout=60)
-        if r.returncode == 0:
+        try:
+            r = subprocess.run(["git", "-C", str(cfg.vault), "push", "--dry-run"],
+                               capture_output=True, text=True, env=env, timeout=60)
+        except subprocess.TimeoutExpired:
+            # A hung ssh (unreachable remote) used to crash doctor with a
+            # traceback instead of reporting the fault it exists to catch.
+            r = None
+            d.b("push check hung — remote unreachable?")
+        if r is None:
+            pass
+        elif r.returncode == 0:
             d.ok("vault push authenticates")
         else:
             d.b("cannot push to the vault — work would commit locally and "
@@ -144,11 +152,16 @@ def doctor_main():
         ahead = subprocess.run(["git", "-C", str(cfg.vault), "rev-list",
                                 "--count", "@{u}..HEAD"],
                                capture_output=True, text=True)
-        n = (ahead.stdout or "0").strip()
-        if n.isdigit() and int(n):
-            d.b(f"{n} local commit(s) NOT pushed — downstream cannot see them")
+        if ahead.returncode != 0:
+            # No upstream configured: rev-list fails, and the old code read that
+            # as "0 ahead" and printed a false all-clear.
+            d.w("no upstream configured — cannot tell if commits are unpushed")
         else:
-            d.ok("vault is level with its remote")
+            n = (ahead.stdout or "0").strip()
+            if n.isdigit() and int(n):
+                d.b(f"{n} local commit(s) NOT pushed — downstream cannot see them")
+            else:
+                d.ok("vault is level with its remote")
 
     d.section("Queue")
     try:

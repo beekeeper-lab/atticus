@@ -65,6 +65,12 @@ EP_LIST = f"{API}/file/simple/web"
 EP_ME = f"{API}/user/me"
 PAGE_SIZE = 100
 HARVEST_TIMEOUT_S = 60
+# Playwright's request default is 30s for the WHOLE request — a large MP3 on a
+# slow link blows past it and raises a playwright TimeoutError. Give the audio
+# download a generous ceiling; the ingest poller runs us with its own outer
+# subprocess timeout (fetcher_timeout * 2), so this only needs to be larger
+# than any plausible single download.
+DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000
 
 
 class PlaudAPI:
@@ -149,14 +155,25 @@ class PlaudAPI:
     @staticmethod
     def _normalize(rec):
         """Plaud's vocabulary stops here. Nothing downstream sees these names."""
-        ms = rec.get("start_time") or rec.get("version_ms") or 0
+        ms = rec.get("start_time") or rec.get("version_ms")
+        if ms:
+            created = datetime.fromtimestamp(ms / 1000, tz=UTC)
+        else:
+            # Neither timestamp present. Falling back to 0 → 1970, which the
+            # `since` window then excludes on every pass — the recording would
+            # vanish forever with no log, error, or ledger entry. Keep it with an
+            # ingest-time sentinel so it survives the filter and gets pulled, and
+            # shout so the operator knows recon may be stale.
+            created = datetime.now(UTC)
+            print(f"! recording {rec.get('id')!r} has no start_time/version_ms — "
+                  f"using an ingest-time sentinel; recon may be stale",
+                  file=sys.stderr)
         return {
             "id": rec["id"],
             "name": rec.get("filename") or rec.get("fullname") or "",
             # Second precision — this feeds vault filenames, so no microseconds.
-            "created_at": datetime.fromtimestamp(
-                ms / 1000, tz=UTC
-            ).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "created_at": created.replace(microsecond=0)
+            .isoformat().replace("+00:00", "Z"),
             "duration_seconds": round((rec.get("duration") or 0) / 1000),
             # Operationally significant extras:
             "ori_ready": rec.get("ori_ready"),      # NOT a download gate — see audio_url()
@@ -182,6 +199,7 @@ class PlaudAPI:
     # -- E3: list recordings (answered: skip/limit pagination) ------------
     def list_recordings(self, since=None, include_demos=False):
         out, skip, demos = [], 0, 0
+        cutoff = since.isoformat().replace("+00:00", "Z") if since is not None else None
         while True:
             body = self._get(EP_LIST, {
                 "skip": skip, "limit": PAGE_SIZE, "is_trash": 0,
@@ -199,10 +217,14 @@ class PlaudAPI:
                 out.append(self._normalize(r))
             total = body.get("data_file_total")
             skip += len(batch)
+            # Newest-first (is_desc), so once a page's OLDEST record predates the
+            # `since` window nothing older is worth paging for. Without this we
+            # walk the entire account history every pass to keep a 2-day slice.
+            if cutoff is not None and self._normalize(batch[-1])["created_at"] < cutoff:
+                break
             if total is not None and skip >= total:
                 break
-        if since is not None:
-            cutoff = since.isoformat().replace("+00:00", "Z")
+        if cutoff is not None:
             out = [r for r in out if r["created_at"] >= cutoff]
         if demos:
             print(f"(skipped {demos} Plaud demo file(s))", file=sys.stderr)
@@ -247,7 +269,7 @@ class PlaudAPI:
         url = self.audio_url(recording_id)
         # Presigned: sending our bearer alongside the S3 signature can be
         # rejected as a conflicting auth method. Send no Authorization header.
-        resp = self.ctx.request.get(url)
+        resp = self.ctx.request.get(url, timeout=DOWNLOAD_TIMEOUT_MS)
         if resp.status in (401, 403):
             raise AuthError(f"{resp.status} on presigned URL — it likely expired")
         if resp.status != 200:
@@ -424,6 +446,21 @@ def main():
         sys.exit(EXIT_UNEXPECTED)
     except KeyboardInterrupt:
         sys.exit(130)
+    except Exception as e:
+        # Playwright's own errors — a download/goto/launch timeout or a browser
+        # crash — are outside our exception vocabulary. Left uncaught they exit
+        # 1 with a traceback, breaking the documented 0/2/3/4/5 contract that
+        # ingest keys off. A browser network/timeout is transient, so map it to
+        # EXIT_NET and let the timer retry next tick. Anything genuinely
+        # unexpected re-raises rather than masquerading as a network blip.
+        try:
+            from playwright.sync_api import Error as PlaywrightError
+        except ImportError:
+            raise
+        if isinstance(e, PlaywrightError):
+            print(f"transient (browser): {e}", file=sys.stderr)
+            sys.exit(EXIT_NET)
+        raise
 
 
 if __name__ == "__main__":
