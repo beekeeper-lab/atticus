@@ -7,11 +7,13 @@ next run resumes rather than redoing work.
 Two hosts push to this repo (WarDog writes inbox/, Forge writes processed/),
 so every push is pull-rebase-retry. See SPEC §4.3.
 """
+import fcntl
 import json
 import os
 import subprocess
 import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -250,11 +252,71 @@ class Git:
         # while the journal said the pass succeeded. Anything that gives up
         # now says so, with git's own stderr attached.
         self.log = log or (lambda m: print(m, flush=True))
+        # git's own words from the last failed pull, so a caller can report the
+        # real cause instead of guessing at one.
+        self.last_error = None
+        # Serialises git against every other atticus process sharing this vault.
+        # Lives in .git/ so it is per-repo, never committed, and shared by the
+        # processor, ingest, retention and the site build alike.
+        self._lock_path = self.vault / ".git" / "atticus-git.lock"
+        self._lock_depth = 0
         self.env = {
             **os.environ,
             "GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email,
             "GIT_COMMITTER_NAME": name, "GIT_COMMITTER_EMAIL": email,
         }
+
+    # How long to wait for another process to finish its git work. The operations
+    # under this lock take a second or two; the agent run does NOT hold it, which
+    # is the whole reason the lock is around git rather than around a pass.
+    LOCK_WAIT_SECONDS = 60
+
+    @contextmanager
+    def _serialised(self):
+        """Hold the vault's git lock for the duration of a git sequence.
+
+        Ingest and the processor share one working tree but took DIFFERENT
+        single-instance locks, so nothing excluded them from each other. Two
+        concurrent `git fetch`es leave .git/FETCH_HEAD holding more than one
+        branch, and `pull --rebase` then aborts with "Cannot rebase onto multiple
+        branches" — observed in production every ~15 minutes, whenever the 5- and
+        15-minute timers landed in the same second.
+
+        Re-entrant: commit_push() -> _push_with_retry() -> pull() all nest, and
+        flock() would deadlock against itself on a second descriptor.
+        """
+        if self._lock_depth or not self._lock_path.parent.is_dir():
+            # Already held by this instance, or a local-only vault with no .git
+            # (tests), where there is nothing to race against.
+            self._lock_depth += 1
+            try:
+                yield
+            finally:
+                self._lock_depth -= 1
+            return
+
+        fd = os.open(self._lock_path, os.O_CREAT | os.O_WRONLY, 0o600)
+        try:
+            deadline = time.monotonic() + self.LOCK_WAIT_SECONDS
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise VaultSyncError(
+                            f"another atticus process has held the vault git "
+                            f"lock for over {self.LOCK_WAIT_SECONDS}s "
+                            f"({self._lock_path})") from None
+                    time.sleep(0.2)
+            self._lock_depth = 1
+            try:
+                yield
+            finally:
+                self._lock_depth = 0
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
     # A hung git — half-open TCP to the remote, a dead VPN — used to block the
     # pass forever. Under the timer systemd eventually reaps the unit, but a
@@ -368,14 +430,18 @@ class Git:
     def pull(self) -> bool:
         if not (self.is_repo() and self.has_remote()):
             return True
-        r = self._run("pull", "--rebase", "--autostash", check=False)
-        if r.returncode == 0:
-            return True
-        if self._resolve_benign():
-            return True
-        self._run("rebase", "--abort", check=False)
-        self.log(f"git pull failed: {_tail(r)}")
-        return False
+        with self._serialised():
+            r = self._run("pull", "--rebase", "--autostash", check=False)
+            if r.returncode == 0:
+                self.last_error = None
+                return True
+            if self._resolve_benign():
+                self.last_error = None
+                return True
+            self._run("rebase", "--abort", check=False)
+            self.last_error = _tail(r)
+            self.log(f"git pull failed: {self.last_error}")
+            return False
 
     def commit_push(self, message: str) -> bool:
         """Stage everything, commit, push with bounded retry.
@@ -386,6 +452,10 @@ class Git:
         """
         if not self.is_repo():
             return False
+        with self._serialised():
+            return self._commit_push_locked(message)
+
+    def _commit_push_locked(self, message: str) -> bool:
         # These two used to run with their return codes discarded, and that was
         # the worst silent failure in the system. If `add` fails — most often
         # because the other role holds .git/index.lock, which is routine now
