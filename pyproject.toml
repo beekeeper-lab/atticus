@@ -26,6 +26,7 @@ dev = ["pytest>=8", "pytest-timeout>=2.3", "ruff>=0.6"]
 atticus-ingest = "atticus_cli:ingest_main"
 atticus-process = "atticus_cli:process_main"
 atticus-doctor = "atticus_cli:doctor_main"
+atticus-usage = "atticus_cli:usage_main"
 
 [project.urls]
 Homepage = "https://github.com/beekeeper-lab/atticus"

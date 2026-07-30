@@ -84,6 +84,34 @@ and carry out the legitimate remainder — or, if there is none, write a short
 """
 
 
+def _parse_agent_stdout(raw: str, log=print) -> tuple[str, dict]:
+    """(agent_text, usage) from `--output-format json` stdout.
+
+    Falls back to treating stdout as plain text when it is not the expected
+    envelope — a CLI upgrade that changes the shape should degrade to "no usage
+    data" rather than lose the agent's actual answer, which is the deliverable.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return "", {}
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        return text, {}
+    if not isinstance(payload, dict):
+        return text, {}
+    result = payload.get("result")
+    if not isinstance(result, str):
+        # An error envelope still carries usage; keep whatever it says.
+        result = payload.get("error") or text
+    try:
+        from usage import from_claude_json
+        return result, from_claude_json(payload)
+    except Exception as e:                          # noqa: BLE001
+        log(f"    ! could not read agent usage: {type(e).__name__}: {e}")
+        return result, {}
+
+
 def credential_expiry():
     """(expired: bool, expires_at: datetime|None) for the Claude Code credential.
 
@@ -376,7 +404,12 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
             else:
                 log(f"    sandbox off and {cfg.claude_bin!r} is not on PATH — "
                     f"the agent will likely fail to start")
-        cmd = [claude_bin, "-p", "--output-format", "text",
+        # json, not text: the JSON envelope carries token counts, cache hits,
+        # web-search counts and an imputed cost that `text` throws away — the
+        # data the usage ledger needs to report on efficiency. The agent's actual
+        # answer is the envelope's `result` field, so this changes how stdout is
+        # read (see _parse_agent_stdout) but not what the agent produces.
+        cmd = [claude_bin, "-p", "--output-format", "json",
                "--permission-mode", "acceptEdits",
                "--add-dir", str(out)]
         if cfg.claude_model:
@@ -405,7 +438,8 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
         except FileNotFoundError:
             raise ExecutionError(f"claude binary not found: {cfg.claude_bin}")
 
-        tail = (proc.stdout or "")[-4000:]
+        agent_text, agent_usage = _parse_agent_stdout(proc.stdout, log)
+        tail = agent_text[-4000:]
         if proc.returncode != 0:
             err = (proc.stderr or "").strip()[-500:]
             out_hint = (proc.stdout or "").strip()[-300:]
@@ -510,4 +544,4 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
             (dest_outdir / "agent-stdout.txt").write_text(tail.strip() + "\n")
 
         return {"files": len(produced), "bytes": total, "stdout_tail": tail,
-                "budget_usd": budget or None}
+                "budget_usd": budget or None, "usage": agent_usage}

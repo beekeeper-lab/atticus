@@ -12,6 +12,7 @@ copies.
 |---|---|---|
 | `ATTICUS_ALARM_THROTTLE_HOURS` | `6` | One alarm per condition per this many hours. The ingest timer rediscovers a dead session every 15 minutes; alarming each time is how you learn to ignore the alarm. |
 | `ATTICUS_ALLOWED_TOOLS` | `WebSearch,WebFetch,Read,Write,Edit,Glob,Grep,Bash` | Tools the agent may use, comma-separated. WebSearch/WebFetch are granted deliberately. Denying them bought NO security: the sandbox leaves the network namespace intact because research needs it, an… |
+| `ATTICUS_API_BUDGET_USD` | `4.00` | Hard monthly ceiling on REAL money — OpenAI transcription plus the wake adjudicator. When the calendar month's spend reaches it, the pipeline STOPS transcribing rather than continuing to charge. Au… |
 | `ATTICUS_AUDIO_RETENTION_DAYS` | `30` | Expire raw audio after this many days. 0 = keep forever. Transcripts and agent output are NEVER expired — only the audio. The vault contains recordings of other people who did not consent to perman… |
 | `ATTICUS_BACKLOG_ALARM_MINUTES` | `60` | Warn if a recording sits in inbox/ unprocessed longer than this. The queue's benefit — the processor may be offline, work waits — is also its failure mode: a dead processor looks exactly like an id… |
 | `ATTICUS_CHUNK_LONG_AUDIO` | `off` | Chunk long recordings instead of truncating them. OFF by default, because truncation is correct for a COMMAND: the wake phrase comes first, so everything past the opening seconds is silence or ambi… |
@@ -59,4 +60,4 @@ copies.
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*48 settings.*
+*49 settings.*

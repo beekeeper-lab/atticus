@@ -68,6 +68,13 @@ class Config:
         # from. Two different numbers in the two files is exactly the drift the
         # derived test fixture now catches.
         self.backlog_alarm_minutes = int(g("ATTICUS_BACKLOG_ALARM_MINUTES", "60"))
+        # Hard monthly ceiling on REAL money — OpenAI transcription and the wake
+        # adjudicator. When the calendar month's api spend reaches this, the
+        # pipeline stops transcribing rather than continuing to charge. The
+        # agent's own usage is NOT counted here: it runs on the operator's Claude
+        # subscription and bills nothing per token, so folding it in would stop
+        # the pipeline over money nobody spent. 0 disables the cap.
+        self.api_budget_usd = float(g("ATTICUS_API_BUDGET_USD", "4.00") or 0)
 
         # Results. A finished voice command is the whole point of the system, so
         # it gets a push carrying a link to the page it produced. Separate knob
