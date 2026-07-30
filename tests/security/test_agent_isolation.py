@@ -4,6 +4,7 @@ If any of these fail, a claim in the documentation has become false. That is the
 whole reason they exist: the previous version of those claims was asserted in
 prose and contradicted by the code.
 """
+import os
 import shutil
 import subprocess
 import types
@@ -49,6 +50,20 @@ def _bwrap_actually_works() -> bool:
 needs_bwrap = pytest.mark.skipif(
     not _bwrap_actually_works(),
     reason="bwrap cannot create a namespace here (restricted unprivileged userns?)")
+
+
+def test_sandbox_is_available_where_it_is_required():
+    """In CI, the isolation tests must RUN, not skip.
+
+    A green build with every security test skipped reads as proof while proving
+    nothing, which is a worse outcome than a red one. This replaces a fragile
+    shell grep of pytest's summary line that silently reported zero.
+    """
+    if not os.environ.get("CI"):
+        pytest.skip("only enforced in CI")
+    assert _bwrap_actually_works(), (
+        "bwrap cannot create a namespace on this runner, so every isolation "
+        "test would skip. Fix the runner, do not accept the skip.")
 
 
 def test_env_allowlist_excludes_credentials(tmp_path, monkeypatch):

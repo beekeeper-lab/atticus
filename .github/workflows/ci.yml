@@ -47,14 +47,9 @@ jobs:
       - name: Configuration docs are not stale
         run: uv run python ops/gen-config-docs.py --check
 
-      - name: Assert the security tests actually RAN
-        run: |
-          uv run pytest tests/security -q --collect-only | tail -1
-          n=$(uv run pytest tests/security -q 2>&1 | grep -oE '[0-9]+ passed' | head -1 | cut -d' ' -f1)
-          echo "security tests passed: ${n:-0}"
-          # A green build with every isolation test skipped is worse than a red
-          # one, because it reads as proof.
-          [ "${n:-0}" -ge 8 ] || { echo "too few security tests ran"; exit 1; }
+      # The "security tests must not skip" assertion lives in the suite itself
+      # (test_sandbox_is_available_where_it_is_required), gated on $CI. Parsing
+      # pytest's summary in shell was fragile and silently reported zero.
 
   shell:
     runs-on: ubuntu-latest
