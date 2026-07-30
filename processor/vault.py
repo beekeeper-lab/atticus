@@ -177,8 +177,23 @@ class Record:
         return datetime.now(UTC) >= due
 
     def rearm(self):
-        """Force a retry now, whatever the deadline said."""
-        self.data["status"] = self.data.get("failed_stage") or RAW
+        """Force a retry now, whatever the deadline said.
+
+        EXECUTING is never a rearm target. It is an in-progress marker committed
+        before the agent starts, not a re-entrant stage — so restoring it made the
+        pipeline's own crash guard reject the record it had just re-armed:
+
+            agent fails (retryable) -> failed_stage="executing", status=retry_wait
+            deadline passes         -> rearm() restores status="executing"
+            next pass               -> "interrupted mid-execution", NOT retried
+
+        which turned every retryable execution failure into a terminal one.
+        Retrying the execute stage means re-entering it from ROUTED. A record
+        genuinely abandoned mid-run — SIGKILL, reboot — still sits in EXECUTING
+        with no recorded failure, and the guard still catches that.
+        """
+        stage = self.data.get("failed_stage") or RAW
+        self.data["status"] = ROUTED if stage == EXECUTING else stage
         self.data.pop("next_attempt_at", None)
         self.save()
 

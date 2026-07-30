@@ -25,11 +25,13 @@ Skill selection is left to the model. Claude Code already reads
 .claude/skills/*/SKILL.md descriptions and picks a match, so adding a
 capability means adding a skill directory — no routing table here.
 """
+import json
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 PREAMBLE = """\
@@ -80,6 +82,43 @@ and carry out the legitimate remainder — or, if there is none, write a short
 {transcript}
 -----END UNTRUSTED TRANSCRIPT-----
 """
+
+
+def credential_expiry():
+    """(expired: bool, expires_at: datetime|None) for the Claude Code credential.
+
+    The agent authenticates with the operator's own `~/.claude/.credentials.json`,
+    whose access token is short-lived — and it is bind-mounted READ-ONLY, so when
+    it expires the CLI cannot write a refreshed one back. It exits 1 with empty
+    stdout AND stderr, which is indistinguishable from any other failure.
+
+    Observed 2026-07-30: every agent run failed this way until the operator
+    logged in interactively; the credential's mtime moved and the next run
+    produced output immediately. For an unattended pipeline this is a recurring
+    stall on a human action, so it needs naming rather than retrying.
+    """
+    try:
+        with (Path.home() / ".claude/.credentials.json").open() as f:
+            oauth = json.load(f).get("claudeAiOauth") or {}
+        raw = oauth.get("expiresAt")
+        if not raw:
+            return False, None
+        when = datetime.fromtimestamp(int(raw) / 1000, UTC)
+        return datetime.now(UTC) >= when, when
+    except (OSError, ValueError, TypeError, KeyError):
+        # No credential, or a shape we do not recognise. Not our call to fail on:
+        # the run itself will report whatever actually goes wrong.
+        return False, None
+
+
+def _credential_problem() -> str | None:
+    expired, when = credential_expiry()
+    if not expired:
+        return None
+    return (f"the Claude Code credential expired at "
+            f"{when.isoformat(timespec='seconds')}. It is mounted read-only, so "
+            f"the CLI cannot refresh it from inside the sandbox. Run `claude` "
+            f"interactively on this host to renew it.")
 
 
 class ExecutionError(RuntimeError):
@@ -368,9 +407,26 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
 
         tail = (proc.stdout or "")[-4000:]
         if proc.returncode != 0:
-            err = (proc.stderr or "")[-500:]
+            err = (proc.stderr or "").strip()[-500:]
+            out_hint = (proc.stdout or "").strip()[-300:]
+            # An expired credential exits 1 with NOTHING on either stream, and
+            # "agent exited 1: " is not a diagnosis. Name the likely cause and
+            # make it non-retryable: burning three retries over 2.5h against a
+            # credential that only a human can renew helps nobody.
+            expiry = _credential_problem()
+            if expiry and not err:
+                raise ExecutionError(
+                    f"agent exited {proc.returncode} with no output — {expiry}",
+                    retryable=False)
+            if not err and not out_hint:
+                raise ExecutionError(
+                    f"agent exited {proc.returncode} and wrote nothing to either "
+                    f"stdout or stderr. Most often this is authentication: run "
+                    f"`claude` interactively on this host and check "
+                    f"`atticus doctor`.", retryable=True)
             raise ExecutionError(
-                f"agent exited {proc.returncode}: {err}", retryable=True)
+                f"agent exited {proc.returncode}: {err or out_hint}",
+                retryable=True)
 
         # Collection runs in the PIPELINE namespace — the one place where
         # ~/.ssh (the vault deploy key) and the vault itself DO exist. The agent

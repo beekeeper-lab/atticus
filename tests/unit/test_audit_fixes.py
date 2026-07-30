@@ -138,3 +138,55 @@ def test_ttl_of_zero_disables_expiry():
 def test_output_caps_are_configured_by_default(cfg):
     assert cfg.max_output_files > 0
     assert cfg.max_output_bytes > 0
+
+
+# --- the EXECUTING/rearm interaction, found in production ------------------
+
+def test_a_retryable_execution_failure_rearms_to_routed_not_executing(tmp_path):
+    """EXECUTING is an in-progress marker, not a re-entrant stage.
+
+    Found by the first real recording after the status landed. rearm() restored
+    `failed_stage`, which for an execution failure is "executing" — so the crash
+    guard rejected the very record the retry had just re-armed:
+
+        agent fails (retryable) -> failed_stage="executing", status=retry_wait
+        deadline passes         -> rearm() restores status="executing"
+        next pass               -> "interrupted mid-execution", NOT auto-retried
+
+    Every retryable execution failure became terminal. Retrying execute means
+    re-entering it from ROUTED.
+    """
+    from vault import EXECUTING, ROUTED, Record
+    meta = tmp_path / "r.json"
+    meta.write_text(json.dumps({
+        "plaud_id": "p", "status": "retry_wait", "failed_stage": EXECUTING,
+        "attempts": 1, "next_attempt_at": "2020-01-01T00:00:00Z"}))
+    rec = Record(meta, json.loads(meta.read_text()))
+    rec.rearm()
+    assert rec.status == ROUTED, "must re-enter execute from routed"
+    assert "next_attempt_at" not in rec.data
+
+
+def test_rearm_still_restores_every_other_failed_stage(tmp_path):
+    """Only EXECUTING is special-cased; a transcribe failure must still resume
+    at transcribe rather than being silently bumped forward."""
+    from vault import RAW, TRANSCRIBED, Record
+    for stage, expected in ((RAW, RAW), (TRANSCRIBED, TRANSCRIBED)):
+        meta = tmp_path / f"r-{stage}.json"
+        meta.write_text(json.dumps({
+            "plaud_id": "p", "status": "retry_wait", "failed_stage": stage}))
+        rec = Record(meta, json.loads(meta.read_text()))
+        rec.rearm()
+        assert rec.status == expected
+
+
+def test_a_record_abandoned_mid_run_is_still_caught(tmp_path):
+    """The guard must survive the fix above. A SIGKILL or reboot during the agent
+    run leaves EXECUTING with NO recorded failure, and that must not auto-retry —
+    the agent may already have had side effects."""
+    from vault import EXECUTING, Record
+    meta = tmp_path / "r.json"
+    meta.write_text(json.dumps({"plaud_id": "p", "status": EXECUTING}))
+    rec = Record(meta, json.loads(meta.read_text()))
+    assert rec.status == EXECUTING, (
+        "a record with no recorded failure stays in EXECUTING for the guard")

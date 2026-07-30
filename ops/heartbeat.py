@@ -165,6 +165,35 @@ def main():
             notes.append(f"vault present at {cfg.vault}")
     check("vault-path", check_vault_path)
 
+    # 0b. Can the agent still authenticate?
+    #
+    # The agent uses the operator's own Claude Code credential, mounted read-only
+    # so the CLI cannot refresh an expired access token from inside the sandbox.
+    # It then exits 1 with EMPTY stdout and stderr and every recording fails until
+    # a human runs `claude` interactively. Observed 2026-07-30. The token lasts
+    # hours, so an hourly heartbeat is the right place to catch it — and warning
+    # BEFORE expiry is the whole point, since the fix needs a person.
+    def check_agent_credential():
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "processor"))
+        from execute import credential_expiry
+        expired, when = credential_expiry()
+        if when is None:
+            return                      # no credential to reason about
+        if expired:
+            problems.append(
+                f"the Claude Code credential expired at "
+                f"{when.isoformat(timespec='seconds')} — EVERY agent run will "
+                f"fail until `claude` is run interactively on this host")
+        elif (when - now).total_seconds() < 3600:
+            problems.append(
+                f"the Claude Code credential expires at "
+                f"{when.isoformat(timespec='seconds')} (under an hour) — renew "
+                f"it before the next recording arrives")
+        else:
+            notes.append("agent credential valid for "
+                         f"{(when - now).total_seconds() / 3600:.1f}h")
+    check("agent-credential", check_agent_credential)
+
     # 1. Are the timers even scheduled?
     #
     # retention was NOT in this list, and its own unit comment says "a privacy
