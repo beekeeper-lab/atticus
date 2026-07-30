@@ -2,13 +2,24 @@
 
 Two properties matter more than anything else here:
 
-  1. The agent never touches git. It writes files into an output directory
-     and the pipeline commits them. No deploy key in its environment, so a
-     confused agent cannot rewrite history or push a branch.
+  1. The agent cannot touch git. It writes files into an output directory and
+     the pipeline commits them. This used to be asserted on the strength of
+     removing three variables from its environment, which was not a control at
+     all: the vault deploy key was readable at `~/.ssh/atticus_vault` and the
+     agent has a shell. It is now enforced by a mount namespace in which
+     neither `~/.ssh` nor the vault exists.
 
-  2. The agent runs in a scratch workspace, not in the vault. It sees the
-     skills directory and an empty output dir — nothing else. Whatever it
-     produces is copied into the vault afterwards.
+  2. The agent runs in a scratch workspace with its own `HOME`. Inside the
+     sandbox it can see: the workspace (read-write), the system under /usr and
+     /etc (read-only), the Claude Code binary and its credential, and the
+     skills directories. It cannot see the operator's home, the shared
+     credential file, the SSH keys, or the vault.
+
+WHAT THIS DOES NOT DO. The agent still has full network access — it is doing
+research, and egress filtering is not the threat being addressed. Anything it
+can reach on the internet, it can reach. It runs as the same uid, so this is a
+filesystem and environment boundary, not a privilege boundary. And with
+ATTICUS_SANDBOX=off none of it applies.
 
 Skill selection is left to the model. Claude Code already reads
 .claude/skills/*/SKILL.md descriptions and picks a match, so adding a
@@ -65,6 +76,139 @@ class ExecutionError(RuntimeError):
         self.retryable = retryable
 
 
+# ---------------------------------------------------------------------------
+#  containing the agent
+# ---------------------------------------------------------------------------
+
+def agent_env(ws: Path, out: Path) -> dict:
+    """The agent's environment, built by ALLOWLIST.
+
+    It used to be `os.environ` minus three git variables, which meant the agent
+    inherited every credential the processor unit loads — verified on Forge:
+    OPENAI_API_KEY and the notification URL were both visible to it. Removing
+    three names from a copy of everything is not a boundary; naming what may
+    pass is.
+
+    Nothing credential-shaped is here on purpose. A capability that genuinely
+    needs a secret should be handed exactly that one, at the point of use, not
+    granted to every agent run by default.
+    """
+    keep = ("LANG", "LC_ALL", "TZ", "TERM")
+    env = {k: os.environ[k] for k in keep if k in os.environ}
+    env.update({
+        # A private HOME inside the workspace. Claude Code writes config and
+        # caches; without this it reaches into the operator's real home.
+        "HOME": str(ws / "home"),
+        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "ATTICUS_OUTPUT_DIR": str(out),
+    })
+    return env
+
+
+def _bwrap_available() -> bool:
+    return bool(shutil.which("bwrap"))
+
+
+def wrap_sandbox(cmd: list, ws: Path, out: Path, cfg, *, log=print) -> list:
+    """Wrap the agent invocation in a bubblewrap mount namespace.
+
+    The pipeline and the agent CANNOT share a namespace. The pipeline needs
+    ~/.ssh to push and ~/.config/ai/env to transcribe; the agent must have
+    neither. Both were readable from the agent's position — including the vault
+    deploy key, which makes "the agent never touches git" unenforced rather than
+    merely undocumented, since it has a shell.
+
+    So the agent gets its own view: the workspace read-write, the system
+    read-only, and nothing else from $HOME. Network is deliberately left intact —
+    an agent that cannot reach the internet cannot do most of the work asked of
+    it, and egress is not the threat being addressed here.
+
+    Set ATTICUS_SANDBOX=off to disable, which is honest about the trade rather
+    than pretending the wrapper is optional decoration.
+    """
+    if not getattr(cfg, "sandbox", True):
+        log("    sandbox DISABLED by config — agent runs with the pipeline's view")
+        return cmd
+    if not _bwrap_available():
+        raise ExecutionError(
+            "bwrap is not installed, so the agent cannot be contained. "
+            "Install bubblewrap, or set ATTICUS_SANDBOX=off to accept that the "
+            "agent can read every credential this host holds.")
+
+    (ws / "home").mkdir(exist_ok=True)
+    claude = shutil.which(cfg.claude_bin) or cfg.claude_bin
+
+    args = [
+        "bwrap",
+        "--ro-bind", "/usr", "/usr",
+        "--ro-bind", "/etc", "/etc",
+        "--symlink", "usr/bin", "/bin",
+        "--symlink", "usr/lib", "/lib",
+        "--symlink", "usr/lib64", "/lib64",
+        "--symlink", "usr/sbin", "/sbin",
+        "--proc", "/proc",
+        "--dev", "/dev",
+        "--tmpfs", "/tmp",
+        # The workspace is the only writable thing, and the only part of the
+        # operator's home that exists at all inside here.
+        "--bind", str(ws), str(ws),
+        "--chdir", str(ws),
+        "--unshare-pid",
+        "--unshare-uts",
+        "--unshare-ipc",
+        "--die-with-parent",
+        "--new-session",
+    ]
+    # DNS. On systemd-resolved hosts /etc/resolv.conf is a symlink into /run,
+    # which does not exist in here — the symlink dangles, name resolution fails,
+    # and Claude Code reports the wonderfully unhelpful "API Error: Unable to
+    # connect to API (ENOTIMP)". Bind the real file at the path it resolves to.
+    resolv = Path("/etc/resolv.conf")
+    if resolv.exists():
+        target = resolv.resolve()
+        if str(target) != str(resolv):
+            args += ["--ro-bind", str(target), str(target)]
+
+    # The CLI lives outside /usr (~/.local/bin), and that is usually a symlink
+    # into a versioned directory — BOTH need binding, or exec fails with a
+    # baffling "No such file or directory" for a binary that plainly exists.
+    for p in _cli_paths(claude):
+        args += ["--ro-bind", str(p), str(p)]
+
+    # Claude Code needs its own credential, and only that. NOT the rest of
+    # ~/.claude, which holds session transcripts, history, and hooks. Mounted
+    # read-only into the sandbox's private HOME.
+    home = ws / "home"
+    cred = Path.home() / ".claude/.credentials.json"
+    if cred.is_file():
+        (home / ".claude").mkdir(parents=True, exist_ok=True)
+        (home / ".claude/.credentials.json").touch()
+        args += ["--ro-bind", str(cred), str(home / ".claude/.credentials.json")]
+    else:
+        log("    no ~/.claude/.credentials.json — the agent may fail to authenticate")
+
+    # House-standard skills (html-artifact-output and friends) are instructions,
+    # not secrets, and the output contract depends on them. Read-only.
+    gskills = Path.home() / ".claude/skills"
+    if gskills.is_dir():
+        (home / ".claude/skills").mkdir(parents=True, exist_ok=True)
+        args += ["--ro-bind", str(gskills), str(home / ".claude/skills")]
+
+    return args + ["--"] + cmd
+
+
+def _cli_paths(claude: str) -> list:
+    """Directories that must exist inside the sandbox for the CLI to exec."""
+    out, seen = [], set()
+    p = Path(claude)
+    for cand in (p.parent, p.resolve().parent if p.is_symlink() else None,
+                 p.resolve() if p.resolve().is_dir() else None):
+        if cand and cand.is_dir() and str(cand) not in seen and not str(cand).startswith("/usr"):
+            seen.add(str(cand))
+            out.append(cand)
+    return out
+
+
 def build_task(transcript: str) -> str:
     """The task prompt. Note there is NO outdir parameter any more.
 
@@ -97,10 +241,10 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
         # Make skills visible to the agent without exposing the repo.
         if cfg.skills_dir.is_dir():
             (ws / ".claude").mkdir()
-            try:
-                (ws / ".claude/skills").symlink_to(cfg.skills_dir.resolve())
-            except OSError:
-                shutil.copytree(cfg.skills_dir, ws / ".claude/skills")
+            # COPY, not symlink. A symlink points at the repo, which does not
+            # exist inside the agent's mount namespace, so the skills would
+            # silently vanish under the sandbox.
+            shutil.copytree(cfg.skills_dir, ws / ".claude/skills")
 
         (ws / "TASK.md").write_text(task_md)
 
@@ -109,10 +253,9 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
                "--add-dir", str(out)]
         if cfg.claude_model:
             cmd += ["--model", cfg.claude_model]
+        cmd = wrap_sandbox(cmd, ws, out, cfg, log=log)
 
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("GIT_SSH_COMMAND", "GIT_ASKPASS", "SSH_AUTH_SOCK")}
-        env["ATTICUS_OUTPUT_DIR"] = str(out)
+        env = agent_env(ws, out)
 
         log(f"    running agent (timeout {cfg.exec_timeout}s)…")
         try:
