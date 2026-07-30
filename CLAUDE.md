@@ -42,7 +42,7 @@ without a deliberate act. Sync requires the Plaud app foregrounded — see
 `docs/transport-tests.md` for the matrix and the verdict. That work lives on
 WarDog now (ADR-003).
 
-Known open defects, from `docs/deploy/forge-2026-07-29.md`: the agent writes
+Known open defects, from `docs/history/forge-2026-07-29.md`: the agent writes
 deliverables straight into the vault instead of scratch (#2), and it runs
 without web access (#3). Both need a maintainer decision, not a patch.
 

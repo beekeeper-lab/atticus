@@ -236,12 +236,12 @@ undocumented endpoints this software calls; see [`NOTICE`](NOTICE) and
 | [`docs/SPEC.md`](docs/SPEC.md) | **Source of truth.** Architecture, task breakdown, open questions |
 | [`docs/decisions/`](docs/decisions/) | ADRs, plus reverse-engineered notes on the device's BLE protocol |
 | [`docs/transport-tests.md`](docs/transport-tests.md) | The sync-behaviour matrix and its unfavourable verdict |
-| [`docs/deploy/forge-2026-07-29.md`](docs/deploy/forge-2026-07-29.md) | A real deployment, including every defect it exposed |
+| [`docs/history/forge-2026-07-29.md`](docs/history/forge-2026-07-29.md) | A real deployment, including every defect it exposed |
 | [`CLAUDE.md`](CLAUDE.md) | Orientation and standing decisions for agents working on this repo |
 
 ## A note on the deployment report
 
-[`docs/deploy/forge-2026-07-29.md`](docs/deploy/forge-2026-07-29.md) is kept
+[`docs/history/forge-2026-07-29.md`](docs/history/forge-2026-07-29.md) is kept
 deliberately unvarnished. It records seven real defects found during deployment —
 including one where every `git push` from a systemd unit failed **silently** for
 an entire day while the journal reported success, and another where the

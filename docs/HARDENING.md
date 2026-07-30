@@ -1,7 +1,7 @@
 # Hardening plan — v0.1.0-alpha
 
 **Status:** in progress — A1–A4, A6, B1, B3–B7, C1–C4, D1 landed 2026-07-29.
-Remaining: D3, D4, and D7/D8 which need a decision.
+Remaining: D7 and D8 only — both need your decision.
 **Opened:** 2026-07-29
 **Source:** external review of the public repo, plus findings verified on Forge.
 
@@ -162,13 +162,13 @@ so this is buildable without sudo.
 - [x] **D2. SECURITY.md** — threat model, ambient-audio sensitivity, prompt
       injection, third-party data exposure, unofficial-endpoint fragility,
       disclosure process.
-- [ ] **D3. Documentation hierarchy.** `README` = current behaviour only;
+- [x] **D3. Documentation hierarchy.** `README` = current behaviour only;
       `docs/architecture.md`, `configuration.md`, `operations.md`,
       `threat-model.md`; move superseded reasoning to `docs/history/`.
       Reconcile the confirmed contradictions: `SPEC.md` contains **both**
       `gpt-4o-mini-transcribe` and `gpt-4o-transcribe`, and its diagram still
       shows "Wi-Fi, while charging" as a live path that testing disproved.
-- [ ] **D4. Generated configuration table** so defaults cannot drift from code.
+- [x] **D4. Generated configuration table** so defaults cannot drift from code.
 - [x] **D5. Notification detail setting** —
       `ATTICUS_NOTIFICATION_DETAIL=title|summary|full`, defaulting to `title`
       for anyone but the author. Transcript text currently reaches lock screens,
