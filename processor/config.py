@@ -119,6 +119,16 @@ class Config:
         self.min_words = int(g("ATTICUS_MIN_WORDS", "3"))
         # Optional wake phrase. Empty = execute everything that transcribes.
         self.wake_phrase = (g("ATTICUS_WAKE_PHRASE", "") or "").strip().lower()
+        # Known mishearings, exact-matched. NOT fuzzy matching: measured against
+        # the real failure, "advocates" scores 0.375 similarity to "atticus" —
+        # LOWER than unrelated words like "status" (0.615) and "practice"
+        # (0.533). Any threshold loose enough to catch the real mistake would
+        # fire on ordinary speech, and a false positive runs an autonomous agent
+        # on words never addressed to it. A curated list is explicit, auditable,
+        # and grows only when you observe a mishearing.
+        self.wake_aliases = [w.strip().lower() for w in
+                             (g("ATTICUS_WAKE_ALIASES", "") or "").split(",")
+                             if w.strip()]
 
         self._openai_key = None
 
