@@ -8,6 +8,8 @@ rather than redoing work, and a failure in one stage never costs the others.
 
     pipeline.py                run one pass over the vault
     pipeline.py --once ID      process a single recording
+    pipeline.py --retry ID     re-arm a failed record and run it now
+    pipeline.py --retry-all    re-arm everything failed or waiting
     pipeline.py --status       show the queue, change nothing
     pipeline.py --dry-run      everything except the agent call
 
@@ -27,7 +29,7 @@ import execute as ex                                         # noqa: E402
 import transcribe as stt                                     # noqa: E402
 from notify import notify as _notify                          # noqa: E402
 from vault import (                                          # noqa: E402
-    EXECUTED, FAILED, PUBLISHED, RAW, ROUTED, TRANSCRIBED,
+    EXECUTED, FAILED, PUBLISHED, RAW, RETRY_WAIT, ROUTED, TRANSCRIBED,
     Git, VaultSyncError, load_records, write_atomic,
 )
 
@@ -229,7 +231,12 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
         raise
     except (stt.TranscriptionError, ex.ExecutionError) as e:
         kind = getattr(e, "kind", "execution")
-        rec.fail(cfg.vault, rec.status, str(e), getattr(e, "retryable", False))
+        state = rec.fail(cfg.vault, rec.status, str(e), getattr(e, "retryable", False))
+        if state == RETRY_WAIT:
+            log.warn(f"  ↻ {kind}: {e}")
+            log.warn(f"    attempt {rec.data['attempts']} — retrying after "
+                     f"{rec.data['next_attempt_at']}")
+            return False
         log.error(f"  ✗ {kind}: {e}")
         git.commit_push(f"fail {rec.stem} ({kind})")
         notify(cfg, f"Atticus {kind} failure on {rec.stem}: {e}", log)
@@ -258,12 +265,14 @@ def cmd_status(cfg, log):
     for r in recs:
         counts[r.status] = counts.get(r.status, 0) + 1
     print(f"vault {cfg.vault}  —  {len(recs)} record(s)")
-    for s in (RAW, TRANSCRIBED, ROUTED, EXECUTED, PUBLISHED, FAILED):
+    for s in (RAW, TRANSCRIBED, ROUTED, EXECUTED, PUBLISHED, RETRY_WAIT, FAILED):
         if counts.get(s):
             print(f"  {s:<12} {counts[s]}")
     pending = [r for r in recs if r.status not in (PUBLISHED, FAILED)]
     for r in pending:
-        print(f"    · {r.stem}  [{r.status}]")
+        when = r.data.get("next_attempt_at")
+        extra = f"  retry at {when}" if when else ""
+        print(f"    · {r.stem}  [{r.status}]{extra}")
     return 0
 
 
@@ -271,6 +280,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--once", metavar="ID", help="process a single recording by id or stem")
+    ap.add_argument("--retry", metavar="ID", help="re-arm one failed record and run it now")
+    ap.add_argument("--retry-all", action="store_true",
+                    help="re-arm every failed and waiting record")
     ap.add_argument("--status", action="store_true", help="show the queue and exit")
     ap.add_argument("--dry-run", action="store_true", help="skip the agent call")
     ap.add_argument("--env", type=Path, help="alternate ops/.env")
@@ -312,17 +324,36 @@ def main():
         except OSError:
             pass
 
-    todo = [r for r in load_records(cfg.vault, on_bad=on_bad)
-            if r.status not in (PUBLISHED, FAILED)]
+    records = load_records(cfg.vault, on_bad=on_bad)
+    if args.retry_all:
+        for r in records:
+            if r.status in (FAILED, RETRY_WAIT):
+                log.info(f"re-arming {r.stem} (was {r.status})")
+                r.rearm()
+        records = load_records(cfg.vault, on_bad=on_bad)
+
+    todo = [r for r in records
+            if r.status not in (PUBLISHED, FAILED) and r.due()]
+    waiting = [r for r in records if r.status == RETRY_WAIT and not r.due()]
+    if waiting:
+        log.info(f"{len(waiting)} record(s) waiting to retry; soonest "
+                 f"{min(r.data.get('next_attempt_at', '') for r in waiting)}")
     if bad:
         notify(cfg, f"Atticus: {len(bad)} unreadable recording metadata file(s) "
                     f"quarantined — they are NOT being processed.\n\n"
                     + "\n".join(str(p.name) for p, _ in bad[:5]), log)
-    if args.once:
+    if args.once or args.retry:
+        want = args.once or args.retry
         todo = [r for r in load_records(cfg.vault, on_bad=on_bad)
-                if args.once in (r.id, r.stem)]
+                if want in (r.id, r.stem)]
+        if args.retry:
+            for r in todo:
+                log.info(f"re-arming {r.stem} (was {r.status})")
+                r.rearm()
+            todo = [r for r in load_records(cfg.vault, on_bad=on_bad)
+                    if want in (r.id, r.stem)]
         if not todo:
-            print(f"no record matching {args.once!r}", file=sys.stderr)
+            print(f"no record matching {(args.once or args.retry)!r}", file=sys.stderr)
             return 2
 
     if not todo:
