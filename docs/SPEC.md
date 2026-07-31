@@ -179,20 +179,30 @@ downstream is unaffected by the choice.
 
 | # | Path | Mac? | Plaud $ | Cloud? | Status |
 |---|------|------|---------|--------|--------|
-| 1 | **Direct BLE, WarDog → pin** | No | $0 | **No** | Feasible; RSA handshake unresolved |
+| 1 | **Direct BLE, WarDog → pin** | No | $0 | **No** | ❌ **CLOSED** — see ADR-005 |
 | 2 | **Android bridge app** | **No** | $0 | No | Official SDK; needs an Android phone |
 | 3 | **Plaud Web API** (current) | No | $0 | Yes | Working; auth + list implemented |
 | 4 | iOS app | **Yes** | $0 | No | Now the worst option |
 
-**Option 1 is the destination if the handshake opens.** WarDog has a Bluetooth
+> **Superseded 2026-07-31.** Option 1 is **closed**, not pending. The pin reports
+> `portVersion = 20`, so its firmware requires an RSA pre-handshake keyed by a
+> B2B-issued credential *and* ChaCha20-Poly1305 framing whose key exchange is
+> undecoded. See [ADR-005](decisions/ADR-005-direct-device-access-is-closed.md)
+> and `docs/transport-tests.md` T6–T8. **Option 3 (Plaud Web) is what ships.**
+> The reasoning below is retained because this file is a design record, not a
+> status page — but do not read it as current.
+
+**Option 1 was the destination if the handshake opened.** WarDog has a Bluetooth
 controller and `bleak` installed. The protocol is fully mapped from Plaud's own
 publicly-published Android SDK — see
-[`ble-protocol-notes.md`](decisions/ble-protocol-notes.md). It removes Plaud
-Cloud, the subscription question, and T-14 in one move.
+[`ble-protocol-notes.md`](decisions/ble-protocol-notes.md). It would have removed
+Plaud Cloud, the subscription question, and T-14 in one move. It does not work.
 
-**Option 2 is the fallback that still avoids a Mac.** The Android `.aar` builds
+**Option 2 was the fallback that still avoids a Mac.** The Android `.aar` builds
 with Gradle on Linux; no Xcode anywhere. A cheap Android phone becomes a
 dedicated bridge. Less work than option 1 because the SDK does the protocol.
+**Never evaluated once option 1 closed** — see ADR-005's "Option 2, and why it was
+not evaluated", which is the honest open question left by that decision.
 
 **Option 3 stays as the working fallback** regardless — it is the only path
 proven to return audio today, and it costs nothing to keep.

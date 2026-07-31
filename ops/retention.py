@@ -33,7 +33,7 @@ sys.path.insert(0, str(REPO / "processor"))
 
 from config import Config, _parse_env          # noqa: E402
 from notify import clear as alarm_clear, notify  # noqa: E402
-from vault import Git, VaultSyncError, load_records  # noqa: E402
+from vault import OWNED_RETENTION, Git, VaultSyncError, load_records  # noqa: E402
 
 
 def main():
@@ -175,7 +175,8 @@ def _sync(cfg, message: str) -> bool:
     stops running is exactly the failure the design exists to prevent, so it
     needs the same alarm treatment as every other stage.
     """
-    git = Git(cfg.vault, cfg.git_name, cfg.git_email, cfg.push_retries)
+    git = Git(cfg.vault, cfg.git_name, cfg.git_email, cfg.push_retries,
+              paths=OWNED_RETENTION)
     try:
         if git.commit_push(message):
             alarm_clear("retention")

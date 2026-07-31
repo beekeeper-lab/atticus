@@ -44,7 +44,9 @@ from config import Config          # noqa: E402
 from lock import AlreadyRunning, single_instance   # noqa: E402
 from notify import clear as alarm_clear, notify   # noqa: E402
 from redact import redact                         # noqa: E402
-from vault import Git, VaultSyncError, write_atomic, utcnow   # noqa: E402
+from vault import (                                          # noqa: E402
+    OWNED_INGEST, Git, VaultSyncError, utcnow, write_atomic,
+)
 
 EXIT_OK, EXIT_PARTIAL, EXIT_CONFIG, EXIT_AUTH = 0, 1, 2, 3
 F_OK, F_USAGE, F_AUTH, F_TRANSIENT, F_CHANGED = 0, 2, 3, 4, 5
@@ -445,8 +447,14 @@ def main():
             return EXIT_PARTIAL
 
     # -- the pass ----------------------------------------------------------
+    # Scoped to what ingest owns. _sweep_dirty() below commits whatever is dirty
+    # to recover a recording stranded between the ledger append and the commit —
+    # and unscoped, that swept up unrelated in-progress edits to site/ and tests/
+    # and pushed them under the message "sweep: commit work stranded by an
+    # interrupted pass". Observed 2026-07-31. The sweep still does its job; it
+    # just no longer speaks for directories ingest does not own.
     git = Git(vault, cfg.git_name, cfg.git_email, cfg.push_retries,
-              log=lambda m: log(f"  ! {m}"))
+              log=lambda m: log(f"  ! {m}"), paths=OWNED_INGEST)
     if not args.no_push:
         git.pull()
 

@@ -34,7 +34,7 @@ import execute as ex          # noqa: E402
 import usage                  # noqa: E402
 from config import Config     # noqa: E402
 from notify import notify     # noqa: E402
-from vault import Git         # noqa: E402
+from vault import OWNED_BRIEF, Git   # noqa: E402
 
 SLUG = "ai-brief"
 LEDGER = ".state/brief-covered.jsonl"
@@ -284,7 +284,8 @@ def run(cfg, *, today: date | None = None, dry_run: bool = False,
     log(f"  ✓ {slug}: {len(items)} item(s) covered"
         + (" — quiet day" if quiet else "") + f", {res['bytes']:,} bytes")
 
-    git = Git(cfg.vault, cfg.git_name, cfg.git_email, cfg.push_retries, log=log)
+    git = Git(cfg.vault, cfg.git_name, cfg.git_email, cfg.push_retries, log=log,
+              paths=OWNED_BRIEF)
     git.commit_push(f"ai-brief {today.isoformat()} ({n} item(s))")
     _notify(cfg, today, items, slug, log=log)
     return {"made": True, "slug": slug, "items": len(items), "quiet": quiet,

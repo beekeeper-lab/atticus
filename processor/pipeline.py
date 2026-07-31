@@ -34,8 +34,8 @@ import usage                                                 # noqa: E402
 import wake                                                  # noqa: E402
 from notify import clear as _notify_clear, notify as _notify  # noqa: E402
 from vault import (                                          # noqa: E402
-    EXECUTED, EXECUTING, FAILED, PUBLISHED, RAW, RETRY_WAIT, ROUTED,
-    TRANSCRIBED, Git, VaultSyncError, load_records, utcnow, write_atomic,
+    EXECUTED, EXECUTING, FAILED, OWNED_PROCESSOR, PUBLISHED, RAW, RETRY_WAIT,
+    ROUTED, TRANSCRIBED, Git, VaultSyncError, load_records, utcnow, write_atomic,
 )
 
 LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
@@ -327,6 +327,9 @@ def stage_route(rec, cfg, log):
         rec.advance(PUBLISHED, executed=False, gate_reason=reason,
                     wake_heard=rec.data.get("wake_heard"),
                     wake_adjudicated=rec.data.get("wake_adjudicated"))
+        # Reaching a gated note is also a terminal success — a record that failed
+        # transcription, was retried, and then gated should not keep an error file.
+        rec.clear_error(cfg.vault)
         return False
 
     # When the wake word was recovered, strip_wake_phrase cannot find it — it is
@@ -539,6 +542,12 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
             # writes executed=False, so "no key" used to mean "executed" — a
             # default that is easy to read the wrong way round.
             rec.advance(PUBLISHED, executed=True)
+            # A record that failed and then succeeded kept its failures/ entry
+            # forever, so `atticus doctor` and the failures/ count overreported
+            # permanently. Clearing it here — at the one transition that means
+            # "this worked" — is the only place it is unambiguously correct.
+            if rec.clear_error(cfg.vault):
+                log.info("    cleared a stale failures/ entry")
             git.commit_push(f"publish {rec.stem}")
             log.info(f"  ✓ published → {rec.outdir(cfg.vault).relative_to(cfg.vault)}")
             notify_result(cfg, rec, log)
@@ -553,6 +562,16 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
         raise
     except (stt.TranscriptionError, ex.ExecutionError) as e:
         kind = getattr(e, "kind", "execution")
+        # A failed run still SPENT. A run killed at the spend ceiling consumed the
+        # whole ceiling and produced nothing, and until this existed the ledger
+        # recorded $0.00 for it — so the most expensive events in the system were
+        # the invisible ones, and the cost page understated exactly where it
+        # mattered most. Record before failing the record, so the accounting
+        # survives whatever the retry logic decides.
+        spent = getattr(e, "usage", None) or {}
+        if spent:
+            usage.record(cfg.vault, kind="agent", billing=usage.SUBSCRIPTION,
+                         stem=rec.stem, log=log.warn, failed=True, **spent)
         state = rec.fail(cfg.vault, rec.status, str(e), getattr(e, "retryable", False))
         if state == RETRY_WAIT:
             log.warn(f"  ↻ {kind}: {e}")
@@ -643,7 +662,7 @@ def main():
 
     log.debug(f"config: {json.dumps(cfg.redacted(), indent=2)}")
     git = Git(cfg.vault, cfg.git_name, cfg.git_email, cfg.push_retries,
-              log=log.warn)
+              log=log.warn, paths=OWNED_PROCESSOR)
 
     if not args.no_pull:
         # A silent failure is the worst failure. An unreachable remote makes
