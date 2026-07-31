@@ -135,6 +135,30 @@ class Record:
         self.data.update(fields)
         self.save()
 
+    def clear_error(self, vault: Path) -> bool:
+        """Remove a stale failures/ entry once the record has succeeded.
+
+        Nothing did this, so a record that failed and then succeeded on a later
+        attempt kept its error file forever. Observed 2026-07-30:
+        ...T184315Z_ac02959a455c failed at 19:00, was interrupted at 19:10 (which
+        wrote the error file), then PUBLISHED a 41 KB report at 19:15 — and left a
+        failures/ entry behind that made `atticus doctor` and the failures/ count
+        overreport permanently.
+
+        The error file is a live signal, not an archive: the record's own metadata
+        keeps `attempts`, `failed_stage` and `last_error`, so the history survives
+        deleting it. Best-effort — a published record must not be un-published by
+        a filesystem problem here.
+        """
+        p = self.error_path(vault)
+        try:
+            if p.is_file():
+                p.unlink()
+                return True
+        except OSError:
+            pass
+        return False
+
     def fail(self, vault: Path, stage: str, error: str, retryable: bool):
         attempts = self.data.get("attempts", 0) + 1
         self.data["attempts"] = attempts
@@ -258,10 +282,42 @@ def _tail(proc, n: int = 300) -> str:
     return ((proc.stderr or proc.stdout or "").strip() or "(no output)")[-n:]
 
 
+# Who owns what, in one place, because CLAUDE.md asserts this boundary and until
+# 2026-07-31 nothing enforced it. Pass the matching constant as Git(paths=...).
+#
+# The processor updates a record's metadata in inbox/ as it advances (status,
+# transcribed_at, failed_stage), so inbox/ is shared with ingest — they collide on
+# a file, not on a directory, and `pull --rebase` plus the union merge driver on
+# the ledgers is what handles that. What neither role owns is reports/ and site/,
+# and those are exactly what got swept.
+OWNED_INGEST = ["inbox", ".state"]
+OWNED_PROCESSOR = ["inbox", "processed", "failures", ".state"]
+OWNED_BRIEF = ["reports", ".state"]
+OWNED_RETENTION = ["inbox"]
+
+
 class Git:
     def __init__(self, vault: Path, name: str, email: str, retries: int = 3,
-                 log=None):
+                 log=None, paths: list[str] | None = None):
         self.vault, self.retries = vault, retries
+        # Which paths this role owns, and therefore the ONLY paths it stages.
+        #
+        # `git add -A` was staging the whole worktree. CLAUDE.md states the two
+        # roles "own disjoint paths — ingest inbox/ + .state/, processor
+        # processed/ + failures/", and that boundary is load-bearing for the
+        # two-role design; add -A silently violated it. Observed four times on
+        # 2026-07-31: pipeline commits swept up unrelated in-progress edits to
+        # site/ and tests/ and PUSHED them, mid-edit, under messages like
+        # "retry-wait <stem> (attempt 1)". Two costs, both real — work gets
+        # published in a broken intermediate state, and commit messages
+        # misdescribe their own contents, which degrades git history as the audit
+        # trail the security posture depends on.
+        #
+        # None keeps the old whole-worktree behaviour, because some callers
+        # legitimately want it: retention rewrites records anywhere under inbox/,
+        # and the sweep path exists to recover work stranded by an interrupted
+        # pass. Scoping is opt-in per caller rather than imposed here.
+        self.paths = list(paths) if paths else None
         # A failed push used to be entirely silent: commit_push() returned
         # False and every caller ignored it, so work sat committed-but-local
         # while the journal said the pass succeeded. Anything that gives up
@@ -479,10 +535,22 @@ class Git:
         # returned True having committed NOTHING. The caller marked the record
         # done, the ledger was already written, and the work sat uncommitted and
         # invisible to the other stage with no error anywhere.
-        add = self._run("add", "-A", check=False)
+        # Scoped when the caller declared what it owns, whole-worktree otherwise.
+        # `--` guards against a path that looks like a revision.
+        if self.paths:
+            add = self._run("add", "-A", "--", *self.paths, check=False)
+        else:
+            add = self._run("add", "-A", check=False)
         if add.returncode != 0:
             raise VaultSyncError(f"git add failed: {_tail(add)}")
-        st = self._run("status", "--porcelain", check=False)
+        # Ask about the same scope that was staged. Asking about the whole tree
+        # would see an unrelated dirty file, call the tree dirty, and then commit
+        # nothing — `git commit` exits non-zero on an empty index, which this
+        # function turns into a VaultSyncError and a failed pass. A neighbouring
+        # editor should not be able to fail the pipeline.
+        st = (self._run("status", "--porcelain", "--", *self.paths, check=False)
+              if self.paths else
+              self._run("status", "--porcelain", check=False))
         if st.returncode != 0:
             raise VaultSyncError(f"git status failed: {_tail(st)}")
         dirty = bool(st.stdout.strip())

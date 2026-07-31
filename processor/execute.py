@@ -150,9 +150,49 @@ def _credential_problem() -> str | None:
 
 
 class ExecutionError(RuntimeError):
-    def __init__(self, msg, *, retryable=False):
+    def __init__(self, msg, *, retryable=False, usage=None):
         super().__init__(msg)
         self.retryable = retryable
+        # Usage the run had already accrued when it failed. A run killed at the
+        # spend ceiling consumed the whole ceiling and produced nothing, and
+        # without carrying it here the ledger recorded $0.00 for the single most
+        # expensive kind of event in the system.
+        self.usage = usage or {}
+
+
+def budget_exhausted(stdout: str, stderr: str) -> bool:
+    """Did the CLI stop because it hit `--max-budget-usd`?
+
+    Decided on the JSON envelope's STRUCTURED fields, because that is where the
+    CLI actually reports this. The original check grepped stderr for
+    "exceeded usd budget" — wording Claude Code does not emit — so it never once
+    fired, and budget exhaustion was retried three more times at ceiling each.
+    Observed live 2026-07-31: stderr was EMPTY and stdout carried
+
+        {"terminal_reason": "budget_exhausted",
+         "subtype": "error_max_budget_usd",
+         "errors": ["Reached maximum budget ($2)"], ...}
+
+    Three independent signals are checked because any one of them could be
+    renamed by a CLI upgrade, and the prose fallback is kept last so a build that
+    does report it on stderr is still caught. Failing OPEN here means retrying a
+    deterministic failure, so breadth is the safer error.
+    """
+    try:
+        payload = json.loads((stdout or "").strip())
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        if payload.get("subtype") == "error_max_budget_usd":
+            return True
+        if payload.get("terminal_reason") == "budget_exhausted":
+            return True
+        errs = payload.get("errors")
+        if isinstance(errs, list) and any(
+                re.search(r"max(imum)?\s+budget", str(e), re.I) for e in errs):
+            return True
+    return bool(re.search(r"exceeded\s+usd\s+budget|max(imum)?\s+budget",
+                          stderr or "", re.I))
 
 
 # ---------------------------------------------------------------------------
@@ -451,33 +491,39 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
             if expiry and not err:
                 raise ExecutionError(
                     f"agent exited {proc.returncode} with no output — {expiry}",
-                    retryable=False)
+                    retryable=False, usage=agent_usage)
             # Budget exhaustion is DETERMINISTIC, so retrying is not a recovery
             # strategy — it is spending the ceiling again to hit the same wall.
             # Observed 2026-07-30: a research task exceeded $2.00, produced no
             # output at all, and was queued to retry three more times at $2.00
-            # each. $8 spent, nothing gained, on money that is the operator's.
+            # each — four ceiling-loads and ~35 minutes of wall clock for nothing.
+            #
+            # An earlier version of this comment said "$8 on money that is the
+            # operator's". That overstated it: `claude -p` is subscription-billed,
+            # so the ceiling counts imputed token cost and no dollars leave an
+            # account. The waste is real but it is wall clock and rate-limit
+            # quota, not money. Suppressing the retry is right either way.
             #
             # The right response is a human decision: raise
             # ATTICUS_MAX_BUDGET_USD for this task, narrow the request, or accept
             # that it is too big. So: fail loudly, non-retryable, and say which.
-            if re.search(r"exceeded\s+usd\s+budget", err, re.I):
+            if budget_exhausted(proc.stdout, err):
                 raise ExecutionError(
                     f"the agent hit the ${cfg.max_budget_usd} spend ceiling "
                     f"before producing any output, and stopped. NOT retried: the "
                     f"same request would spend the ceiling again and stop in the "
                     f"same place. Raise ATTICUS_MAX_BUDGET_USD, narrow the "
                     f"request, or re-run it by hand with --retry.",
-                    retryable=False)
+                    retryable=False, usage=agent_usage)
             if not err and not out_hint:
                 raise ExecutionError(
                     f"agent exited {proc.returncode} and wrote nothing to either "
                     f"stdout or stderr. Most often this is authentication: run "
                     f"`claude` interactively on this host and check "
-                    f"`atticus doctor`.", retryable=True)
+                    f"`atticus doctor`.", retryable=True, usage=agent_usage)
             raise ExecutionError(
                 f"agent exited {proc.returncode}: {err or out_hint}",
-                retryable=True)
+                retryable=True, usage=agent_usage)
 
         # Collection runs in the PIPELINE namespace — the one place where
         # ~/.ssh (the vault deploy key) and the vault itself DO exist. The agent

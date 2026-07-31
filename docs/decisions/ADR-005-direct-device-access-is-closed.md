@@ -108,6 +108,30 @@ onto it and read them with no firmware work at all — likely dead here, because
 a device this small the flash is probably internal to the SoC, but it costs
 nothing to check if one is ever opened).
 
+**Option 2, and why it was not evaluated — added 2026-07-31.** This ADR shipped
+having considered direct BLE, unbinding, reflashing and building our own, and
+having skipped the option its own notes had named in advance for exactly this
+outcome. `ble-protocol-notes.md` line 144 says: *"If it is issued only under a B2B
+agreement, option 1 is blocked and the Android bridge (option 2) becomes the way
+to use the SDK without a Mac."* T8 confirmed precisely that condition, and
+`docs/SPEC.md` §2.2.1 still listed the bridge as "the fallback that still avoids a
+Mac".
+
+The omission came from framing. The decision was written as *"can we cut the
+vendor cloud out?"*, and a bridge does not — it keeps the cloud and the vendor
+app. But the goal that actually drove the whole investigation was **sync without a
+deliberate act**, and a dedicated always-on Android phone running the vendor SDK
+plausibly delivers that while keeping the cloud. Closing on the purity framing
+quietly dropped the cheaper win.
+
+It is probably blocked too: the public SDK almost certainly hits the same
+partner-key gate at `portVersion >= 20` regardless of which OS calls it. But that
+is **unverified**, and it is answerable from the already-decompiled SDK without
+touching hardware — the decompile artifacts are on WarDog (`docs/recon/` is
+gitignored and never reached Forge). One afternoon of static analysis either adds
+a sentence here or reopens a real option. Tracked as a follow-up rather than left
+as an implication.
+
 **4. Build our own recorder.** Technically the cleanest — the firmware problem is
 already solved by people who wanted it solved (ESP32-based recorders, open-hardware
 wearable recorder projects). **Rejected primarily on physical size.** The NotePin

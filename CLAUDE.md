@@ -55,9 +55,12 @@ verdict, the rejected alternatives (reflash, build our own, unbind) and the
 trigger conditions. **Do not re-derive this** — T6–T8 in `docs/transport-tests.md`
 record it in detail.
 
-Known open defects, from `docs/history/forge-2026-07-29.md`: the agent writes
-deliverables straight into the vault instead of scratch (#2), and it runs
-without web access (#3). Both need a maintainer decision, not a patch.
+**Defects are tracked in GitHub issues** as of 2026-07-31. Before that they lived
+in prose in `docs/history/`, which is how the two defects this paragraph used to
+list as open — the agent writing deliverables into the vault instead of scratch,
+and running without web access — stayed listed for a week after being fixed in
+PRs #13 and #20. If you are looking for open work, `gh issue list` is the answer,
+not this file.
 
 ## Shape of the system
 

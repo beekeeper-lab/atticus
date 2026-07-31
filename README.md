@@ -219,7 +219,10 @@ Everything on the original list has landed. What remains:
    DevOps, calendar. Each does the thing and writes an HTML record of what it
    did. Read the prompt-scoping caveat in [`SECURITY.md`](SECURITY.md) before
    the first one that *sends* anything.
-5. **Direct BLE**, to cut the vendor cloud out and halve the round trip.
+Tracked as GitHub issues from 2026-07-31 onward, including the skills above — see
+`gh issue list`. Direct BLE used to be item 5 on this list; it is **closed**, not
+pending ([ADR-005](docs/decisions/ADR-005-direct-device-access-is-closed.md)), and
+listing it here contradicted the section 80 lines above that says so.
 
 <details>
 <summary>Recently completed</summary>

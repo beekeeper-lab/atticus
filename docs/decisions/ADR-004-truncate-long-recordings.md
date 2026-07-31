@@ -84,11 +84,15 @@ Scoping the prompt — a sentence cap after the wake phrase — is the natural
 follow-up. The full transcript is always retained on disk, so bounding what
 reaches the agent costs nothing.
 
-**Chunking is deferred, not rejected.** A 40-minute meeting is a legitimate thing
-to hand this system, and truncation is the wrong answer for it. Splitting on time
-with overlap is the right one. Until then a long recording is treated as a
-command with a long tail, which is the common case, rather than as a document,
-which is not yet supported.
+**Chunking was deferred, not rejected — and it has since shipped.** A 40-minute
+meeting is a legitimate thing to hand this system, and truncation is the wrong
+answer for it; splitting on time with overlap is the right one. That landed in PR
+#21 (`ATTICUS_CHUNK_AUDIO`, `ATTICUS_CHUNK_SECONDS`, with overlapping windows
+joined by `audio.join_transcripts`), so the "until then" below no longer applies.
+
+Retained rather than rewritten because this is a decision record: the reasoning
+for truncating *as a bound on what reaches the agent* still stands, and is
+separate from whether long audio can be transcribed at all.
 
 **180 seconds is a judgement, not a measurement.** It is generous for a 10–30
 second command. A tighter cap saves a few cents per accident; the thing it risks

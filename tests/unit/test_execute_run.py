@@ -10,6 +10,7 @@ M7: with the sandbox off there is no mount namespace, so the synthetic PATH
 (ws/bin) and HOME (ws/home) that only the sandbox populated point at nothing.
 The binary must be resolved to an absolute host path and HOME must be real.
 """
+import json
 import os
 import types
 
@@ -98,26 +99,94 @@ def test_sandbox_off_resolves_absolute_binary_and_real_home(cfg, tmp_path, monke
     assert res["files"] == 1
 
 
-def test_budget_exhaustion_is_not_retried(tmp_path, cfg, monkeypatch):
-    """Retrying a deterministic failure spends the ceiling again to hit the same
-    wall. Observed 2026-07-30: a research task exceeded $2.00, produced NO output,
-    and was queued for three more attempts at $2.00 each — $8 for nothing, on the
-    operator's money.
-    """
+# The REAL envelope Claude Code emits when it hits --max-budget-usd, captured
+# from a live run on 2026-07-31. Note stderr is EMPTY and every budget signal is
+# in stdout — the inverse of what the original version of this test asserted.
+REAL_BUDGET_ENVELOPE = json.dumps({
+    "type": "result",
+    "subtype": "error_max_budget_usd",
+    "terminal_reason": "budget_exhausted",
+    "errors": ["Reached maximum budget ($2)"],
+    "permission_denials": [],
+    "duration_ms": 502292,
+    "usage": {"input_tokens": 30, "output_tokens": 18000,
+              "cache_read_input_tokens": 400000},
+    "total_cost_usd": 2.0,
+})
+
+
+def _fake_proc(monkeypatch, *, stdout="", stderr="", rc=1):
     import subprocess
+
     import execute as ex
 
     def fake_run(*a, **kw):
-        return subprocess.CompletedProcess(
-            a[0] if a else [], 1, "", "Error: Exceeded USD budget (2)")
-
+        return subprocess.CompletedProcess(a[0] if a else [], rc, stdout, stderr)
     monkeypatch.setattr(ex.subprocess, "run", fake_run)
     monkeypatch.setattr(ex, "wrap_sandbox", lambda cmd, *a, **k: cmd)
+    return ex
+
+
+def test_budget_exhaustion_is_not_retried(tmp_path, cfg, monkeypatch):
+    """Retrying a deterministic failure spends the ceiling again to hit the same
+    wall. Observed 2026-07-30, and then again on 2026-07-31 — because the guard
+    this test was written to protect never fired.
+
+    The original version of this test fed the code
+    `stderr="Error: Exceeded USD budget (2)"` with empty stdout. That string was
+    invented to match the implementation's regex, and it is the inverse of
+    reality: the CLI puts budget exhaustion in the stdout JSON envelope and
+    leaves stderr empty. So both the code and the test encoded the same wrong
+    assumption, the test passed, and the protection was dead for a week. This now
+    uses the captured envelope.
+    """
+    ex = _fake_proc(monkeypatch, stdout=REAL_BUDGET_ENVELOPE, stderr="")
     with pytest.raises(ex.ExecutionError) as e:
         ex.run("task", tmp_path / "out", cfg, log=lambda m: None)
     assert e.value.retryable is False, "budget exhaustion must not be retried"
     assert "spend ceiling" in str(e.value)
     assert "ATTICUS_MAX_BUDGET_USD" in str(e.value), "must name the remedy"
+
+
+def test_a_ceiling_hit_carries_its_usage_so_the_ledger_is_not_zero(tmp_path, cfg,
+                                                                  monkeypatch):
+    """A run killed at the ceiling consumed the whole ceiling and produced
+    nothing. It was recorded as $0.00, which made the most expensive events in
+    the system the invisible ones."""
+    ex = _fake_proc(monkeypatch, stdout=REAL_BUDGET_ENVELOPE)
+    with pytest.raises(ex.ExecutionError) as e:
+        ex.run("task", tmp_path / "out", cfg, log=lambda m: None)
+    assert e.value.usage, "the exception must carry what the run spent"
+    assert e.value.usage.get("usd", 0) > 0
+    assert e.value.usage.get("output_tokens", 0) > 0
+
+
+@pytest.mark.parametrize("stdout,stderr,why", [
+    (REAL_BUDGET_ENVELOPE, "", "the real envelope, stderr empty"),
+    ('{"subtype": "error_max_budget_usd"}', "", "subtype alone"),
+    ('{"terminal_reason": "budget_exhausted"}', "", "terminal_reason alone"),
+    ('{"errors": ["Reached maximum budget ($2)"]}', "", "errors list alone"),
+    ("", "Error: Exceeded USD budget (2)", "legacy stderr wording"),
+    ("", "reached maximum budget", "prose on stderr"),
+])
+def test_every_budget_signal_is_recognised(stdout, stderr, why):
+    """Any one field could be renamed by a CLI upgrade, and failing OPEN here
+    means retrying a deterministic failure — so breadth is the safer error."""
+    import execute as ex
+    assert ex.budget_exhausted(stdout, stderr) is True, why
+
+
+@pytest.mark.parametrize("stdout,stderr", [
+    ("", ""),
+    ('{"type": "result", "subtype": "success"}', ""),
+    ("not json at all", "some unrelated failure"),
+    ('{"errors": ["rate limited"]}', ""),
+])
+def test_unrelated_failures_are_not_mistaken_for_budget(stdout, stderr):
+    """Over-matching would make a transient failure permanently non-retryable,
+    which loses work."""
+    import execute as ex
+    assert ex.budget_exhausted(stdout, stderr) is False
 
 
 def test_an_ordinary_agent_failure_is_still_retried(tmp_path, cfg, monkeypatch):
