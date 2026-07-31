@@ -53,6 +53,25 @@ def clear(key: str):
     _stamp(key).unlink(missing_ok=True)
 
 
+class ResultTarget:
+    """Lets notify() post to the RESULT topic without mutating cfg.
+
+    Lived in pipeline.py; moved here because it is a notify concern and there are
+    now two callers. brief.py had reimplemented it as `copy.copy(cfg)` with the
+    url swapped, which works but copies a whole Config to change one attribute —
+    and would silently pick up any future notify() dependency on other cfg fields.
+
+    Note that `result_notify_url` falls back to the alarm url when unset
+    (config.py), so on a host that has not split them these post to the same
+    topic. That is the documented default, not a bug, but it does mean "routed to
+    the result channel" describes intent rather than observable behaviour there.
+    """
+
+    def __init__(self, cfg):
+        self.notify_url = getattr(cfg, "result_notify_url", None)
+        self.alarm_throttle_hours = getattr(cfg, "alarm_throttle_hours", 6)
+
+
 def notify(cfg, text: str, log=None, key: str | None = None,
            title: str = "Atticus", tags: str = "warning",
            priority: str = "high") -> bool:

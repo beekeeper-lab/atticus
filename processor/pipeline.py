@@ -32,7 +32,9 @@ import podcast as pod                                        # noqa: E402
 import transcribe as stt                                     # noqa: E402
 import usage                                                 # noqa: E402
 import wake                                                  # noqa: E402
-from notify import clear as _notify_clear, notify as _notify  # noqa: E402
+from notify import (                                          # noqa: E402
+    ResultTarget, clear as _notify_clear, notify as _notify,
+)
 from vault import (                                          # noqa: E402
     EXECUTED, EXECUTING, FAILED, OWNED_PROCESSOR, PUBLISHED, RAW, RETRY_WAIT,
     ROUTED, TRANSCRIBED, Git, VaultSyncError, load_records, utcnow, write_atomic,
@@ -140,17 +142,9 @@ def notify_result(cfg, rec, log):
         title, tags, priority = "Atticus filed a note", "memo", "low"
         body = f"{said or rec.stem}\n\nNot executed — {rec.data.get('gate_reason', 'gated')}"
 
-    if _notify(_ResultTarget(cfg), body, log=log.warn, title=title,
+    if _notify(ResultTarget(cfg), body, log=log.warn, title=title,
                tags=tags, priority=priority):
         log.info("  → notified" + (" with link" if executed and link else ""))
-
-
-class _ResultTarget:
-    """Lets notify() post to the result topic without mutating cfg."""
-
-    def __init__(self, cfg):
-        self.notify_url = cfg.result_notify_url
-        self.alarm_throttle_hours = getattr(cfg, "alarm_throttle_hours", 6)
 
 
 # ---------------------------------------------------------------------------

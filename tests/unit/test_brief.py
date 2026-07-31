@@ -277,6 +277,55 @@ def test_the_vault_is_committed_with_a_real_git_signature(cfg, monkeypatch):
     assert "ai-brief 2026-08-15" in pushes[0][1]
 
 
+# ── the notification ───────────────────────────────────────────────────────
+def test_the_briefing_is_pushed_with_a_link(cfg, monkeypatch):
+    sent = {}
+
+    def fake_notify(target, body, **kw):
+        sent["url"] = target.notify_url
+        sent["body"] = body
+        sent["title"] = kw.get("title")
+        return True
+    monkeypatch.setattr(brief, "notify", fake_notify)
+    # The shared cfg fixture nulls both notify urls so no test can post anywhere.
+    cfg.result_notify_url = "https://ntfy.example/results"
+    cfg.site_base_url = "http://forge/atticus"
+    brief._notify(cfg, TODAY, [{"kind": "new", "title": "A thing"}], "ai-brief-x")
+    assert sent["url"] == cfg.result_notify_url, "must use the RESULT topic"
+    assert "http://forge/atticus/docs/ai-brief-x/index.html" in sent["body"]
+    assert "2026-08-15" in sent["title"]
+
+
+def test_a_failed_push_is_reported_not_swallowed(cfg, monkeypatch):
+    """The first version discarded notify()'s return and logged nothing, so a
+    briefing whose push failed reported complete success and the operator simply
+    never heard about that morning. A 7am briefing nobody is told about is a file
+    on a disk."""
+    monkeypatch.setattr(brief, "notify", lambda *a, **k: False)
+    said = []
+    ok = brief._notify(cfg, TODAY, [], "slug", log=said.append)
+    assert ok is False, "the outcome must be returned, not swallowed"
+
+
+def test_the_run_reports_whether_it_notified(cfg, monkeypatch):
+    _fake_agent(cfg, monkeypatch=monkeypatch)
+    monkeypatch.setattr(brief, "_notify", lambda *a, **k: False)
+    said = []
+    res = brief.run(cfg, today=TODAY, log=said.append)
+    assert res["notified"] is False
+    assert any("NOT notified" in s for s in said), \
+        "a failed push must be visible in the log, not inferred from silence"
+
+
+def test_no_result_url_says_so_rather_than_returning_quietly(cfg, monkeypatch):
+    monkeypatch.setattr(brief, "notify",
+                        lambda *a, **k: pytest.fail("must not attempt a send"))
+    cfg.result_notify_url = ""
+    said = []
+    assert brief._notify(cfg, TODAY, [], "slug", log=said.append) is False
+    assert any("alerts nobody" in s for s in said)
+
+
 def test_dry_run_builds_the_prompt_and_runs_nothing(cfg, monkeypatch):
     monkeypatch.setattr(brief.ex, "run",
                         lambda *a, **k: pytest.fail("dry run must not spend"))
