@@ -301,6 +301,132 @@ fails after unbinding, those recordings are stranded until the pin is re-paired,
 and the recovery path is untested. Drain the device through the working cloud
 path first, then experiment on an empty pin.
 
+### T8 — SDK decompile plus a passive advertisement read  *(executed 2026-07-31)*
+
+**Non-destructive.** One passive BLE scan and static analysis of the vendor's
+Apache-2.0 SDK. Nothing written to the pin.
+
+**Result: ❌ direct BLE is blocked, and we now know exactly why.
+`portVersion = 20`, so every frame is ChaCha20-Poly1305 encrypted and the RSA
+pre-handshake is mandatory. Unbinding would not have helped.**
+
+This was run as the "learn something first" alternative to unbinding the pin. It
+paid off: it establishes that T7's silence had nothing to do with the iPhone
+binding, so the irreversible experiment would have cost the official app and
+taught us nothing.
+
+#### Method
+
+`jadx` 1.5.6 on `sdk/android/plaud-sdk.aar` from `Plaud-AI/plaud-sdk-public`
+(Apache-2.0, 1.77 MB). jadx decompiled all 345 classes cleanly, including the
+`enPkg()` bodies CFR previously failed on — so the earlier notes' gaps were a
+tool limitation, not obfuscation.
+
+#### 1. `portVersion` is in the advertisement, not the handshake
+
+`PkgUtils.convertManufacturerSpecificData2BleDevice()` builds a `BleDevice`
+carrying serial and `portVersion` from advertisement data alone, and
+`BleAgentImpl.connectionBLE()` feeds that same value into `HandShakeReq`. The SDK
+knows `portVersion` **before it ever writes to the pin.** So can we:
+
+```
+53:BC:59:82:FE:E9  -63dBm  Plaud NotePin S
+company id 0x005d (93), 24 bytes
+04 56 07 02 01 08 88 20 b5 02 72 38 37 61 44 14 00 04 6e f9 ea 37 01 01
+```
+
+Decoded against the SDK parser:
+
+| Field | Offset | Value |
+|---|---|---|
+| structure width | 0 | `04` |
+| letter | 1 | `V` |
+| version, 24-bit LE | 2–4 | `07 02 01` |
+| serial length | 5 | `08` |
+| serial | 6–13 | `8820b50272383761` **as a hex string** |
+| `bindInfoLen` | 14 | `0x44` |
+| **`portVersion`** | **15** | **`0x14` = 20** |
+
+Two independent cross-checks confirm the decode:
+
+- The serial is read as a **hex string**, not ASCII, and its prefix `882` is the
+  SDK's own discriminator for "Plaud NotePin S" (`880` NotePin, `881` NotePro,
+  `888` Plaud_NOTE). It matches the advertised name.
+- **The vendor's debug code validates our byte offsets.** `PkgUtils` logs
+  `"❌ NotePro portVersion STILL WRONG: 5188 (0x1444) - parsing logic failed!"`
+  and `"✅ NotePro portVersion CORRECT"` for 20. On this advertisement the
+  *wrong* u16le parse of bytes 14–15 yields **exactly 5188**, and the *correct*
+  single-byte parse of byte 15 yields **exactly 20**. Plaud shipped an assertion
+  that confirms our reading.
+
+#### 2. Therefore ChaCha20 applies, and the RSA pre-handshake is mandatory
+
+`BleAgentImpl` branches on this value:
+
+```java
+if (bleDevice.getPortVersion() >= 20) {   // "NotePro device detected … starting pre-handshake"
+} else {                                   // "Standard device … starting standard handshake"
+```
+
+At `portVersion >= 20`, `ble-file-transfer.md` §9 item 2 says every frame in both
+directions is ChaCha20-Poly1305 with a u32le replay counter, and that key
+exchange is undecoded. Both blockers are now live for **this** device.
+
+#### 3. Which fully explains T7
+
+Our req-1 frame was **correct**. `HandShakeReq.enPkg()` writes
+`[01][01 00][02][arg1]`, then `[arg2]` only when `portVersion >= 3`, then the
+token padded to 16 or 32 — byte-for-byte what `ble_sync.py` builds. `DEFAULT_MTU`
+is 184 and `PkgUtils.filterByteArray()` merely trims trailing zeros, so it is a
+no-op on our frame.
+
+The pin ignored us because we sent a **plaintext, out-of-sequence** handshake to
+a device that requires an RSA pre-handshake and ChaCha20-wrapped frames. Silence
+is the correct response to that. **The binding was never the blocker.**
+
+#### 4. Corrections to prior notes
+
+- **`ble-hardware-findings.md` is refuted on its central claim.** It states the
+  B2B partner key "gates only `portVersion >= 20` hardware (NotePro), not this
+  pin." This pin reports 20. The partner key gates *this pin*.
+- **`b001` is not `portVersion`.** T6 flagged `b001 = 01 02` (u16le 513) as a
+  candidate and warned against acting on it. That caution was right: the real
+  value is 20. `b001` is something else, consistent with its own descriptor,
+  "V1 read characteristic".
+- **The command table conflates two pre-handshakes.** `PRE_HANDSHAKE` is
+  **65040** (`0xFE10`); **65056** (`0xFE20`) is `PRE_HANDSHAKE_AND_CLEAR`.
+  Confirms are `PRE_HANDSHAKE_CNF` 65041 and `STICK_PREHANDSHAKE_CNF` 65042.
+- **`ble_sync.py`'s `PV_GUESS = 7` is wrong for this hardware** and its candidate
+  sweep cannot succeed, encryption aside.
+
+#### 5. Newly decoded, recorded for whoever picks this up
+
+Both pre-handshake requests share one layout and **skip `packHead()`**:
+
+```
+[uint16le requestType][uint8 arg2][uint8 arg1][payload…]
+```
+
+Payloads are chunked 100 bytes per frame (`BleAgentImpl` lines 1182, 1307).
+
+`HandShakeRsp` carries more than the notes recorded — `status` at byte 3,
+`portVersion` u16 at 4–5 (as documented), `timezone` 6, `timezoneMin` 7,
+`audioChannel` 8, `supportWifi` 9, `noNsAgc` 10, and **`isOggAudio` at byte 11**.
+That last one matters: the device can report that audio is *already* Ogg, which
+would make our own muxing unnecessary. Untestable until a handshake succeeds.
+
+The SDK's connect preamble, in order: enable battery notify → read battery level
+(`0x2A19`) → subscribe TX (`0x2BB0`) → handshake.
+
+#### What would unblock this
+
+Only the ChaCha20 key exchange plus an RSA partner key, in that order.
+`SecretUtil.encryptWithChaChaPoly1305Separate` and
+`BleGattCallback.process_item_data(byte[])` are where the key material is
+assigned from an untraced path; `PartnerApiManager.getPartnerRsaPrivateKey`
+wants a key issued under a B2B agreement. Neither is a small piece of work, and
+no amount of hardware access substitutes for either.
+
 ---
 
 ## Recording results
@@ -318,6 +444,7 @@ misled us once already.
 | 07-29 | **T3** | unlocked, **Plaud opened** | **foreground** | no | ✅ **synced** | seconds |
 | 07-30 | **T6** | bound, untouched | n/a | no | ✅ **GATT reachable from Linux while bound** | — |
 | 07-31 | **T7** | bound, untouched | n/a | no | ❌ **no handshake reply; download not possible** | — |
+| 07-31 | **T8** | bound, untouched | n/a | no | ❌ **portVersion=20: ChaCha20 + RSA pre-handshake required** | — |
 
 ### Verdict
 

@@ -632,23 +632,32 @@ Notes for whoever implements this:
 
 Listed plainly. Every one of these can silently corrupt audio if guessed wrong.
 
-1. **`portVersion` of the NotePin S.** This selects the voice-frame layout
-   (5-byte vs 1-byte prefix), the session-list entry stride (10/9/8), the
-   `SyncRecFileDelRsp` layout, and whether ChaCha20 applies (`>= 20`). Nothing
-   in the AAR states what any shipping device reports. **Read it from
-   `HandShakeRsp` bytes 4–5 (u16le) at runtime — do not hardcode.** A cheap
-   runtime cross-check: with `portVersion >= 7` the first data frame must have
-   `u32le[1] == sessionId` **and** `u32le[5] == startOffset`; if that fails but
-   `u32le[1] == startOffset`, you are on the short layout.
+1. ~~**`portVersion` of the NotePin S.**~~ **RESOLVED 2026-07-31: it is 20.**
+   Read passively from the advertisement's manufacturer-specific data, not from
+   `HandShakeRsp` — `PkgUtils.convertManufacturerSpecificData2BleDevice()`
+   parses it there, and `BleAgentImpl.connectionBLE()` feeds that value into
+   `HandShakeReq`, so the SDK knows it before writing anything. Byte 15 of the
+   manufacturer blob, single byte, **not** a u16: the u16 reading yields 5188 and
+   the SDK ships an explicit `i4 == 5188` error branch calling that a parse
+   failure, alongside an `i4 == 20` success branch. See `docs/transport-tests.md`
+   T8 for the full decode and both cross-checks.
 
-2. **ChaCha20-Poly1305 key exchange.** If the pin reports `portVersion >= 20`,
-   every frame in both directions is encrypted and prefixed (post-decrypt) with
-   a u32le replay counter. I did not decode the key-exchange handshake
+   Consequences: entry stride 10 and a 5-byte voice prefix (both `>= 7`), and
+   **ChaCha20 applies** — see item 2, which is now live rather than conditional.
+
+2. **ChaCha20-Poly1305 key exchange — now the primary blocker.** Item 1 resolved
+   `portVersion = 20`, so this is no longer an "if": every frame in both
+   directions is encrypted and prefixed (post-decrypt) with a u32le replay
+   counter, on *this* hardware. The key exchange is still undecoded
    (`BleGattCallback.process_item_data(byte[])`, `SecretUtil
-   .encryptWithChaChaPoly1305Separate`) — it is a separate piece of work and
-   ties into the RSA question already open in the companion note. Tried:
-   read `BluetoothLeOperation` in full; the key/nonce/AD statics are assigned
-   from a path I did not trace.
+   .encryptWithChaChaPoly1305Separate`); the key/nonce/AD statics are assigned
+   from a path nobody has traced. It also stacks on the RSA pre-handshake, which
+   `>= 20` makes mandatory and which needs a B2B partner key.
+
+   Empirically confirmed: a plaintext req-1 handshake draws **no reply on any
+   characteristic**, across eight `portVersion` candidates (T7). The frame itself
+   was correct — `HandShakeReq.enPkg()` matches it byte-for-byte — so the silence
+   is the encryption and sequencing, not the layout.
 
 3. ~~**`GetRecSessionsReq` field 2 (`sessionId`, offset 7).**~~ **RESOLVED
    2026-07-29.** It is a start cursor and **`0` means "all"**. Confirmed from
