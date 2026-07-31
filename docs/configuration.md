@@ -40,6 +40,7 @@ copies.
 | `ATTICUS_NOTIFICATION_DETAIL` | `full` | How much of what you said appears in a push notification. title   - just "Atticus finished" and the link. Nothing spoken. summary - the first 60 characters. full    - up to 180 characters (default)… |
 | `ATTICUS_NOTIFY_NOTES` | `false` | Push for GATED notes too. Off by default: a wearable overhears a lot and notes are the common case. Turn on to catch the failure that matters — a misheard wake word silently filing a real command a… |
 | `ATTICUS_NOTIFY_URL` | *(empty)* | Failure notifications (SPEC T-70). ntfy topic URL, or any endpoint accepting a POST body. Blank disables them. SET THIS. It is the only thing standing between you and a silently dead pipeline. The … |
+| `ATTICUS_PODCAST_MAX_USD` | `0.50` | Per-episode ceiling on REAL money, tested against an estimate BEFORE the first request. TTS bills to the same key and the same monthly budget as transcription, so ATTICUS_API_BUDGET_USD also applie… |
 | `ATTICUS_PUSH_RETRIES` | `3` | Both hosts push to the same repo. Bounded retry on rebase conflict before quarantining and notifying. See SPEC §4.3. |
 | `ATTICUS_RESULT_NOTIFY_URL` | *(empty)* | ── results ────────────────────────────────────────────────────────── Where finished-recording pushes go. Blank = reuse ATTICUS_NOTIFY_URL. Split them onto a separate topic if pipeline alarms start… |
 | `ATTICUS_SANDBOX` | `on` | Contain the agent in a bwrap mount namespace: no $HOME, no ~/.ssh, no ~/.config/ai/env, no vault. "off" is a real trade, not a formality — without it the agent can read every credential this host h… |
@@ -50,6 +51,12 @@ copies.
 | `ATTICUS_STT_PROMPT` | `Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules. The speaker is dictating a short instruction or request, and often begins by saying the name "Atticus".` | Steering prompt. Measurably improves punctuation and capitalization — carried over from hyprwhspr's config and extended for instruction-shaped audio. Change with care. |
 | `ATTICUS_STT_TIMEOUT` | `60` |  |
 | `ATTICUS_STT_URL` | `https://api.openai.com/v1/audio/transcriptions` | ── transcription ──────────────────────────────────────────────────── Same endpoint and model as the machine's existing dictation (hyprwhspr), deliberately: one transcription stack, not two. The AP… |
+| `ATTICUS_TTS_INSTRUCTIONS` | *(empty)* |  |
+| `ATTICUS_TTS_MODEL` | `gpt-4o-mini-tts` |  |
+| `ATTICUS_TTS_TIMEOUT` | `120` |  |
+| `ATTICUS_TTS_URL` | `https://api.openai.com/v1/audio/speech` | ── audio overview ("podcast") ──────────────────────────────────────── Opt-in and costs nothing unless used. The agent writes output/podcast-script.md only when the spoken request asked to listen t… |
+| `ATTICUS_TTS_VOICE_A` | `onyx` | Two clearly distinct voices, or the format fails: with similar hosts the listener cannot tell who is asking from who is answering. OpenAI voices: alloy, ash, ballad, coral, echo, fable, onyx, nova,… |
+| `ATTICUS_TTS_VOICE_B` | `nova` |  |
 | `ATTICUS_VAULT_PATH` | `<repo>/.scratch-vault` | Absolute path to the atticus-vault checkout on THIS host. Each host has its own clone; the paths need not match. |
 | `ATTICUS_WAKE_ADJUDICATOR` | `on` | Probabilistic wake-word recovery. When the strict gate fails, ask a small model whether the first word could be a MISHEARING of the wake phrase. Phonetics only, one word in, one token out, and it f… |
 | `ATTICUS_WAKE_ADJUDICATOR_MODEL` | `gpt-4o-mini` |  |
@@ -61,4 +68,4 @@ copies.
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*50 settings.*
+*57 settings.*

@@ -1,0 +1,284 @@
+"""Voice a two-host script into an audio overview, and link it from the report.
+
+The agent writes `output/podcast-script.md` (see `skills/podcast-companion/`);
+this module turns it into an MP3 sitting beside the HTML and injects a player
+near the top of that HTML.
+
+**Why this is pipeline code and not a skill.** Synthesis needs an OpenAI key, and
+the agent is deliberately denied every credential this host holds — it executes
+text derived from ambient audio, so a TTS key inside the sandbox would be a
+credential reachable from anything spoken near the pin. Splitting the work at the
+script boundary keeps the model's judgement (what to say) with the agent and the
+spend (saying it) with the pipeline. It also makes the script a reviewable,
+committed artifact rather than an invisible intermediate.
+
+**Nothing here may fail a record.** The HTML report is the deliverable; audio is
+a companion. A TTS outage, an exhausted budget or a malformed script must leave a
+good report published, so `generate()` returns a result dict and raises only on
+programmer error. The caller logs and moves on.
+
+NotebookLM was the original ask. Google's Discovery Engine Podcast API — the only
+programmatic route to a real NotebookLM audio overview — was deprecated in 2026
+with no new allowlisting, so there is no API to call. This reproduces the format
+(two hosts, conversational, summarising one source) with a TTS model instead.
+"""
+import json
+import re
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
+import requests
+
+import audio as au
+
+SCRIPT_NAME = "podcast-script.md"
+AUDIO_NAME = "podcast.mp3"
+
+# One turn: `**A:** text`. Anchored to line start so a bolded phrase mid-sentence
+# cannot be mistaken for a speaker label.
+_TURN = re.compile(r"^\*\*([AB])\:\*\*\s*(.+?)\s*$", re.MULTILINE)
+_TITLE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
+
+# Where the player goes. Prefer just after the opening <body ...>; fall back to
+# the top of the document. Deliberately NOT "after the first </h1>": an agent
+# report often wraps its title in a header block, and landing inside that block
+# breaks the layout in ways that are invisible until someone opens the page.
+_BODY_OPEN = re.compile(r"(?i)<body[^>]*>")
+
+# gpt-4o-mini-tts bills per token, but the useful unit for an estimate made
+# BEFORE the call is characters of script. OpenAI documents roughly $0.015 per
+# minute of generated audio; conversational speech runs about 14 characters per
+# second.
+#
+# Treat this as an order-of-magnitude guard, NOT a tight bound. Measured
+# 2026-07-31: the same 124-character script came back as 8.5s on one run and
+# 12.1s on the next, so the model's own pacing varies by a third between
+# identical requests. That is why ATTICUS_PODCAST_MAX_USD defaults to roughly
+# three times a normal episode, and why the ledger records the measured cost
+# rather than this one.
+_USD_PER_AUDIO_MINUTE = 0.015
+_CHARS_PER_SECOND = 14.0
+
+# A hard structural bound, separate from the money bound. A script this long is
+# not a summary and almost certainly means the agent misunderstood the task.
+MAX_CHARS = 40_000
+
+
+class PodcastError(Exception):
+    """Audio could not be produced. Never fatal to the record."""
+
+
+def find_script(outdir: Path) -> Path | None:
+    p = outdir / SCRIPT_NAME
+    return p if p.is_file() else None
+
+
+def parse_script(text: str) -> tuple[str, list[tuple[str, str]]]:
+    """(title, [(speaker, line), …]).
+
+    Tolerant on purpose: anything that is not a heading or a turn is dropped
+    rather than raising, because the agent writing a stray note above the script
+    should not cost the whole episode.
+    """
+    m = _TITLE.search(text)
+    title = m.group(1).strip() if m else ""
+    turns = [(sp, body.strip()) for sp, body in _TURN.findall(text) if body.strip()]
+    return title, turns
+
+
+def estimate(turns: list[tuple[str, str]]) -> dict:
+    chars = sum(len(t) for _, t in turns)
+    seconds = chars / _CHARS_PER_SECOND
+    return {"turns": len(turns), "chars": chars,
+            "seconds": round(seconds, 1),
+            "usd": round((seconds / 60.0) * _USD_PER_AUDIO_MINUTE, 6)}
+
+
+def _speak(text: str, voice: str, cfg, dest: Path) -> None:
+    """One turn → one MP3. Raises PodcastError on anything non-transient."""
+    body = {
+        "model": cfg.tts_model,
+        "voice": voice,
+        "input": text,
+        "response_format": "mp3",
+    }
+    if getattr(cfg, "tts_instructions", ""):
+        body["instructions"] = cfg.tts_instructions
+    try:
+        resp = requests.post(
+            cfg.tts_url,
+            headers={"Authorization": f"Bearer {cfg.openai_key}"},
+            json=body, timeout=cfg.tts_timeout,
+        )
+    except requests.Timeout:
+        raise PodcastError(f"TTS timeout after {cfg.tts_timeout}s")
+    except requests.RequestException as e:
+        raise PodcastError(f"TTS network error: {type(e).__name__}")
+
+    if resp.status_code != 200:
+        # Same reasoning as transcribe.py: this string can reach the vault, and
+        # git is forever, so the body is truncated and never echoed wholesale.
+        if resp.status_code in (401, 403):
+            raise PodcastError(f"TTS auth rejected ({resp.status_code}) — check "
+                               f"OPENAI_API_KEY in ~/.config/ai/env")
+        raise PodcastError(f"TTS returned {resp.status_code}: {resp.text[:120]}")
+    if not resp.content:
+        raise PodcastError("TTS returned an empty body")
+    dest.write_bytes(resp.content)
+
+
+def _concat(parts: list[Path], dest: Path) -> None:
+    """Join per-turn MP3s. Stream copy — same model and format throughout, so
+    re-encoding would only lose quality and time."""
+    exe = shutil.which("ffmpeg")
+    if not exe:
+        raise PodcastError("ffmpeg is not installed, so turns cannot be joined")
+    with tempfile.TemporaryDirectory() as td:
+        listing = Path(td) / "parts.txt"
+        # ffmpeg's concat demuxer parses this file; single-quote the paths and
+        # escape any quote in them.
+        listing.write_text("".join(
+            "file '{}'\n".format(str(p).replace("'", r"'\''")) for p in parts))
+        p = subprocess.run(
+            [exe, "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "concat", "-safe", "0", "-i", str(listing),
+             "-c", "copy", str(dest)],
+            capture_output=True, text=True, timeout=120,
+        )
+    if p.returncode != 0 or not dest.is_file() or dest.stat().st_size == 0:
+        raise PodcastError(f"ffmpeg could not join the audio: "
+                           f"{(p.stderr or '').strip()[:200]}")
+
+
+def player_html(audio_name: str, title: str, seconds: float) -> str:
+    """The block injected into the report.
+
+    Self-contained and style-scoped. Agent-authored pages are served with
+    'unsafe-inline' for styles (they inline their own CSS), so a <style> block
+    here is consistent with that page's policy rather than an exception to it.
+
+    The <audio> element needs `media-src 'self'` in the vault's page CSP. Without
+    it the player renders and silently refuses to play — see site/build.py.
+    """
+    mins = int(seconds // 60)
+    secs = int(seconds % 60)
+    length = f"{mins}:{secs:02d}" if mins else f"0:{secs:02d}"
+    return (
+        '<style>.atticus-audio{margin:0 0 1.5rem;padding:.9rem 1rem;border-radius:8px;'
+        'border:1px solid rgba(127,127,127,.35);background:rgba(127,127,127,.08);'
+        'font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}'
+        '.atticus-audio .lab{display:block;margin-bottom:.5rem;opacity:.75;'
+        'text-transform:uppercase;letter-spacing:.05em;font-size:11px;font-weight:600}'
+        '.atticus-audio audio{width:100%;max-width:34rem;display:block}'
+        '.atticus-audio .dl{display:inline-block;margin-top:.45rem;font-size:12px;'
+        'opacity:.7}</style>\n'
+        '<div class="atticus-audio">'
+        f'<span class="lab">Listen &middot; {length}</span>'
+        f'<audio controls preload="none" src="{audio_name}"></audio>'
+        f'<a class="dl" href="{audio_name}" download>Download the audio</a>'
+        '</div>\n'
+    )
+
+
+def inject_player(html_path: Path, block: str) -> bool:
+    """Put the player near the top of the report. Idempotent."""
+    html = html_path.read_text(errors="replace")
+    if 'class="atticus-audio"' in html:
+        return False                      # already carries a player
+    m = _BODY_OPEN.search(html)
+    html = (html[:m.end()] + "\n" + block + html[m.end():]) if m else block + html
+    html_path.write_text(html)
+    return True
+
+
+def primary_html(outdir: Path) -> Path | None:
+    """The report the player belongs in — the same choice the site build makes:
+    index.html if present, otherwise the largest HTML file."""
+    htmls = sorted(outdir.glob("*.html"))
+    if not htmls:
+        return None
+    for h in htmls:
+        if h.name == "index.html":
+            return h
+    return max(htmls, key=lambda p: p.stat().st_size)
+
+
+def generate(outdir: Path, cfg, *, log=print) -> dict:
+    """Voice the script in `outdir`, if there is one. Never raises PodcastError.
+
+    Returns {"made": bool, "reason": str, ...}. `reason` is always populated so
+    a skipped episode is explainable from the record alone — "no audio" and "we
+    chose not to make audio" must not look the same.
+    """
+    script = find_script(outdir)
+    if not script:
+        return {"made": False, "reason": "no script — audio was not requested"}
+
+    raw = script.read_text(errors="replace")
+    if len(raw) > MAX_CHARS:
+        return {"made": False,
+                "reason": f"script is {len(raw):,} chars (limit {MAX_CHARS:,}) — "
+                          f"that is a re-narration, not a summary"}
+
+    title, turns = parse_script(raw)
+    if len(turns) < 2:
+        return {"made": False,
+                "reason": f"script has {len(turns)} parsable turn(s); expected "
+                          f"lines like '**A:** …' (see skills/podcast-companion)"}
+
+    est = estimate(turns)
+    cap = getattr(cfg, "podcast_max_usd", 0.0)
+    if cap and est["usd"] > cap:
+        return {"made": False, **est,
+                "reason": f"estimated ${est['usd']:.4f} exceeds "
+                          f"ATTICUS_PODCAST_MAX_USD ${cap:.2f}"}
+
+    report = primary_html(outdir)
+    if report is None:
+        return {"made": False, **est,
+                "reason": "no HTML report to attach the player to"}
+
+    voices = {"A": cfg.tts_voice_a, "B": cfg.tts_voice_b}
+    log(f"    podcast: {est['turns']} turns, ~{est['seconds']:.0f}s, "
+        f"~${est['usd']:.4f} estimated")
+
+    with tempfile.TemporaryDirectory() as td:
+        parts = []
+        for i, (speaker, text) in enumerate(turns):
+            part = Path(td) / f"{i:04d}.mp3"
+            try:
+                _speak(text, voices.get(speaker, cfg.tts_voice_a), cfg, part)
+            except PodcastError as e:
+                # Partial audio is worse than none: it stops mid-argument and
+                # sounds like a bug rather than a summary.
+                return {"made": False, **est,
+                        "reason": f"turn {i + 1}/{len(turns)} failed: {e}"}
+            parts.append(part)
+        dest = outdir / AUDIO_NAME
+        try:
+            _concat(parts, dest)
+        except PodcastError as e:
+            dest.unlink(missing_ok=True)
+            return {"made": False, **est, "reason": str(e)}
+
+    # The player's running time must be the file's, not the pre-flight guess. The
+    # estimate is good (measured within 5% on a real run) but it is still an
+    # estimate, and a listener who sees 6:12 and gets 5:40 has been told a small
+    # lie by a page whose whole value is being trustworthy. ffprobe is already a
+    # hard dependency of the transcribe path, so this costs nothing new.
+    actual = au.probe_seconds(dest) or est["seconds"]
+    injected = inject_player(report, player_html(AUDIO_NAME, title, actual))
+    meta = {"made": True, "reason": "ok", **est,
+            "audio": AUDIO_NAME, "bytes": dest.stat().st_size,
+            "report": report.name, "injected": injected, "title": title,
+            # The ceiling is checked against the estimate because it has to be
+            # decided before spending; the LEDGER gets the measured figure,
+            # because that is what was actually billed. Keeping both means a
+            # drifting estimate is visible rather than self-confirming.
+            "estimated_usd": est["usd"],
+            "seconds": round(actual, 1),
+            "usd": round((actual / 60.0) * _USD_PER_AUDIO_MINUTE, 6)}
+    (outdir / "podcast.json").write_text(json.dumps(meta, indent=2) + "\n")
+    return meta
