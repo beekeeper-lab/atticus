@@ -109,6 +109,119 @@ ingest/ble_scan.py --connect ADDR  # does it accept an unbound client?
 Note the pin binds to one client at a time, so a real attempt means unbinding
 from the Plaud app.
 
+### T6 — Direct BLE GATT enumeration from WarDog  *(executed 2026-07-30)*
+
+**Non-destructive.** Scan plus GATT enumeration plus characteristic reads. No
+writes, no handshake, no pairing attempt. The pin stayed bound to the iPhone
+throughout.
+
+| Variable | Setting |
+|---|---|
+| Host | WarDog, Arch Linux, BlueZ `bluetoothd` active, controller `D8:B3:2F:BD:CD:62` |
+| Library | `bleak` 3.0.2 (system, not a venv) |
+| Pin | **bound to the operator's iPhone**, not charging, button **not** pressed |
+| Tools | `ingest/ble_scan.py`, `ingest/ble_read.py` |
+
+**Result: ✅ the full Plaud command channel is present and connectable from
+Linux while the pin is still bound to the phone.**
+
+Four things here were not expected.
+
+**1. The pin advertises while bound, with no button press.** The briefing
+predicted silence, and the earlier Forge scans that found ~25 devices and no
+`0x1910` were read as evidence of that. A plain 20-second scan found it
+immediately:
+
+```
+★ 55:13:FB:C4:E1:42   -66dBm  Plaud NotePin S
+```
+
+Note *how* it matched: on the **name**, not on `0x1910`. The pin advertises **no
+service UUIDs at all**. Any scan filtering on `0x1910` in advertisement data
+will miss it — which is a plausible explanation for the negative Forge scans,
+independent of whether the pin was in range.
+
+**2. The address is a rotating RPA.** It changed between two runs minutes apart
+(`55:13:FB:C4:E1:42` → `47:21:DD:E0:E6:CF`). Never persist it; always rediscover
+by name. `ble_read.py` already does this.
+
+**3. GATT accepts an unbound client.** Connection succeeded with no pairing
+prompt, no bonding, and no rejection — twice. Full enumeration:
+
+```
+service 1910  ★ Plaud command/data service
+   char 2bb1  [write-without-response,write]  ★ RX — us→device, WRITE here
+   char 2bb0  [notify]                        ★ TX — device→us, SUBSCRIBE here
+      desc 2902
+   char b004  [indicate]                      ← NOT in ble-protocol-notes.md
+      desc 2902
+   char b001  [read]                          ← NOT in ble-protocol-notes.md
+      desc 2901  'V1 read characteristic'
+service 180f  battery      2a19 [read,notify] = 0x5a (90%)
+service 1800  GAP          2a00 = "Plaud NotePin S", 2a01 = 0, 2a04 = zeros
+service 1801  GATT         2a05 [indicate]
+service 1804  TX power     2a07 = 0
+service fd44                        4f860001..05 [write,indicate]
+service 87290102-3c51-43b1-a1a9-11b9dc38478b   6aa50001..0a [read]
+```
+
+`0x2BB0` / `0x2BB1` are confirmed present with exactly the properties
+`ble-protocol-notes.md` predicted, including the direction inversion — `2bb1` is
+writable, `2bb0` is notify-only. **`b001` and `b004` are new** and appear in no
+prior note.
+
+`fd44` + `87290102-…` are Apple's Find My Network and Accessory Information
+services; the pin is a Find My accessory. Unrelated to audio, but it explains
+two of the services and the 8-byte identifier at `6aa50001` (redacted — this is
+a public repo and it is a stable hardware ID; it is in the session transcript
+if needed).
+
+Readable vendor characteristics:
+
+```
+6aa50002 = "PLAUD"            6aa50006 = 0b 00 00 00   (u32 11)
+6aa50003 = "Plaud NotePin S"  6aa50007 = 0b 03 01 00   (looks like a version triple)
+6aa50005 = 01 00 …            6aa50008 = 00 00 01 00
+6aa50009 = 02                 6aa5000a = 00
+6aa50001 = <8-byte device ID, redacted>
+```
+
+**4. The true ATT MTU is 247, not 184.** `bleak`'s `mtu_size` reports a
+placeholder 23 until the BlueZ backend is poked; the negotiated value is 247,
+so the ATT payload is 244 bytes. `ble-file-transfer.md` §9 item 8 derives a
+171-byte device chunk from an assumed MTU of 184. That assumption is wrong on
+this hardware. It does not change correctness — `payloadLen` remains
+authoritative — but every throughput estimate built on 171 is low.
+
+#### What this does NOT establish
+
+Reaching GATT is necessary, not sufficient. Still open, and **not** answered by
+this test:
+
+- **Whether the pin accepts a handshake from an unbound client.** Nothing was
+  written to `2bb1`. `ble-file-transfer.md` §9 item 9 stays open.
+- **`portVersion`.** `b001` reads `01 02` (u16le **513**) and its descriptor
+  says `V1 read characteristic`. `ble_read.py` labels it a *candidate*
+  `portVersion` and that is as far as the evidence goes. **Do not act on it.**
+  The authoritative source is `HandShakeRsp` bytes 4–5, which requires a
+  handshake. The two readings diverge sharply: if `b001` really is
+  `portVersion`, 513 ≥ 20 means **every frame is ChaCha20-Poly1305 encrypted**
+  and the key exchange is undecoded — a hard blocker. If instead it encodes
+  "V1.2" per its own descriptor, ChaCha20 does not apply. Guessing here
+  silently corrupts audio, which is exactly what §9 warns about.
+- **The bind signature.** The handshake requires a signature over the device
+  serial that Plaud's server issues and the firmware validates. Verified against
+  the vendor SDK 2026-07-30; it is not forgeable. This is unaffected by anything
+  above.
+
+#### Correction to a prior conclusion
+
+The Forge scans finding "nothing advertising `0x1910`" were interpreted as the
+pin staying silent while bound. Finding 1 shows `0x1910` is never advertised by
+this device **even when it is plainly present and connectable**, so those scans
+could not have detected it on that criterion regardless. Treat that earlier
+negative as uninformative rather than as evidence of silence.
+
 ---
 
 ## Recording results
@@ -124,6 +237,7 @@ misled us once already.
 | 07-29 | **T1** | in room, locked | background | **yes** | ❌ **no sync** | — |
 | 07-29 | **T2** | unlocked, using Facebook | background | no | ❌ **no sync** | — |
 | 07-29 | **T3** | unlocked, **Plaud opened** | **foreground** | no | ✅ **synced** | seconds |
+| 07-30 | **T6** | bound, untouched | n/a | no | ✅ **GATT reachable from Linux while bound** | — |
 
 ### Verdict
 
