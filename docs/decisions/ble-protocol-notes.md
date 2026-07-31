@@ -104,7 +104,35 @@ All observed requests are `protocolType = 1`.
 Higher-level entry points in `BluetoothManager`: `syncHistoricalData()`,
 `startFileSyncFromOffset()`, `startRealTimeFileSync()`.
 
-## The open question — RSA handshake
+## RESOLVED 2026-07-31 — the RSA handshake blocks this device
+
+**The open question below is answered, and unfavourably.** The NotePin S reports
+**`portVersion = 20`**, read passively from its advertisement (`docs/transport-tests.md`
+T8). At `>= 20` the SDK requires the **RSA pre-handshake** and wraps **every
+frame in ChaCha20-Poly1305**:
+
+```java
+if (bleDevice.getPortVersion() >= 20) {   // → pre-handshake
+} else {                                   // → standard req-1 handshake
+```
+
+So option 1 is blocked for this pin, not merely uncertain. The key is issued
+under a B2B agreement (`PartnerApiManager.getPartnerRsaPrivateKey`) and the
+ChaCha20 key exchange is undecoded on top of that.
+
+Two consequences for anything below: `portVersion` is **not** a mystery to be
+read from `HandShakeRsp` at runtime — it is in the advertisement, available
+before any write. And the request numbers here conflate two pre-handshakes:
+**`PRE_HANDSHAKE` is 65040 (`0xFE10`)**; 65056 (`0xFE20`) is
+`PRE_HANDSHAKE_AND_CLEAR`. Confirms are 65041 and 65042.
+
+Both pre-handshake requests share one layout and skip `packHead()`:
+
+```
+[uint16le requestType][uint8 arg2][uint8 arg1][payload…]   payload chunked 100B
+```
+
+## The open question — RSA handshake  *(superseded; kept for reasoning)*
 
 `PreRSAHandShakeDataSyncReq` carries an opaque `byte[]`, and
 `PartnerApiManager` exposes `getPartnerRsaPrivateKey` /
