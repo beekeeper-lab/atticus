@@ -138,6 +138,12 @@ class Config:
             "\"Atticus\".",
         )
 
+        # Daily AI briefing. Extra tags to file it under, beyond "AI brief"
+        # which brief.py always applies. Comma-separated; empty is fine.
+        self.brief_tags = [t.strip() for t in
+                           (g("ATTICUS_BRIEF_TAGS", "") or "").split(",")
+                           if t.strip()]
+
         # Audio overview ("podcast"). Opt-in: the agent only writes
         # output/podcast-script.md when the spoken request asked to listen to the
         # report, so with no script this stage does nothing and costs nothing.
