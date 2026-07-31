@@ -15,6 +15,7 @@ copies.
 | `ATTICUS_API_BUDGET_USD` | `4.00` | Hard monthly ceiling on REAL money — OpenAI transcription plus the wake adjudicator. When the calendar month's spend reaches it, the pipeline STOPS transcribing rather than continuing to charge. Au… |
 | `ATTICUS_AUDIO_RETENTION_DAYS` | `30` | Expire raw audio after this many days. 0 = keep forever. Transcripts and agent output are NEVER expired — only the audio. The vault contains recordings of other people who did not consent to perman… |
 | `ATTICUS_BACKLOG_ALARM_MINUTES` | `60` | Warn if a recording sits in inbox/ unprocessed longer than this. The queue's benefit — the processor may be offline, work waits — is also its failure mode: a dead processor looks exactly like an id… |
+| `ATTICUS_BRIEF_AUDIO` | `true` | Voice the briefing too? Its own switch rather than riding on the podcast setting, because this is RECURRING daily spend: ~$0.09 per episode on Gemini, so ~$2.80/month at daily cadence against a $4.… |
 | `ATTICUS_BRIEF_TAGS` | *(empty)* | ── daily AI briefing ───────────────────────────────────────────────── Written at 07:00 local by ops/atticus-brief.timer into the vault's reports/ directory — NOT processed/, because it is not a re… |
 | `ATTICUS_BUDGET_ALERT_USD` | `2.00,3.00,4.00` | Warn on the way up, not only on arrival. Each threshold pushes one ntfy alert the first time the month's api spend passes it, then stays quiet — the "already announced" record lives in the usage le… |
 | `ATTICUS_CHUNK_LONG_AUDIO` | `off` | Chunk long recordings instead of truncating them. OFF by default, because truncation is correct for a COMMAND: the wake phrase comes first, so everything past the opening seconds is silence or ambi… |
@@ -25,6 +26,12 @@ copies.
 | `ATTICUS_EXEC_TIMEOUT` | `1800` |  |
 | `ATTICUS_FETCHER` | `ingest/plaud_web.py` | THE TRANSPORT IS A PLUGGABLE EXECUTABLE. ingest/poller.py shells out to this and requires only that it implement: <fetcher> whoami --json <fetcher> list --days N --json   → {"recordings":[{id,creat… |
 | `ATTICUS_FETCHER_TIMEOUT` | `300` |  |
+| `ATTICUS_GEMINI_TTS_MODEL` | `gemini-2.5-flash-preview-tts` |  |
+| `ATTICUS_GEMINI_TTS_STYLE` | *(empty)* | Natural-language direction for the whole conversation, prepended to the script. {a} and {b} are substituted with the two speaker names. This is the only steering Gemini takes, and it applies to the… |
+| `ATTICUS_GEMINI_TTS_TIMEOUT` | `900` | One call renders the whole episode: a 56-turn script took 162s to return. |
+| `ATTICUS_GEMINI_TTS_URL` | *(empty)* |  |
+| `ATTICUS_GEMINI_VOICE_A` | `Charon` | Voices: Charon (deeper) and Aoede (brighter). They must be clearly distinct or the format fails — the listener cannot tell who is asking from who is answering. |
+| `ATTICUS_GEMINI_VOICE_B` | `Aoede` |  |
 | `ATTICUS_GIT_AUTHOR_EMAIL` | `atticus@localhost` |  |
 | `ATTICUS_GIT_AUTHOR_NAME` | `Atticus Processor` | Git identity for automated commits. Distinguish the hosts so the vault history shows which side of the pipeline made each commit. ingest    → "Atticus Ingest" processor → "Atticus Processor" When b… |
 | `ATTICUS_GLOBAL_SKILLS` | `html-artifact-output,dataviz` | Which of the operator's GLOBAL (~/.claude/skills) skills the agent may see. Binding the whole directory handed it an inventory of unrelated infrastructure — M365 addresses, ntfy topics, provider co… |
@@ -52,10 +59,12 @@ copies.
 | `ATTICUS_STT_PROMPT` | `Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules. The speaker is dictating a short instruction or request, and often begins by saying the name "Atticus".` | Steering prompt. Measurably improves punctuation and capitalization — carried over from hyprwhspr's config and extended for instruction-shaped audio. Change with care. |
 | `ATTICUS_STT_TIMEOUT` | `60` |  |
 | `ATTICUS_STT_URL` | `https://api.openai.com/v1/audio/transcriptions` | ── transcription ──────────────────────────────────────────────────── Same endpoint and model as the machine's existing dictation (hyprwhspr), deliberately: one transcription stack, not two. The AP… |
+| `ATTICUS_TTS_BITRATE_KBPS` | `48` | 24 kHz mono speech is capped at 12 kHz by the sample rate, so 128 kbps buys nothing audible and every episode is a permanent git blob. 48 kbps is transparent for two people talking and cuts each fi… |
 | `ATTICUS_TTS_INSTRUCTIONS` | *(empty)* |  |
 | `ATTICUS_TTS_MODEL` | `gpt-4o-mini-tts` |  |
+| `ATTICUS_TTS_PROVIDER` | `gemini` | ── audio overview ("podcast") ──────────────────────────────────────── Opt-in and costs nothing unless used. The agent writes output/podcast-script.md only when the spoken request asked to listen t… |
 | `ATTICUS_TTS_TIMEOUT` | `120` |  |
-| `ATTICUS_TTS_URL` | `https://api.openai.com/v1/audio/speech` | ── audio overview ("podcast") ──────────────────────────────────────── Opt-in and costs nothing unless used. The agent writes output/podcast-script.md only when the spoken request asked to listen t… |
+| `ATTICUS_TTS_URL` | `https://api.openai.com/v1/audio/speech` | OpenAI path, retained as a fallback (ATTICUS_TTS_PROVIDER=openai). |
 | `ATTICUS_TTS_VOICE_A` | `onyx` | Two clearly distinct voices, or the format fails: with similar hosts the listener cannot tell who is asking from who is answering. OpenAI voices: alloy, ash, ballad, coral, echo, fable, onyx, nova,… |
 | `ATTICUS_TTS_VOICE_B` | `nova` |  |
 | `ATTICUS_VAULT_PATH` | `<repo>/.scratch-vault` | Absolute path to the atticus-vault checkout on THIS host. Each host has its own clone; the paths need not match. |
@@ -69,4 +78,4 @@ copies.
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*58 settings.*
+*67 settings.*

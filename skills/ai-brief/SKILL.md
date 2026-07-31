@@ -131,7 +131,26 @@ briefing repeats today's.
   Nothing you merely read.
 - On a quiet day with nothing to report, write `[]`. Do not omit the file.
 
+### `podcast-script.md` — only when the task asks for it
+
+When today's task says audio is wanted, also write a two-host script following the
+**`podcast-companion`** skill's format exactly. The pipeline voices it; you hold no
+TTS credential and must not try.
+
+A briefing is a different shape from a research report, so:
+
+- **Lead with the one-line summary, then take the items in order.** Do not restructure
+  for narrative effect — someone listening while driving is tracking a list.
+- **B's job is "why does that matter to us".** On a briefing the useful second voice
+  asks the consequence question, not the sceptical one: does this change what we
+  build, does it change what it costs, do we have to do anything.
+- **Say the inflated-number warnings out loud.** If the written brief flagged a
+  vendor figure as unsupported, the audio must too. A listener cannot see a caveat.
+- **Four to seven minutes.** A briefing that takes longer than reading it has failed.
+- On a quiet day write no script at all. Nobody wants five minutes of "not much
+  happened."
+
 ## Then stop
 
-Do not write anything else into the output directory — no scratch notes, no
-Markdown drafts. Nothing but `index.html` and `covered.json` should be published.
+Nothing else goes in the output directory — no scratch notes, no Markdown drafts.
+`index.html`, `covered.json`, and `podcast-script.md` only when asked.

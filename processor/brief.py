@@ -31,6 +31,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import execute as ex          # noqa: E402
+import podcast as pod        # noqa: E402
 import usage                  # noqa: E402
 from config import Config     # noqa: E402
 from notify import ResultTarget, notify   # noqa: E402
@@ -67,7 +68,7 @@ should say which.
 - Do not run git. The pipeline commits your output.
 - You have web access. Use it — a briefing written from memory is worthless, and
   your training data ends well before today.
-
+{audio}
 ## Already covered — this is not news
 
 {covered}
@@ -75,6 +76,11 @@ should say which.
 
 NOTHING_COVERED = ("Nothing yet; this is the first briefing. Everything you find "
                    "is new.")
+
+AUDIO_ASK = """- An audio version is wanted. Also write `podcast-script.md`, following the
+  `ai-brief` skill's audio section and the `podcast-companion` format. Skip it
+  entirely on a quiet day — nobody wants five minutes of "not much happened".
+"""
 
 
 def ledger_path(vault: Path) -> Path:
@@ -131,11 +137,12 @@ def format_covered(items: list[dict]) -> str:
             + "\n".join(lines))
 
 
-def build_task(covered: list[dict], today: date) -> str:
+def build_task(covered: list[dict], today: date, audio: bool = False) -> str:
     return PREAMBLE.format(
         today=today.isoformat(),
         since=(today - timedelta(days=1)).isoformat(),
         covered=format_covered(covered),
+        audio=AUDIO_ASK if audio else "",
     )
 
 
@@ -227,7 +234,8 @@ def run(cfg, *, today: date | None = None, dry_run: bool = False,
         return {"made": False, "reason": "already exists", "slug": slug}
 
     covered = load_covered(cfg.vault, today=today)
-    task = build_task(covered, today)
+    want_audio = bool(getattr(cfg, 'brief_audio', False))
+    task = build_task(covered, today, audio=want_audio)
     log(f"  briefing {today.isoformat()} — {len(covered)} prior item(s) in context")
 
     if dry_run:
@@ -276,6 +284,28 @@ def run(cfg, *, today: date | None = None, dry_run: bool = False,
     items = read_covered_output(staging, today, log=log)
     write_meta(staging, today, items, extra_tags=getattr(cfg, "brief_tags", ()))
 
+    # Voice it while still in staging, so the audio and the player land in the
+    # same atomic move as the briefing. Best-effort for the same reason as the
+    # recording pipeline: the written briefing is the deliverable and a TTS
+    # outage must not cost it.
+    audio = {}
+    if want_audio:
+        try:
+            audio = pod.generate(staging, cfg, log=log)
+        except Exception as e:                        # noqa: BLE001
+            log(f"    ! audio failed unexpectedly: {type(e).__name__}: {e}")
+            audio = {"made": False, "reason": f"unexpected {type(e).__name__}"}
+        if audio.get("made"):
+            log(f"    ♪ audio: {audio['seconds']:.0f}s, "
+                f"{audio['bytes']:,} bytes, ${audio['usd']:.4f}")
+            usage.record(cfg.vault, kind="tts", billing=usage.API, stem=slug,
+                         model=getattr(cfg, "gemini_tts_model", ""),
+                         usd=audio["usd"], log=log,
+                         audio_seconds=audio["seconds"], turns=audio.get("turns"),
+                         characters=audio.get("chars"))
+        elif not str(audio.get("reason", "")).startswith("no script"):
+            log(f"    ! no audio: {audio.get('reason')}")
+
     shutil.rmtree(dest, ignore_errors=True)
     staging.rename(dest)
     n = append_covered(cfg.vault, items)
@@ -290,7 +320,8 @@ def run(cfg, *, today: date | None = None, dry_run: bool = False,
     pushed = _notify(cfg, today, items, slug, log=log)
     log("    → notified with link" if pushed else "    ! NOT notified")
     return {"made": True, "slug": slug, "items": len(items), "quiet": quiet,
-            "bytes": res["bytes"], "usd": au.get("usd", 0), "notified": pushed}
+            "bytes": res["bytes"], "usd": au.get("usd", 0), "notified": pushed,
+            "audio": audio.get("made", False), "audio_usd": audio.get("usd", 0)}
 
 
 def _notify(cfg, today: date, items: list[dict], slug: str, log=print) -> bool:

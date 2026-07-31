@@ -66,6 +66,15 @@ def cfg(tmp_path):
     # guaranteeing the operator's actual key is never loaded by a test.
     c._openai_key = "sk-test"
     c.stt_url = "http://127.0.0.1:1/none"
+    # Every network endpoint points at a closed port, so a test that forgets to
+    # mock fails fast instead of quietly spending real money. One did: a podcast
+    # test monkeypatched the OpenAI helper, the default provider changed to
+    # Gemini underneath it, and the suite made a live 37-second TTS call.
+    c.tts_url = "http://127.0.0.1:1/none"
+    c.gemini_tts_url = "http://127.0.0.1:1/none"
+    c.tts_timeout = 1
+    c.gemini_tts_timeout = 1
+    c._gemini_key = "test-gemini-key"
     c.stt_model = "m"
     c.stt_prompt = "p"
     c.stt_timeout = 1
