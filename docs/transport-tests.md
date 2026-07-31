@@ -222,6 +222,85 @@ this device **even when it is plainly present and connectable**, so those scans
 could not have detected it on that criterion regardless. Treat that earlier
 negative as uninformative rather than as evidence of silence.
 
+### T7 — Direct BLE handshake and download attempt  *(executed 2026-07-31)*
+
+**Destructive step, taken with explicit operator consent.** This is the first
+time anything has been written to the pin. Only req-1 handshake frames were
+sent — never `DepairReq`, record control, delete, or OTA.
+
+**Result: ❌ the pin does not answer a req-1 handshake from an unbound client.
+Direct BLE download is not achievable with what we currently know.**
+
+Goal was concrete: pull three recordings off the device and commit them to the
+vault without Plaud Cloud. Not achieved.
+
+#### What happened
+
+`ble_sync.py pull --go` reached the pin, connected, negotiated MTU 247, and sent
+handshake frames for candidate `portVersion` 7, 9 and 2. Every one was accepted
+at GATT level — no error, no rejection — and **none drew a reply**, so
+`Pin.handshake()` raised and nothing downstream ran.
+
+The obvious suspect was our listener. Today's T6 enumeration found `b004
+[indicate]` inside service `0x1910`, which appears in no prior note, and
+`ble_sync.py` subscribes to `0x2BB0` only. If the pin answered on `b004` we
+would be deaf to it. So a probe subscribed to **every** notify/indicate
+characteristic on the device — `2bb0`, `b004`, `2a19`, `2a05` and all five
+Find My `4f8600xx` — and swept a wider `portVersion` range:
+
+```
+listening on: 2bb0, b004, 2a19, 4f860001..05, 2a05
+b001 before: 01 02  u16le=513
+
+→ pv= 1 (21B)  01 01 00 02 00 36 66 …   (silence)
+→ pv= 2 (21B)                            (silence)
+→ pv= 3 (22B)  01 01 00 02 00 00 36 …   (silence)
+→ pv= 5 (22B)                            (silence)
+→ pv= 7 (22B)                            (silence)
+→ pv= 9 (38B)  01 01 00 02 00 00 … 65 62 (silence)
+→ pv=12 (38B)                            (silence)
+→ pv=20 (38B)                            (silence)
+
+b001 after:  01 02  u16le=513
+=== 0 frame(s) received total ===
+```
+
+**Zero frames on any channel.** The `b004` hypothesis is dead. `b001` is
+byte-identical before and after, so the handshake attempts moved no visible
+state.
+
+#### What this establishes
+
+- **The pin silently ignores commands from an unbound client.** It does not
+  reject them — writes to `0x2BB1` succeed and produce nothing. This partially
+  answers §9 item 9 of `ble-file-transfer.md`: a handshake is indeed a hard
+  precondition for 26/28, and the pin will not perform one with us in this
+  state.
+- **`portVersion` is still unresolved, and `b001` is still only a candidate.**
+  The authoritative read is `HandShakeRsp` bytes 4–5, and there was no
+  `HandShakeRsp`. The `b001 = 513` versus "V1.2 per its own descriptor"
+  ambiguity from T6 stands untouched. Do not act on 513.
+- **The frame layout is unverified, and this test cannot distinguish two
+  explanations.** Either our req-1 layout/token width is wrong, or the pin
+  ignores req 1 until a pre-handshake (`0xFE20 PreHandShakeDataSyncReq` or
+  `0xFE12 PreRSAHandShakeDataSyncReq`) has run. Neither is implemented, and
+  neither layout is known. Silence is consistent with both, so this is not
+  evidence for either.
+- **The iPhone binding appears intact.** No handshake succeeded, `b001` did not
+  change, and the writes behaved as no-ops. Confirm by foregrounding the Plaud
+  app and watching a recording sync — which is also how you get the files off.
+
+#### The one untried variable
+
+The pin was **bound to the operator's iPhone** throughout, which is the most
+likely reason it ignored us. Unbinding in the Plaud app and retrying is the
+experiment that would actually settle it.
+
+**Do not run that experiment with recordings still on the device.** If BLE still
+fails after unbinding, those recordings are stranded until the pin is re-paired,
+and the recovery path is untested. Drain the device through the working cloud
+path first, then experiment on an empty pin.
+
 ---
 
 ## Recording results
@@ -238,6 +317,7 @@ misled us once already.
 | 07-29 | **T2** | unlocked, using Facebook | background | no | ❌ **no sync** | — |
 | 07-29 | **T3** | unlocked, **Plaud opened** | **foreground** | no | ✅ **synced** | seconds |
 | 07-30 | **T6** | bound, untouched | n/a | no | ✅ **GATT reachable from Linux while bound** | — |
+| 07-31 | **T7** | bound, untouched | n/a | no | ❌ **no handshake reply; download not possible** | — |
 
 ### Verdict
 
