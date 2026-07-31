@@ -32,6 +32,11 @@ _ELSEWHERE = {
 _KNOWN_INERT = {
     # Commented-out placeholders for the contingent W8 iOS work.
     "PLAUD_EMBEDDED_CLIENT_SECRET", "PLAUD_EMBEDDED_API_KEY",
+    # Read only by ingest/ble_sync.py, which cannot work on this hardware and is
+    # wired into nothing (ADR-005). Deliberately inert rather than active: an
+    # uncommented entry here would advertise it in docs/configuration.md as a
+    # live knob, and the honest instruction is to leave it unset.
+    "ATTICUS_BLE_TOKEN",
 }
 
 

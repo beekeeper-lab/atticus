@@ -70,6 +70,13 @@ ignore = [
 # against an API we do not control, and failing loudly there would be wrong.
 "ingest/plaud_discover.py" = ["S110"]
 "ingest/plaud_web.py" = ["S110"]
+# Same rationale for the BLE recon tooling: probing an undocumented device means
+# every read may legitimately fail, and failing loudly there would be wrong.
+# ble_sync.py cannot work on this hardware at all (ADR-005) and is kept as
+# reference; its standalone test scripts use plain asserts like tests/ does.
+"ingest/ble_sync.py" = ["S110"]
+"ingest/test_ble_sync.py" = ["S101"]
+"ingest/test_ogg_opus.py" = ["S101"]
 # XDG_RUNTIME_DIR is preferred; /tmp is the documented fallback and the lock is
 # advisory flock, not a predictable-name secret.
 "processor/lock.py" = ["S108"]

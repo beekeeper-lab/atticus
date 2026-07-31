@@ -114,10 +114,15 @@ The rest is device sync and poll intervals.
 
 ### Honest limitations
 
-- **Sync is not hands-off.** Testing established that audio only reaches the
-  vendor cloud while their phone app is *foregrounded* — not while charging, not
-  merely with the phone unlocked. See [`docs/transport-tests.md`](docs/transport-tests.md)
-  for the matrix and the verdict. This is the biggest open problem.
+- **Sync is not hands-off, and this is now a permanent constraint rather than an
+  open problem.** Audio only reaches the vendor cloud while their phone app is
+  *foregrounded* — not while charging, not merely with the phone unlocked. See
+  [`docs/transport-tests.md`](docs/transport-tests.md) for the matrix. Talking to
+  the device directly was investigated to a conclusion and is blocked by a
+  vendor-issued signing key plus encrypted framing; see
+  [ADR-005](docs/decisions/ADR-005-direct-device-access-is-closed.md). So the
+  ~30-minute round trip stands, and roughly half of it is device sync and poll
+  intervals.
 - **The agent has full network egress**, granted deliberately (see "Recently
   completed"). It is bounded by nothing but the sandbox's mount namespace, so it
   can also reach **loopback services on this host** — including this vault's own
@@ -148,21 +153,50 @@ Adding a capability is adding a directory, so this is where the leverage is:
 Each follows the same contract: do the thing, then write an HTML record of what
 was done, with links. The pipeline never changes.
 
-### Cut the vendor cloud out of the loop
+### Cutting the vendor cloud out of the loop — investigated and closed
 
-The current round trip is ~30 minutes, most of it waiting on the phone to sync
-to the vendor cloud and then on a 15-minute poll. **Talking to the device
-directly over BLE from the phone — and pushing straight to the vault — should
-roughly halve that to ~15 minutes.**
+This was the obvious next win: talk to the device directly, halve the ~30-minute
+round trip, and drop a third party from the audio path. **It is closed.** Full
+record in [ADR-005](docs/decisions/ADR-005-direct-device-access-is-closed.md),
+with the test log in [`docs/transport-tests.md`](docs/transport-tests.md) T6–T8
+and protocol detail in
+[`ble-file-transfer.md`](docs/decisions/ble-file-transfer.md) and
+[`ble-protocol-notes.md`](docs/decisions/ble-protocol-notes.md).
 
-The BLE protocol has already been mapped from the vendor's own published Android
-SDK; see [`docs/decisions/ble-file-transfer.md`](docs/decisions/ble-file-transfer.md)
-and [`ble-protocol-notes.md`](docs/decisions/ble-protocol-notes.md). The pin binds
-to one client at a time, which is the main obstacle.
+Why it doesn't work, in one paragraph:
 
-This is **not** a bid for real-time. The workflow is asynchronous on purpose. But
-15 minutes beats 30, and removing a vendor cloud from the path removes a
-dependency, a privacy exposure, and a failure mode.
+> We can reach the device just fine — Linux finds the recorder over Bluetooth,
+> connects to it with no pairing prompt, and reads its battery level and serial
+> number. What we can't do is *talk* to it. The firmware requires two things
+> before it will release a recording: a credential cryptographically signed by
+> the vendor's servers, and a fully encrypted command channel. We decompiled the
+> vendor's own published SDK, which gave us the entire grammar of the
+> conversation — exact commands, byte layouts, sequence — and confirmed our
+> requests were correctly formed. The device ignores them, because the SDK ships
+> the instructions and none of the secrets: it fetches real keys from the vendor's
+> infrastructure, and the signing key is issued only under a commercial partner
+> agreement. This is a licensing gate, not an engineering gap. More development
+> time does not close it.
+
+Three alternatives were considered and rejected; ADR-005 has the full reasoning.
+**Reflashing our own firmware** would genuinely dissolve the lock — it is Telink
+silicon with an open flashing path, and the lock is firmware policy on a chip we
+own — but it means opening a sealed device with probably no way back, and
+rewriting a whole product (on-chip Opus encoder, flash filesystem, power, mic,
+motor) rather than a protocol. **Building our own recorder** solves the firmware
+problem outright, and loses on physical size: the pin's value *is* that it's small
+enough to wear without thinking, and the property that makes it worth using is
+exactly the one that makes it closed. **Unbinding the pin** to test the
+client-binding theory was never attempted, and T8 is why — the blocker turned out
+to be the firmware's crypto policy, so that irreversible test would have cost the
+official app and taught us nothing.
+
+Kept in-tree as reference, wired into nothing: `ingest/ble_scan.py`,
+`ble_read.py`, `ble_sync.py`, `ogg_opus.py`.
+
+The likeliest thing to reopen this is **acquiring a second, disposable device** to
+open and reflash, which removes the "no way back" objection since the working unit
+stays working.
 
 ### Known work, roughly in order
 
