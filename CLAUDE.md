@@ -44,10 +44,16 @@ See [ADR-002](docs/decisions/ADR-002-plaud-web-fetcher.md). What recon
 - Plaud seeds every account with three marketing files; `serial_number`
   starting `welcome_` is the reliable discriminator.
 
-**The open problem is upstream of all of this:** getting audio off the pin
-without a deliberate act. Sync requires the Plaud app foregrounded — see
-`docs/transport-tests.md` for the matrix and the verdict. That work lives on
-WarDog now (ADR-003).
+**The one manual step is upstream of all of this, and it is now settled as
+permanent:** sync requires the Plaud app foregrounded (`docs/transport-tests.md`).
+Direct BLE was investigated to a conclusion on 2026-07-31 and is **closed** — the
+pin reports `portVersion = 20`, so its firmware demands an RSA pre-handshake keyed
+by a B2B-issued credential *and* ChaCha20 framing whose key exchange is undecoded.
+Reaching the device was never the problem; it connects from Linux fine. See
+[ADR-005](docs/decisions/ADR-005-direct-device-access-is-closed.md) for the
+verdict, the rejected alternatives (reflash, build our own, unbind) and the
+trigger conditions. **Do not re-derive this** — T6–T8 in `docs/transport-tests.md`
+record it in detail.
 
 Known open defects, from `docs/history/forge-2026-07-29.md`: the agent writes
 deliverables straight into the vault instead of scratch (#2), and it runs
@@ -79,9 +85,9 @@ only through commits — and that holds even now that they share a host.
 | **processor** | `inbox/` → transcribe → route → execute → `processed/`. Owns `processed/` + `failures/`. | 5 min |
 
 **Both roles run on Forge** as of 2026-07-29 ([ADR-003](docs/decisions/ADR-003-ingest-on-the-agent-host.md)).
-WarDog keeps the unsolved device→cloud transport problem, which is a separate
-project (`docs/transport-tests.md`). Roles are capabilities, not hostnames:
-`./ops/install.sh {ingest|processor|all}`.
+The device→cloud transport was WarDog's remaining project; it is now **closed, not
+unsolved** ([ADR-005](docs/decisions/ADR-005-direct-device-access-is-closed.md)).
+Roles are capabilities, not hostnames: `./ops/install.sh {ingest|processor|all}`.
 
 Two repos: `atticus` (this, code) and `atticus-vault` (private, audio + output).
 Two deploy keys, one per host, both with write access.
@@ -131,8 +137,9 @@ Two deploy keys, one per host, both with write access.
   (`docs/transport-tests.md`), so arrivals are human-triggered bursts hours
   apart. Against that, 5 vs 15 minutes moves mean detection lag by 5 minutes
   and triples the daily headless-Chromium launches against an API we don't own.
-  `PLAUD_POLL_DAYS` + the ledger make a missed window free. Revisit only if the
-  transport becomes hands-off.
+  `PLAUD_POLL_DAYS` + the ledger make a missed window free. The transport will
+  not become hands-off — direct BLE is closed (ADR-005) — so treat this as fixed
+  unless one of that ADR's trigger conditions fires.
 - **The Plaud credential lives on the ingest host, which is now also the agent
   host.** This reverses an earlier decision; the cost and the mitigation are
   spelled out in [ADR-003](docs/decisions/ADR-003-ingest-on-the-agent-host.md).

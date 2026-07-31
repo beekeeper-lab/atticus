@@ -41,7 +41,10 @@ Revisit if the transport ever becomes hands-off — then the latency is ours.
 | `poller.py` | ✅ The timer's entry point. Transport-agnostic. |
 | `plaud_web.py` | ✅ Complete — auth, `list`, `whoami`, `audio`, verified against real recordings. |
 | `plaud_discover.py` | ✅ One-time recon. Watches a logged-in session and reports the API shape; redacts secrets. Re-run if `plaud_web.py` starts exiting 5. |
-| `ble_scan.py` | Research only — the direct-BLE transport (T5), not wired into the pipeline. |
+| `ble_scan.py` | Research only — the direct-BLE transport (T5), not wired into the pipeline. Scan + GATT enumeration, read-only. Start with `--watch`: a bound pin only advertises when woken. |
+| `ble_read.py` | Research only. Dumps every readable characteristic and the true ATT MTU. Read-only. |
+| `ble_sync.py` | Research only. ⚠️ **Written, never run against hardware.** Handshake → list → download → Ogg. Refuses to write without `--go`. |
+| `ogg_opus.py` | Ogg Opus muxer for the BLE path. Round-trip tested against ffmpeg (`test_ogg_opus.py`). |
 
 The official CLI is paywalled; we use a Plaud Web fetcher instead. See
 [ADR-002](../docs/decisions/ADR-002-plaud-web-fetcher.md).
@@ -100,3 +103,40 @@ particular, **3 means the session died**, which otherwise looks exactly like
 
 `poller.py`'s own: `0` clean · `1` partial failure (including committed-but-not-pushed) ·
 `2` config error · `3` session dead.
+
+## The second transport: direct BLE
+
+Research only — none of this is wired into the pipeline. It is a parallel path
+that would remove Plaud Cloud, the phone, and the official app from the design
+entirely, which matters because the cloud path's real constraint is upstream of
+this directory: audio only leaves the pin while the Plaud app is foregrounded.
+
+**It does not work, and it cannot.** See
+[ADR-005](../docs/decisions/ADR-005-direct-device-access-is-closed.md) and
+`docs/transport-tests.md` T6–T8. The link layer is genuinely wide open — the pin
+connects from Linux with no pairing prompt *while still bound to the phone*, and
+the whole command channel enumerates. But it reports **`portVersion = 20`**, so
+its firmware requires an RSA pre-handshake keyed by a credential Plaud issues
+under a B2B agreement, and wraps every frame in ChaCha20-Poly1305 whose key
+exchange is undecoded. A byte-correct plaintext handshake draws **no reply on any
+characteristic**.
+
+An earlier revision of this section claimed the opposite — that no partner key was
+required, because it gates only `portVersion >= 20` hardware. The condition was
+right; the assumption that this pin sat below it was wrong.
+
+```bash
+./ble_sync.py init-token        # local only: writes ~/.config/atticus/ble-token
+./ble_sync.py handshake         # dry run — prints frames, writes nothing
+./ble_sync.py pull --go         # runs, and gets silence. T7.
+```
+
+`--go` is still gated, and the gate is still worth respecting even though the
+handshake cannot succeed: it writes to the device, and the failure mode was never
+fully characterised. Note that T7 found the writes were *accepted and ignored*,
+and the iPhone binding survived — so binding was never the obstacle we assumed.
+
+`ble_sync.py` never sends `DepairReq`, record control, `ClearRecordFile`, or OTA,
+and does not implement deleting recordings. Its `PV_GUESS = 7` is wrong for this
+hardware and left as-is deliberately: `portVersion` is not something to guess, it
+is readable from the advertisement (byte 15 of the manufacturer data).
