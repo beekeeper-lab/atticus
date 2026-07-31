@@ -11,7 +11,9 @@ import importlib.util
 import json
 import sys
 import types
-from datetime import UTC, datetime
+
+import pytest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -60,6 +62,24 @@ class FakeSystemctl:
         elif cmd and cmd[0] == "git":
             out = "0\n"            # rev-list --count → level with remote
         return types.SimpleNamespace(stdout=out, stderr="", returncode=0)
+
+
+@pytest.fixture(autouse=True)
+def _stub_agent_credential(monkeypatch):
+    """Isolate every test here from the MACHINE'S REAL credential state.
+
+    check_agent_credential() reads ~/.claude/.credentials.json and reports a
+    problem when the token is expired or expiring within the hour. Without this
+    stub, tests that assert an overall rc==0 pass in the morning and fail in the
+    evening — which is exactly what happened: two of them started failing the
+    moment the real token dropped under an hour of life. A test whose result
+    depends on the wall clock is worse than no test.
+
+    Individual tests override this when the credential IS what they are testing.
+    """
+    import execute
+    monkeypatch.setattr(execute, "credential_expiry",
+                        lambda: (False, datetime.now(UTC) + timedelta(hours=8)))
 
 
 def _empty_vault(tmp_path) -> Path:
