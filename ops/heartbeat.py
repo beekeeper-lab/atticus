@@ -204,7 +204,8 @@ def main():
     # never watched either. unit_exists() skips whatever this host does not have.
     def check_scheduled():
         for t in ("atticus-ingest.timer", "atticus-processor.timer",
-                  "atticus-retention.timer", "atticus-vault-site.timer"):
+                  "atticus-retention.timer", "atticus-vault-site.timer",
+                  "atticus-brief.timer"):
             if not unit_exists(t):
                 continue        # this host does not have that role
             if timer_is_scheduled(t):
@@ -224,9 +225,16 @@ def main():
         # default that suits the 5- and 15-minute timers would false-alarm every
         # single run — and an alarm that always fires is one the operator learns
         # to ignore, which costs more than the check is worth.
-        budgets = {"atticus-retention.service": 36.0}
+        #
+        # atticus-brief is on a 07:00 daily timer and gets the same 36h budget as
+        # retention. It needs watching for a reason specific to what it produces:
+        # a briefing that fails to run and a briefing that ran on a quiet day are
+        # indistinguishable to the reader — both are "nothing new this morning".
+        # No other check in this file can see that.
+        budgets = {"atticus-retention.service": 36.0,
+                   "atticus-brief.service": 36.0}
         for u in ("atticus-ingest.service", "atticus-processor.service",
-                  "atticus-retention.service"):
+                  "atticus-retention.service", "atticus-brief.service"):
             if not unit_exists(u):
                 continue        # this host does not have that role
             if unit_is_running(u):

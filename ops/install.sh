@@ -189,6 +189,11 @@ PATH will not find it; add its directory to Environment=PATH in the service"
   # recordings of other people. Not sandboxed like the processor: it writes and
   # pushes the vault, so grant_vault does not apply (no ProtectSystem line).
   install_units atticus-retention.service atticus-retention.timer
+
+  # Daily AI briefing. Runs an agent, so it needs the same vault grant and the
+  # same sandbox shape as the processor — not retention's, which runs no bwrap.
+  install_units atticus-brief.service atticus-brief.timer
+  grant_vault "$UNITS/atticus-brief.service"
 fi
 
 # ---- heartbeat (both roles) -----------------------------------------------
@@ -214,6 +219,8 @@ if (( DO_PROCESSOR )); then
   ok "processor timer enabled (every 5 min)"
   systemctl --user enable --now atticus-retention.timer
   ok "retention timer enabled (daily)"
+  systemctl --user enable --now atticus-brief.timer
+  ok "AI briefing timer enabled (07:00 local)"
 fi
 # Heartbeat runs on every host, whatever its role.
 systemctl --user enable --now atticus-heartbeat.timer

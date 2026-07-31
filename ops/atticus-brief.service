@@ -1,0 +1,73 @@
+[Unit]
+Description=Atticus AI briefing — what changed in AI in the last 24 hours
+Documentation=https://github.com/beekeeper-lab/atticus/blob/main/skills/ai-brief/SKILL.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+WorkingDirectory=%h/atticus
+ExecStart=/usr/bin/python3 %h/atticus/processor/brief.py
+
+EnvironmentFile=-%h/.config/ai/env
+EnvironmentFile=-%h/atticus/ops/.env
+
+# systemd USER units run with PATH=/usr/local/bin:/usr/bin, which excludes
+# ~/.local/bin where `claude` lives. This unit runs an agent, so without this it
+# dies with "claude binary not found" while an interactive shell works fine.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+# REQUIRED. The sandbox options below put a *user* unit in a user namespace where
+# root-owned files read as nobody, and ssh then refuses /etc/ssh/ssh_config.d/*
+# so every push fails silently. `ssh -F <file>` skips the system config outright.
+# Same fix the processor and retention units carry. Do not remove it.
+Environment="GIT_SSH_COMMAND=ssh -F %h/.ssh/config"
+
+# A briefing is a research-shaped agent run: web searches, several fetches,
+# writing. Give it the same headroom as the processor rather than a tight bound
+# that turns a slow news day into a failure.
+TimeoutStartSec=3600
+
+# THE PLAUD CREDENTIAL MUST BE INVISIBLE HERE — the same reasoning as the
+# processor unit, and it applies with equal force. This unit runs an agent with
+# web access and a shell inside bwrap; a live authenticated browser session for
+# the vendor cloud sitting on the same box has no business being readable from
+# it. This job never needs the session. The leading '-' is load-bearing: without
+# it a host lacking the directory fails namespace setup (226/NAMESPACE) and
+# every activation dies.
+InaccessiblePaths=-%h/.local/share/claude-fetchers
+
+RuntimeDirectory=atticus-brief
+RuntimeDirectoryPreserve=yes
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# install.sh appends the vault to this line, exactly as it does for the
+# processor. Do NOT add a commented example containing a vault path — the
+# installer's idempotency guard once matched such a comment, concluded its work
+# was done, and left the active line without the vault, after which every commit
+# failed against a read-only vault.
+ReadWritePaths=%h/atticus %h/.claude %h/.cache
+
+# ProtectKernelTunables is DELIBERATELY OFF, and enabling it breaks the agent
+# sandbox outright: it mounts /proc/sys read-only, which locks mount attributes
+# on this unit's /proc, and bwrap then cannot mount a fresh procfs inside its
+# namespace ("Can't mount proc on /newroot/proc: Operation not permitted").
+# Bisected on the processor unit 2026-07-30. Same trade, same answer: the setting
+# stops this process writing kernel tunables it never writes, while disabling the
+# namespace that contains an agent. The sandbox wins.
+# ProtectKernelTunables=true   # ← do not re-enable; see above
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=atticus-brief
+
+[Install]
+WantedBy=default.target

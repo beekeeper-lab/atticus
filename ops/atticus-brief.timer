@@ -1,0 +1,38 @@
+[Unit]
+Description=Write the daily AI briefing at 07:00
+Documentation=https://github.com/beekeeper-lab/atticus/blob/main/skills/ai-brief/SKILL.md
+
+[Timer]
+# 07:00 LOCAL, deliberately. Everything else in this project is UTC by
+# convention, but a briefing you read at breakfast is defined by the reader's
+# clock, not by an offset — and unlike a timestamp in a filename, "07:00" here
+# has no downstream consumer that could be confused by the timezone.
+# systemd resolves OnCalendar in the system timezone unless told otherwise.
+#
+# It fires before the hour a person would read it rather than at it: the agent
+# takes several minutes, so 07:00 means "start", not "delivered".
+OnCalendar=*-*-* 07:00:00
+
+# OnCalendar, NOT OnUnitActiveSec — the same fix the processor and retention
+# timers spell out. A monotonic reference is lost on a daemon-reload, after which
+# systemd parks the timer at next_elapse=infinity and it never fires again while
+# still reporting enabled AND active. `atticus-vault-site.timer` did exactly this
+# for 76 minutes on 2026-07-29.
+
+# Catch up after downtime rather than silently skipping a day. Only works with
+# OnCalendar= — systemd.timer(5) says Persistent= is a no-op on monotonic timers.
+#
+# Note the interaction with brief.py's own guard: it refuses to rebuild a
+# briefing that already exists, so a catch-up fire after a long outage writes
+# that day's briefing once and no more. A late briefing is worth having; a
+# duplicate is not.
+Persistent=true
+
+# Small jitter. Not for load — this is one machine — but so a briefing run does
+# not collide with the 07:00 boundary that half the internet's cron jobs use,
+# and the sources it fetches are not ours.
+RandomizedDelaySec=180
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
