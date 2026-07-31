@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import execute as ex          # noqa: E402
 import usage                  # noqa: E402
 from config import Config     # noqa: E402
-from notify import notify     # noqa: E402
+from notify import ResultTarget, notify   # noqa: E402
 from vault import OWNED_BRIEF, Git   # noqa: E402
 
 SLUG = "ai-brief"
@@ -287,28 +287,36 @@ def run(cfg, *, today: date | None = None, dry_run: bool = False,
     git = Git(cfg.vault, cfg.git_name, cfg.git_email, cfg.push_retries, log=log,
               paths=OWNED_BRIEF)
     git.commit_push(f"ai-brief {today.isoformat()} ({n} item(s))")
-    _notify(cfg, today, items, slug, log=log)
+    pushed = _notify(cfg, today, items, slug, log=log)
+    log("    → notified with link" if pushed else "    ! NOT notified")
     return {"made": True, "slug": slug, "items": len(items), "quiet": quiet,
-            "bytes": res["bytes"], "usd": au.get("usd", 0)}
+            "bytes": res["bytes"], "usd": au.get("usd", 0), "notified": pushed}
 
 
-def _notify(cfg, today: date, items: list[dict], slug: str, log=print) -> None:
+def _notify(cfg, today: date, items: list[dict], slug: str, log=print) -> bool:
     """Push it, because a 7am briefing nobody is told about is a file on a disk.
 
-    Routed to the RESULT channel, not the alarm channel — this is an outcome, and
-    filing it as an alarm would train the alarm channel to be ignorable.
+    Aimed at the RESULT topic rather than the alarm topic — a briefing is an
+    outcome, and filing outcomes as alarms trains the alarm channel to be
+    ignorable. On a host that has not set ATTICUS_RESULT_NOTIFY_URL these are the
+    same topic; that is config.py's documented fallback.
+
+    **Returns whether it actually sent, and the caller logs that.** The first
+    version discarded the result and logged nothing, so a briefing whose push
+    failed — bad url, network down, ntfy unreachable — reported complete success
+    and the operator simply never heard about that morning. Silent delivery
+    failure on the one output that is supposed to reach a phone is the exact shape
+    of failure this project treats as the worst kind.
     """
-    url = getattr(cfg, "result_notify_url", None)
-    if not url:
-        return
-    import copy
-    c = copy.copy(cfg)
-    c.notify_url = url
+    if not getattr(cfg, "result_notify_url", None):
+        log("    ! no ATTICUS_RESULT_NOTIFY_URL — the briefing alerts nobody")
+        return False
     body = summarise(items)
     if cfg.site_base_url:
         body += f"\n\n{cfg.site_base_url}/docs/{slug}/index.html"
-    notify(c, body, log=log, title=f"AI briefing — {today.isoformat()}",
-           tags="newspaper", priority="default")
+    return bool(notify(ResultTarget(cfg), body, log=log,
+                       title=f"AI briefing — {today.isoformat()}",
+                       tags="newspaper", priority="default"))
 
 
 def main() -> int:
