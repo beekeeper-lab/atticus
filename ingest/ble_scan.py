@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """BLE recon for the Plaud NotePin S — run this the moment the pin powers on.
 
-    ./ble_scan.py                 scan and report Plaud-looking devices
+    ./ble_scan.py                 one 15s scan, report Plaud-looking devices
+    ./ble_scan.py --watch         rescan until a candidate appears
     ./ble_scan.py --connect ADDR  connect and enumerate GATT services
 
+**Start with --watch.** A single scan proves very little: the pin is bound to a
+client and idle most of the time, so it is usually not advertising at all. With
+--watch running, walk into range and press the pin's button — it advertises when
+woken, and the watch stops the moment something plausible appears.
+
 Run BEFORE binding the pin to the official Plaud app. Devices bind to one
-client at a time, and we want to see how an unbound device behaves.
+client at a time, and we want to see how an unbound device behaves. A scan is
+non-destructive; unbinding is not, and costs you the official app's sync,
+firmware updates and Wi-Fi setup UI.
 
 What we're looking for (see docs/decisions/ble-protocol-notes.md):
 
@@ -24,7 +32,10 @@ import sys
 try:
     from bleak import BleakClient, BleakScanner
 except ImportError:
-    sys.exit("bleak not installed:  pip install bleak")
+    sys.exit("bleak not installed.\n"
+             "  Arch:  sudo pacman -S python-bleak\n"
+             "  or:    python -m venv .venv && .venv/bin/pip install bleak\n"
+             "Also needs BlueZ running:  systemctl status bluetooth")
 
 TARGET = {
     "1910": "★ Plaud command/data service",
@@ -79,6 +90,45 @@ async def scan(seconds):
         print("press the pin's button, or start a recording, then rescan.")
 
 
+async def watch(window, rounds):
+    """Rescan until a candidate appears.
+
+    The pin does not advertise continuously — it is bound to a client and idle
+    most of the time. A single 15-second scan therefore proves very little, which
+    is why the one-shot mode above tells you to press the button and try again.
+    This does that for you: start it, then walk into range and press the pin's
+    button. It stops the moment something plausible shows up.
+    """
+    print(f"Watching in {window}s rounds (Ctrl-C to stop).")
+    print("Walk into range and PRESS THE PIN'S BUTTON — it advertises when woken.\n")
+    seen = set()
+    for i in range(1, rounds + 1):
+        devices = await BleakScanner.discover(timeout=window, return_adv=True)
+        hits, fresh = [], 0
+        for addr, (dev, adv) in devices.items():
+            name = adv.local_name or dev.name or ""
+            uuids = [short(u) for u in (adv.service_uuids or [])]
+            if addr not in seen:
+                seen.add(addr)
+                fresh += 1
+            if "1910" in uuids or "plaud" in name.lower() or "notepin" in name.lower():
+                hits.append((addr, name, adv.rssi, uuids))
+        stamp = f"round {i:>3}  {len(devices):>3} device(s), {fresh} new"
+        if hits:
+            print(f"{stamp}   ★ CANDIDATE")
+            for addr, name, rssi, uuids in hits:
+                print(f"\n★ {addr}  {rssi}dBm  {name or '(no name)'}")
+                print(f"    services: {', '.join(uuids) or '(none advertised)'}")
+            print(f"\nNext:  ./ble_scan.py --connect {hits[0][0]}")
+            return 0
+        print(stamp)
+    print("\nNo candidate in "
+          f"{rounds} round(s). Either the pin never advertised (still bound and "
+          "idle),\nor it does not expose 0x1910 in its advertisement — try "
+          "--connect against\na MAC from the one-shot scan that had no name.")
+    return 1
+
+
 async def connect(address):
     print(f"Connecting to {address} …")
     try:
@@ -116,8 +166,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--connect", metavar="ADDR", help="connect and enumerate GATT")
     ap.add_argument("--seconds", type=int, default=15, help="scan duration")
+    ap.add_argument("--watch", action="store_true",
+                    help="rescan until a candidate appears (walk into range, "
+                         "press the pin's button)")
+    ap.add_argument("--rounds", type=int, default=40,
+                    help="give up after this many watch rounds")
     args = ap.parse_args()
-    asyncio.run(connect(args.connect) if args.connect else scan(args.seconds))
+    if args.connect:
+        asyncio.run(connect(args.connect))
+    elif args.watch:
+        sys.exit(asyncio.run(watch(args.seconds, args.rounds)) or 0)
+    else:
+        asyncio.run(scan(args.seconds))
 
 
 if __name__ == "__main__":

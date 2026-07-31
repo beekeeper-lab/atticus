@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atticus — Device Transport &amp; Hosting Options</title>
+<style>
+:root {
+  --bg:#f7f8fa; --panel:#fff; --ink:#1f2937; --muted:#6b7280;
+  --border:#d1d5db; --border-strong:#9ca3af;
+  --accent:#2563eb; --accent-soft:#dbeafe; --accent-ink:#1e3a8a;
+  --success:#166534; --success-soft:#dcfce7;
+  --warning:#92400e; --warning-soft:#fef3c7;
+  --danger:#991b1b; --danger-soft:#fee2e2;
+  --code-bg:#111827; --code-ink:#e5e7eb; --code-comment:#9ca3af;
+  --radius:8px; --radius-sm:4px;
+  --shadow:0 1px 2px rgba(0,0,0,.04),0 1px 3px rgba(0,0,0,.06);
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  -webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+.page{max-width:64rem;margin:0 auto;padding:2rem 1.25rem 4rem}
+@media(min-width:56rem){.page{padding:3rem 2rem 5rem}}
+.hero{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+  padding:1.75rem 1.75rem 1.5rem;margin-bottom:1.5rem;box-shadow:var(--shadow)}
+.hero .eyebrow{margin:0 0 .25rem;color:var(--accent);font-size:.8125rem;font-weight:600;
+  letter-spacing:.06em;text-transform:uppercase}
+.hero h1{margin:0 0 .5rem;font-size:1.875rem;line-height:1.2;font-weight:700}
+.hero .subtitle{margin:0 0 1rem;color:var(--muted);font-size:1.0625rem;max-width:48rem}
+.hero .meta{display:flex;flex-wrap:wrap;gap:.5rem 1.25rem;font-size:.875rem;color:var(--muted);
+  border-top:1px dashed var(--border);padding-top:.75rem}
+.hero .meta strong{color:var(--ink);font-weight:600}
+.toc{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+  padding:1rem 1.25rem;margin-bottom:1.5rem;font-size:.9375rem}
+.toc h2{margin:0 0 .5rem;font-size:.75rem;font-weight:700;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted);border:0;padding:0}
+.toc ol{list-style:none;margin:0;padding:0;display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(15rem,1fr));gap:.25rem 1.25rem;counter-reset:toc}
+.toc li{counter-increment:toc;margin:0}
+.toc a{display:block;padding:.25rem 0;text-decoration:none;color:var(--ink)}
+.toc a::before{content:counter(toc) ". ";color:var(--muted)}
+.toc a:hover{color:var(--accent)}
+main{display:grid;gap:1.25rem}
+section.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+  padding:1.5rem 1.5rem 1.25rem;box-shadow:var(--shadow)}
+section.card>h2:first-child{margin-top:0}
+h2{margin:1.5rem 0 .75rem;font-size:1.375rem;line-height:1.3;font-weight:700;
+  border-bottom:1px solid var(--border);padding-bottom:.4rem}
+h3{margin:1.5rem 0 .5rem;font-size:1.125rem;font-weight:600}
+h4{margin:1.25rem 0 .25rem;font-size:1rem;font-weight:600;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.04em}
+p,ul,ol{margin:.5rem 0 .75rem}
+ul,ol{padding-left:1.25rem}
+li+li{margin-top:.15rem}
+.badge{display:inline-block;padding:.125rem .5rem;border-radius:999px;font-size:.75rem;
+  font-weight:600;background:var(--accent-soft);color:var(--accent-ink);
+  border:1px solid transparent;vertical-align:middle}
+.badge--success{background:var(--success-soft);color:var(--success)}
+.badge--warning{background:var(--warning-soft);color:var(--warning)}
+.badge--danger{background:var(--danger-soft);color:var(--danger)}
+.badge--muted{background:#f1f5f9;color:var(--muted);border-color:var(--border)}
+.callout{border-left:4px solid var(--accent);background:var(--accent-soft);color:var(--accent-ink);
+  padding:.75rem 1rem;border-radius:0 var(--radius-sm) var(--radius-sm) 0;margin:.75rem 0}
+.callout p:last-child{margin-bottom:0}
+.callout--success{border-color:var(--success);background:var(--success-soft);color:var(--success)}
+.callout--warning{border-color:var(--warning);background:var(--warning-soft);color:var(--warning)}
+.callout--danger{border-color:var(--danger);background:var(--danger-soft);color:var(--danger)}
+table{width:100%;border-collapse:collapse;margin:.75rem 0 1rem;font-size:.9375rem}
+th,td{text-align:left;padding:.5rem .75rem;border-bottom:1px solid var(--border);vertical-align:top}
+th{background:#f1f5f9;font-weight:600;border-bottom:2px solid var(--border-strong)}
+tr:hover td{background:#fafbfc}
+.table-wrap{overflow-x:auto}
+code,kbd,samp,pre{font:.875rem/1.55 ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono","Courier New",monospace}
+p code,li code,td code,dd code{background:#f1f5f9;padding:.05rem .35rem;border-radius:var(--radius-sm);
+  font-size:.85em;color:#0f172a;border:1px solid #e5e7eb}
+.code-block{background:var(--code-bg);color:var(--code-ink);border-radius:var(--radius);
+  overflow:hidden;margin:.75rem 0;border:1px solid #0b1220}
+.code-block-header{padding:.35rem .75rem;background:#0b1220;color:#9ca3af;
+  font:.75rem/1 ui-monospace,monospace;letter-spacing:.04em;text-transform:uppercase}
+.code-block pre{margin:0;padding:.875rem 1rem;overflow-x:auto}
+.code-block .comment{color:var(--code-comment)}
+.grid{display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr))}
+.diagram{background:#fff;border:1px solid var(--border);border-radius:var(--radius);
+  padding:1rem;margin:.75rem 0;overflow-x:auto}
+.diagram svg{display:block;max-width:100%;height:auto}
+.diagram-caption{text-align:center;font-size:.8125rem;color:var(--muted);margin-top:.5rem}
+.muted{color:var(--muted)}.small{font-size:.8125rem}
+.finding{border:1px solid var(--border);border-left-width:4px;
+  border-radius:0 var(--radius) var(--radius) 0;padding:1rem 1.15rem;margin:1rem 0;background:#fdfdfe}
+.finding--blocker{border-left-color:#7f1d1d}
+.finding--major{border-left-color:var(--danger)}
+.finding--note{border-left-color:var(--warning)}
+.finding--good{border-left-color:var(--success)}
+.finding h3{margin:0 0 .35rem;font-size:1.0625rem;display:flex;flex-wrap:wrap;
+  align-items:baseline;gap:.5rem}
+.finding p:last-child{margin-bottom:0}
+footer.page-footer{margin-top:2rem;padding:1rem 1.25rem;border-top:1px solid var(--border);
+  color:var(--muted);font-size:.875rem;text-align:center}
+@media print{
+  body{background:#fff;font-size:11pt}.page{max-width:none;padding:0}
+  .toc,.hero{box-shadow:none}
+  section.card{box-shadow:none;border:1px solid #ccc;page-break-inside:avoid}
+  .finding{page-break-inside:avoid}
+  a{color:#000;text-decoration:none}
+  a[href^="http"]::after{content:" (" attr(href) ")";font-size:9pt;color:#555}
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#0f1115;--panel:#161a20;--ink:#e5e7eb;--muted:#9aa3af;
+    --border:#2a303a;--border-strong:#3d4553;--accent:#60a5fa;--accent-soft:#1e293b;
+    --accent-ink:#bfdbfe;--success:#86efac;--success-soft:#14301f;
+    --warning:#fcd34d;--warning-soft:#332409;--danger:#fca5a5;--danger-soft:#3b1416}
+  th{background:#1b212a}tr:hover td{background:#1a1f27}
+  p code,li code,td code,dd code{background:#1b212a;color:#e5e7eb;border-color:#2a303a}
+  .finding{background:#141821}.diagram{background:#11151b}
+  .diagram svg text{fill:#e5e7eb}
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="hero">
+  <p class="eyebrow">Feasibility &amp; design study</p>
+  <h1>Getting audio off the device, and getting off Forge</h1>
+  <p class="subtitle">Three options investigated: direct BLE from Linux, an iPhone app built without a Mac,
+  and running the whole pipeline inside GitHub. Each is assessed against what the code, the vendor SDK
+  and the vendor's own documentation actually say — not against what the plan hoped.</p>
+  <div class="meta">
+    <span><strong>Date</strong> 2026-07-30</span>
+    <span><strong>Device</strong> Plaud NotePin S</span>
+    <span><strong>Hosts</strong> Forge (Fedora, always-on) · WarDog (Arch) · iPhone 13 Pro Max</span>
+    <span><strong>Verdict</strong> All three are possible; none delivers what you asked for unmodified</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#reframe">What changes the question</a></li>
+    <li><a href="#ble">Option 1 — Direct BLE from Linux</a></li>
+    <li><a href="#iphone">Option 2 — iPhone without a Mac</a></li>
+    <li><a href="#github">Option 3 — Removing Forge</a></li>
+    <li><a href="#recommend">Recommendation</a></li>
+    <li><a href="#provenance">What was verified</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section class="card" id="reframe">
+<h2>What changes the question</h2>
+
+<p>Five findings landed before any option could be assessed on its own terms. Three of them
+constrain both device options equally, one is bad news for the seamless requirement, and one is
+unexpectedly good news about cost.</p>
+
+<div class="finding finding--blocker">
+<h3>1. The official SDK cannot remove Plaud's cloud <span class="badge badge--danger">Blocker for the stated goal</span></h3>
+<p>This is cryptographic, not contractual. Two calls in the compiled SDK interface always reach
+Plaud's servers:</p>
+<ul>
+<li><code>signDeviceSn(deviceType:sn:)</code> — the BLE bind handshake needs a
+<strong>server-issued signature over the device serial, which the firmware validates.</strong> Not forgeable.
+<code>connectBleDevice(bleDevice:_ devToken:…)</code> takes that token as an argument.</li>
+<li><code>generateRsaKeyPair(completion:)</code> returns
+<code>PlaudPartnerGenKeyResponse{publicKey, privateKey}</code> — <strong>the keypair that decrypts your
+recordings is minted server-side</strong> and downloaded.</li>
+</ul>
+<p>I checked whether there was an escape hatch: <code>PlaudBleSDK</code> also exposes
+<code>generateRSAKeyPair(sizeInBits:)</code> and <code>setKeys(publicKey:privateKey:)</code>, which looked
+like a local-keygen path. It isn't — those belong to a vendored SwiftyRSA-style primitives library
+(<code>PrivateKey</code>, <code>ClearMessage</code>, <code>Padding</code>, <code>notAPrivateKey</code>),
+not an alternative to the server-minted E2EE key.</p>
+<p><strong>What this means precisely:</strong> audio and transcription <em>can</em> be entirely
+self-hosted — decryption and Opus decoding are local, and Plaud's own transcription API is optional.
+<strong>Bind and key issuance cannot.</strong> "Omit the use of Plaud Cloud" is achievable for the data
+path and not for the trust path.</p>
+</div>
+
+<div class="finding finding--major">
+<h3>2. Both device options replace the working path rather than adding one <span class="badge badge--warning">Applies to 1 and 2</span></h3>
+<p>Plaud's docs are explicit: <em>"Plaud devices can only be bound to one application at a time."</em>
+Your own ADR-001 established the other half — iOS has no BLE promiscuous mode, so a custom app cannot
+observe the official app's sync; it must <em>become</em> the BLE peer.</p>
+<p>So either option costs you the official app for that device: its sync, its firmware updates, its
+Wi-Fi provisioning UI — and, if it exists for this model, its background auto-transfer. This was the
+sharpest cost in ADR-001 and it hasn't changed.</p>
+</div>
+
+<div class="finding finding--major">
+<h3>3. Background BLE bulk transfer does not work the way the plan assumes <span class="badge badge--danger">Kills "seamless" on iOS</span></h3>
+<p>iOS gives a backgrounded BLE app roughly <strong>10 seconds per wake</strong>, and Punch Through's
+measurements put best-case BLE throughput at about <strong>50 kB/s</strong>. A 10 MB recording is
+therefore ~3.5 minutes at a perfect rate and ~17 minutes at a realistic one — stitched together from
+10-second wakes.</p>
+<p>The decisive evidence is that <strong>Plaud themselves route around this.</strong> Their
+"Fast Transfer" abandons BLE for Wi-Fi and the docs say <em>"Keep the Plaud App open until the transfer
+completes."</em> Their background "Auto-transfer" needs <strong>Always-location</strong> permission —
+i.e. it is region/beacon wake, not pure Core Bluetooth — and is documented as requiring
+<strong>Note Pro firmware 1.6+</strong>. The NotePin S is not named.</p>
+<p>This constraint is iOS-side and applies whether you build on a Mac or on Linux. It is the single
+most likely reason option 2 fails.</p>
+</div>
+
+<div class="finding finding--note">
+<h3>4. ADR-001's own trigger conditions have already fired <span class="badge badge--warning">The ADR is stale</span></h3>
+<p>ADR-001 declined an iPhone app because <em>"two independent transports already cover each other."</em>
+Both are now gone. <code>docs/transport-tests.md</code> records T1 (charging, phone untouched) and T2
+(unlocked, app not opened) as <strong>failures</strong>, with T3 (app foregrounded) succeeding
+immediately. The verdict there is unambiguous: <em>"Sync requires the Plaud app in the foreground."</em></p>
+<p>That is <em>worse</em> than trigger 2 anticipated. Whatever you decide, ADR-001 should be superseded
+rather than left standing as the project's answer.</p>
+</div>
+
+<div class="finding finding--good">
+<h3>5. Option 3's cost premise is wrong — in your favour <span class="badge badge--success">Verified locally</span></h3>
+<p>You assumed moving to GitHub means losing subscription-based agent usage and paying per-token API
+prices. That isn't so. <code>claude setup-token</code> exists on this machine and its help text reads
+<em>"Set up a long-lived authentication token (requires Claude subscription)"</em>, and the official
+<code>anthropics/claude-code-action</code> accepts a <code>claude_code_oauth_token</code> on Pro/Max.</p>
+<p>Whether the agent costs $0/month or ~$230/month in Actions is therefore an <strong>authentication
+choice, not a consequence of the move.</strong> The one unverified risk is whether subscription limits
+tolerate ~150 CI agent runs a month — Anthropic publishes no CI-specific policy.</p>
+</div>
+</section>
+
+<section class="card" id="ble">
+<h2>Option 1 — Direct BLE from Linux</h2>
+
+<p><strong>Verdict: the most technically achievable of the three, and the one with a genuine
+terms-of-service contradiction at its centre.</strong></p>
+
+<h3>You are further along than you may realise</h3>
+<p>Your own <code>ble-protocol-notes.md</code> and <code>ble-file-transfer.md</code> already map the
+protocol from Plaud's publicly-published Apache-2.0 Android SDK. The download path is known:</p>
+
+<div class="code-block">
+<div class="code-block-header">the transfer sequence, already reverse-engineered</div>
+<pre>service 0x1910   char 0x2BB0 (subscribe, device→us)   char 0x2BB1 (write, us→device)
+
+req  1  HandShakeReq          <span class="comment">→ read portVersion from HandShakeRsp bytes 4–5</span>
+req 26  GetRecSessionsReq     <span class="comment">→ list recordings; sessionId=0 means "all"</span>
+req 28  SyncRecFileStartReq   <span class="comment">→ begin transfer at an offset</span>
+        protocolType-2 frames <span class="comment">→ the audio: bare Opus, 80 bytes × ch per 20 ms</span>
+req 29  SyncRecFileStopReq    <span class="comment">→ end / CRC</span>
+req 30  SyncRecFileDelReq     <span class="comment">→ delete from device</span></pre>
+</div>
+
+<p>Audio arrives as <strong>bare Opus packets with no container</strong> — fixed 80 bytes per 20 ms, so
+the stream is self-delimiting and byte offsets are exactly seekable. You mux Ogg yourself or hand raw
+Opus to <code>ffmpeg</code>. Resumable transfer falls out of that for free, which matters for a
+proximity-triggered design where the device can walk out of range mid-file.</p>
+
+<h3>Throughput is not a problem here</h3>
+<p>Unlike iOS, Linux/BlueZ has no 10-second background budget. Opus at 16 kHz mono is 4 kB/s of audio,
+so even a conservative 20 kB/s of BLE throughput is ~5× realtime. A 40-minute recording (~9.6 MB) is
+roughly 8 minutes of transfer — long, but it runs unattended while you're in the room, and it resumes
+if interrupted.</p>
+
+<h3>Forge is the better host, not the laptop</h3>
+<div class="callout callout--success">
+<p><strong>I checked: Forge has a working Bluetooth controller.</strong> <code>3C:EF:A5:60:E8:D6 forge</code>,
+not rf-killed, and a 25-second scan saw 35 BLE devices. For a proximity design this beats a laptop
+outright — Forge is always on, mains-powered, never sleeps, and is already the agentic host, so no new
+hop is introduced. The trade is that a desktop sits in one room; you have to walk past it.</p>
+</div>
+<p>Either way the architecture is unchanged: this is the ingest role, and the design already treats
+roles as capabilities rather than hostnames (<code>./ops/install.sh ingest</code>). WarDog is on the
+tailnet but refused SSH, so I could not confirm its BLE hardware.</p>
+
+<h3>The proximity trigger</h3>
+<p>Two viable shapes. A continuous passive scan with a detection callback (<code>bleak</code> supports
+this) fires the moment the pin advertises — lowest latency, keeps the radio in scan mode, which is
+irrelevant on a mains-powered desktop. Or a systemd timer that simply attempts a connect every few
+minutes and fails fast when out of range — cruder, but it reuses the timer/lock/alarm machinery the
+pipeline already has, and needs no new failure modes. I'd start with the timer.</p>
+
+<h3>Wi-Fi as the bulk transport — a real improvement, and a corrected claim</h3>
+<p>The SDK exposes a Wi-Fi path, and it changes option 1's shape for the better. The sequence is
+<code>bleWiFiOpen(status, wifiName, wholeName, wifiPass)</code> — provision network credentials
+<em>to the device over BLE</em> — and then a <code>WiFiAgent</code> with its own
+<code>getFileList</code>, <code>syncFile</code>, <code>stopSyncFile</code> and <code>deleteFile</code>.</p>
+<p>So BLE becomes the control channel and Wi-Fi the data channel. That removes the throughput concern
+entirely for long recordings and, more usefully, removes the requirement to stay in BLE range for the
+whole transfer — the pin joins your network and the pull happens at LAN speed.</p>
+<div class="callout callout--warning">
+<p><strong>Correcting a claim from my own research.</strong> One pass reported an
+<code>exportAudioViaWiFi</code> API and recommended, as its top priority, investigating whether the pin
+could <em>push</em> audio to a host you control — which would have deleted this whole problem. I grepped
+the SDK interface: <strong>no such symbol exists.</strong> The Wi-Fi surface is
+<code>WiFiAgent.syncFile</code>, i.e. <strong>a client pulling from the device</strong>, not the device
+uploading to an arbitrary endpoint. You still need a client.</p>
+<p>The device→cloud Wi-Fi upload that ADR-001 described does exist as a product feature, but your own
+<strong>T1 test disproved it for this pin</strong> — charging with the phone untouched produced no sync.
+So that door is already known to be closed.</p>
+</div>
+
+<h3>The blockers, in order of severity</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Blocker</th><th>Status</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><strong>The bind signature</strong></td><td><span class="badge badge--danger">Hard</span></td>
+<td>Firmware validates a server-issued signature over the serial. You cannot forge it. You must obtain it
+from Plaud's portal — which is free and self-serve, but see the contradiction below.</td></tr>
+<tr><td><strong>ChaCha20-Poly1305</strong></td><td><span class="badge badge--warning">Unknown</span></td>
+<td>If the pin reports <code>portVersion ≥ 20</code>, every frame is encrypted and the key exchange is
+undecoded. Your own notes flag this as unresolved and tied to the RSA question.</td></tr>
+<tr><td><strong>Unbound-device behaviour</strong></td><td><span class="badge badge--warning">Untested</span></td>
+<td>Whether requests 26/28 work at all before a handshake is unanswerable without hardware in a
+pairing state. <code>ingest/ble_scan.py</code> exists to answer it.</td></tr>
+<tr><td><strong>portVersion</strong></td><td><span class="badge badge--muted">Manageable</span></td>
+<td>Selects frame layout, list stride, and whether ChaCha applies. Read it at runtime from
+<code>HandShakeRsp</code>; never hardcode. Your notes already give a runtime cross-check.</td></tr>
+<tr><td><strong>No prior art</strong></td><td><span class="badge badge--warning">Real cost</span></td>
+<td>Nobody has publicly reverse-engineered this BLE protocol. Every community project scrapes Plaud's
+<em>cloud</em> after the official app has already uploaded — the opposite of what you want. You would be
+first.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout callout--danger">
+<p><strong>The contradiction worth thinking hard about.</strong> Option 1 needs the bind signature, which
+needs a Plaud Embedded portal account. Those terms prohibit, verbatim, reverse engineering
+<em>"the source code, firmware, or underlying protocols"</em> and circumventing <em>"device
+authentication, pairing, or activation mechanisms."</em> But option 1 <em>is</em> a reimplementation of
+the protocol from a decompiled SDK.</p>
+<p>So the two halves of option 1 pull against each other: accept the terms to get the credential, and
+the credential's terms forbid the client you'd use it with. There may be readings where interoperating
+with hardware you own is fine — the SDK is Apache-2.0 and vendor-published, and your notes make that
+argument. I'm not able to resolve it for you, and it's worth a careful read of the current terms before
+investing weeks. It's a risk to weigh, not a settled prohibition.</p>
+<p><strong>And there is a second clause that is broader than the circumvention one.</strong> The terms
+also prohibit using the SDK to develop <em>"a general-purpose or vertical-specific AI note-taking,
+meeting capture, meeting summarization, or conversation intelligence application."</em> Read plainly,
+that describes Atticus. It applies to <strong>option 2 as much as option 1</strong>, since both need a
+portal account, and the practical exposure is account termination rather than anything dramatic. Worth
+knowing before you build a dependency on it.</p>
+</div>
+
+<p><strong>Effort:</strong> substantial. The framing, command table and transfer sequence are done, but
+you'd be implementing a binary protocol with four layout variants, an undecoded crypto layer, and no
+reference implementation to diff against. Budget weeks, not days, and expect the first milestone to be
+"can I get a session list at all."</p>
+</section>
+
+<section class="card" id="iphone">
+<h2>Option 2 — iPhone without a Mac</h2>
+
+<div class="callout callout--success">
+<p><strong>The Mac question is answered, and it's the easy part.</strong> Mac-free iOS development is
+genuinely viable in 2026 for exactly this shape of app. That is not where this option fails.</p>
+</div>
+
+<h3>The Mac-free toolchain that works</h3>
+<div class="code-block">
+<div class="code-block-header">Arch Linux → signed IPA on a stock iPhone</div>
+<pre>Swift 6.3.3            <span class="comment">AUR: swift-bin</span>
+xtool 1.17.0           <span class="comment">MIT, builds via SwiftPM, signs with a bundled zsign fork</span>
+usbmuxd                <span class="comment">USB transport</span>
+pymobiledevice3 10.3.0 <span class="comment">install, logs, HCI traces</span>
++ an Xcode .xip you download yourself   <span class="comment">← the licence problem lives here</span></pre>
+</div>
+<p>Free-Apple-ID 7-day certificates work entirely over HTTP from Linux — no Mac, no Xcode GUI. Anisette
+runs natively (xtool extracts <code>libCoreADI.so</code> from Apple's own Android Apple Music APK).
+Installing a signed IPA needs no jailbreak: <code>pymobiledevice3 apps install</code>. Logging is
+genuinely good — <code>idevicesyslog</code> for unified logs, and
+<code>pymobiledevice3 btlogger</code> dumps <strong>Bluetooth HCI to pcapng</strong>, which is directly
+useful for this project.</p>
+
+<p><strong>What breaks:</strong> no Simulator ever (moot — it has no Core Bluetooth anyway); no
+<code>actool</code>, so asset catalogs need loose PNGs and a hand-written <code>CFBundleIcons</code>;
+no <code>.xcodeproj</code> (must be a <code>Package.swift</code> project); SwiftData
+<code>@Model</code> is a hard blocker; and an <strong>open xtool bug (#197) on Arch breaks
+<code>@Observable</code></strong>, which would gut a SwiftUI app. Debugging is printf-plus-logs — no
+confirmed end-to-end Linux→iOS 26 lldb session has been published.</p>
+
+<p><strong>The licence, verbatim from the Xcode SLA:</strong> <em>"USE OF APPLE SOFTWARE IS … AUTHORIZED
+ONLY FOR EXECUTION ON AN APPLE-BRANDED PRODUCT RUNNING MACOS."</em> Every Linux path that consumes the
+Apple SDK breaches this. Your older Mac makes that go away.</p>
+
+<h3>Sideloading in the US, as of now</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Option</th><th>iOS 26?</th><th>Re-sign</th><th>Available to you?</th></tr></thead>
+<tbody>
+<tr><td>Free Apple ID + xtool</td><td>Yes</td><td><strong>7 days</strong></td><td>Yes — 3-app cap</td></tr>
+<tr><td><strong>Paid ADP, $99/yr</strong></td><td>Yes</td><td><strong>~1 year</strong></td><td>Yes — recommended</td></tr>
+<tr><td>SideStore</td><td>Yes, fragile</td><td>7 days auto</td><td>Yes — only tool with Linux install support</td></tr>
+<tr><td>TrollStore</td><td><strong>No</strong> — max iOS 17.0</td><td>—</td><td>Dead; no successor</td></tr>
+<tr><td>Jailbreak</td><td><strong>No</strong> — A11 max</td><td>—</td><td>No (13 Pro Max is A15)</td></tr>
+<tr><td>AltStore PAL / Web Distribution</td><td>Yes</td><td>Never</td><td><strong>No — EU only</strong></td></tr>
+</tbody>
+</table>
+</div>
+<p class="small muted">Nothing has loosened in the US. Epic v. Apple forced external payment links only,
+not sideloading. The 7-day free-provisioning limit is unchanged since 2016.</p>
+
+<h3>The crux — background BLE</h3>
+<p>Good news first: <strong>iOS 26 improved this.</strong> Apple's TN3115 (revised 2025-09-15) shows
+force-quit apps <em>can</em> now be relaunched if they adopt <strong>AccessorySetupKit</strong> — an
+Apple engineer confirmed this is an addition, not a regression, and the European Commission's DMA
+factsheet confirms it is worldwide. AccessorySetupKit needs <code>Info.plist</code> keys only, no
+entitlement, so it works on a sideloaded build. Background modes are available to free personal teams
+too — <code>UIBackgroundModes</code> is a plist property, not an entitlement.</p>
+
+<p>Then the wall. The 10-second wake budget and ~50 kB/s ceiling mean bulk audio over background BLE is
+tens of minutes of stitched wakes. Every confirmed alternative is a dead end: silent push is
+<em>"heavily throttled and will not be guaranteed"</em> per Apple DTS (and unavailable on free signing);
+<code>BGProcessingTask</code> requires idle+charging so can't be a proximity trigger;
+<code>BGContinuedProcessingTask</code> (new in iOS 26) <em>"starts in the foreground"</em>; BLE
+accessories aren't part of MFi at all.</p>
+
+<div class="callout callout--warning">
+<p><strong>And an unresolved risk that alone justifies the $99:</strong> every 7-day re-sign reinstalls
+the app, and <strong>whether that destroys pending Bluetooth state-restoration is undocumented</strong> —
+an Apple forum thread asking exactly this has zero replies. If it does, the app needs a manual launch to
+re-arm, which defeats "the user never opens it."</p>
+</div>
+
+<h3>Before writing any code — a two-day spike</h3>
+<p>Three unknowns can each kill this, and all are cheap to test:</p>
+<ol>
+<li><strong>Does the NotePin S support background auto-transfer at all?</strong> Enable it in the
+official app with Always-location granted. Plaud documents it for <em>Note Pro firmware 1.6+</em> and
+doesn't name the NotePin S. If the toggle doesn't appear or doesn't fire, the seamless requirement is
+dead at the hardware level and no iOS engineering fixes it. <strong>Test this first.</strong></li>
+<li><strong>Does <code>@Observable</code> compile under xtool on Swift 6.3.3?</strong> (xtool #197.)</li>
+<li><strong>Will xtool correctly embed and sign a plain dynamic <code>.framework</code>?</strong> Plaud
+ships four <code>.framework</code> bundles — not <code>.xcframework</code>, which is the only thing
+SwiftPM <code>binaryTarget</code> accepts, and <code>xcodebuild -create-xcframework</code> is macOS-only.
+This is the highest-risk unverified step in the Linux path.</li>
+</ol>
+
+<h3>Costs, and two things to check about the older Mac</h3>
+<p><strong>The $99 Apple Developer Program is effectively mandatory</strong>, for three independent
+reasons: ~1-year signing instead of a 7-day cycle; the undocumented re-sign/restoration risk above; and
+the <strong>Hotspot Configuration entitlement, which is not available to a free personal team</strong> and
+which Plaud's Wi-Fi Fast Transfer needs. Without it a free-signed build is BLE-only, i.e. stuck behind
+the throughput wall.</p>
+<p><strong>Plaud Embedded pricing is ambiguous in a way that matters.</strong> The free tier covers
+50 device connections and 300 transcription hours, after which it is <strong>$15 per connected device per
+month</strong>. Whether "connection" means a device registration (one, for you, likely $0 forever) or a
+BLE session (which you'd exhaust in a week of walk-past syncing) is not something I could pin down.
+Worth clarifying with them before designing around $0.</p>
+<div class="callout callout--warning">
+<p><strong>Check the older Mac before counting on it.</strong> Xcode 26.x requires
+<strong>macOS Tahoe 26</strong>, which drops every Intel Mac except the 2019 16" MacBook Pro, the 2020
+13" (4×TB3), and 2020-or-later iMac/mini/Mac Pro. If yours can't run Tahoe it cannot build for an
+iOS 26.6 phone without DeviceSupport-file transplants. And note a Mac buys you a <em>debugger</em>, not
+BLE testing — the iOS Simulator has had no Core Bluetooth since iOS 7, so all BLE work is on-device
+either way.</p>
+</div>
+<p class="small muted">A ~$500 Mac mini M4 beats every cloud Mac if the debug loop becomes intolerable,
+because a cloud Mac cannot see your BLE peripheral or your USB iPhone. Running total if you build this:
+$99/yr Apple plus possibly $15/device/month Plaud — call it $99–$279/yr before any hardware.</p>
+</section>
+
+<section class="card" id="github">
+<h2>Option 3 — Removing Forge</h2>
+
+<p>You said you don't intend to do this, so this is scoped as "is it possible, and what would it cost."
+<strong>Short answer: the processing half ports cleanly. The publishing half and the ingest half do
+not — and the cost isn't the obstacle you expected.</strong></p>
+
+<h3>Three blockers, two landing on the same plan gate</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Blocker</th><th>Severity</th><th>Escape</th></tr></thead>
+<tbody>
+<tr><td>No <strong>private rendered HTML</strong> below GitHub Enterprise Cloud</td>
+<td><span class="badge badge--danger">Hard</span></td><td>GHEC private Pages, or keep a private host</td></tr>
+<tr><td>Ingest needs a <strong>stateful 146 MB browser profile</strong></td>
+<td><span class="badge badge--danger">Hard</span></td><td>Device-direct ingest (option 1 or 2), or keep Forge</td></tr>
+<tr><td>Approval gate (environment reviewers) is <strong>public-repo-only</strong> on Free/Pro/Team</td>
+<td><span class="badge badge--warning">Soft</span></td><td>GHEC, or a manual <code>workflow_dispatch</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<p><strong>Publishing is the one that actually stops you.</strong> GitHub's own words:
+<em>"GitHub Pages sites are publicly available on the internet, even if the repository for the site is
+private."</em> Private Pages requires GHEC plus an org-owned project site. The fallbacks don't work
+either — GitHub <em>"don't directly support rendered views of commits to HTML documents"</em>, and
+<code>raw.githubusercontent.com</code> serves <code>text/plain</code> with <code>nosniff</code> and a
+<code>sandbox</code> CSP, so it renders as source forever. For reports derived from ambient microphone
+audio, a publicly readable URL is not a trade you should make.</p>
+
+<h3>The ingest coupling — confirmed</h3>
+<div class="callout callout--danger">
+<p>I suspected this and it checks out for five independent reasons. Runners are ephemeral VMs; secrets
+cap at 48 KB so the profile can't be one; <code>actions/cache</code> is the only mechanism and
+<strong>"you cannot change the contents of an existing cache"</strong> plus 7-day eviction directly
+contradicts a profile that mutates on login and refreshes over 30 days; <code>GITHUB_TOKEN</code> can't
+write secrets so a refreshed session can't be persisted; and committing the profile would put live Plaud
+session cookies in the same repo the agent can read — the exact inversion of the credential-free-agent
+design.</p>
+<p><strong>Therefore a GitHub-only pipeline requires a device-direct ingest.</strong> Options 1/2 and
+option 3 are not independent — option 3 depends on one of them.</p>
+</div>
+
+<h3>Cost — not the blocker</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Line item</th><th>Today</th><th>Actions + subscription token</th><th>Actions + API key (Opus 5)</th><th>+ API key (Sonnet 5)</th></tr></thead>
+<tbody>
+<tr><td>Compute</td><td>$0 marginal</td><td>$0 within Pro</td><td>$0</td><td>$0</td></tr>
+<tr><td>Transcription (290 min)</td><td>—</td><td>$1.74</td><td>$1.74</td><td>$1.74</td></tr>
+<tr><td>Agent, 150 runs</td><td>$0 (subscription)</td><td><strong>$0 (subscription)</strong></td><td>$228.75</td><td>$96.00</td></tr>
+<tr><td><strong>Monthly at 20/day</strong></td><td><strong>~$0.07*</strong></td><td><strong>~$1.74</strong></td><td><strong>~$230</strong></td><td><strong>~$98</strong></td></tr>
+</tbody>
+</table>
+</div>
+<p class="small muted">* My earlier "$0.07/month" figure was measured against your <em>observed</em> volume
+(~12 audio-minutes total), not 20 recordings/day. The 20/day column is a ~16× extrapolation. Worth
+correcting since I quoted it earlier today.</p>
+
+<p>The dominant Actions cost is a rule, not a rate: <strong>minutes are rounded up to the whole minute,
+per job</strong>, so a 5-second cron poll bills a full minute. A 5-minute cron would cost ~$42/month in
+overage; <code>on: push, paths: ['inbox/**']</code> costs <strong>nothing</strong> within Pro's 3,000
+minutes and reacts in seconds. Use push, never cron.</p>
+
+<h3>If you ever did build it</h3>
+<div class="code-block">
+<div class="code-block-header">job split — the agent never holds a credential</div>
+<pre>on: push, paths: ['inbox/**']     <span class="comment"># not cron: rounding makes polling expensive</span>
+
+job triage    permissions: {contents: write}
+              transcribe → wake gate → gated? STOP, agent never runs
+              passed? repository_dispatch  <span class="comment"># GITHUB_TOKEN pushes fire nothing</span>
+
+job agent     permissions: {}            <span class="comment"># deny everything</span>
+              NO id-token: write         <span class="comment"># injects ambient OIDC vars any subprocess can mint</span>
+              checkout with persist-credentials: false   <span class="comment">← default is TRUE and hands the agent git push</span>
+              transcript passed as a FILE, never interpolated into ${{ }}
+              docker run --network none --read-only --cap-drop=ALL
+              emits a PROPOSAL as an artifact
+
+job apply     permissions: {contents: write}
+              validates the proposal against a schema, commits, publishes</pre>
+</div>
+
+<p>Two security notes worth keeping even if you never migrate. <code>actions/checkout</code> defaults to
+<code>persist-credentials: true</code> — its own docs say <em>"the auth token is persisted in the local
+git config"</em> — so <strong>a checkout step alone would hand your agent a working
+<code>git push</code></strong>. And <code>id-token: write</code> is a liability on an agent job, not a
+win: it injects ambient request variables that any subprocess can redeem for an arbitrary audience.</p>
+
+<p class="small">I verified both your repos already use the safe <code>read</code> default for
+<code>GITHUB_TOKEN</code>, not the legacy permissive setting that pre-Feb-2023 repos can still carry.
+Two genuine upsides also exist: each job is a fresh ephemeral VM destroyed afterwards, which is
+<em>stronger</em> containment than Forge's persistent host, and
+<a href="https://docs.github.com/en/copilot/concepts/agents/about-github-agentic-workflows">GitHub Agentic
+Workflows</a> (preview, Claude is a supported engine) already implements this architecture — read-only by
+default, secrets isolated in downstream jobs, writes only via validated <code>safe-outputs</code>.</p>
+
+<div class="callout">
+<p><strong>Honest framing: this is not a Forge-elimination project, it's a Forge-shrinking one.</strong>
+Because ingest can't port, Forge survives as an ingest-only host unless a device option replaces it — and
+that outcome is <em>worse</em> on your own ADR-003 axis, since the Plaud credential still lives on a host
+you maintain while the agent moves somewhere you can't inspect at 3 a.m. You'd also trade
+<code>journalctl</code> and a shell for 90-day log retention.</p>
+</div>
+</section>
+
+<section class="card" id="recommend">
+<h2>Recommendation</h2>
+
+<p><strong>Do the cheap experiment before any of the expensive ones.</strong> One test discriminates
+between all three options, costs an evening, and needs no code:</p>
+
+<div class="callout callout--success">
+<p><strong>Enable Auto-transfer in the official Plaud app with Always-location granted, and see whether
+the NotePin S syncs in the background.</strong> Plaud documents this feature for Note Pro firmware 1.6+
+and does not name your model. If it works, you may not need <em>any</em> of these options — the transport
+problem you're solving would already be solved by a setting. If it doesn't appear or doesn't fire, that's
+a firmware-level answer that also tells you option 2's seamless requirement is unreachable.</p>
+</div>
+
+<p><strong>If that fails, my ranking is:</strong></p>
+
+<ol>
+<li><strong>Option 1 (direct BLE on Forge)</strong> — highest chance of actually delivering what you
+described. No 10-second budget, no App Store, no re-signing, no Mac, and Forge is always on with working
+Bluetooth. Resumable transfer falls out of the Opus framing, which suits walk-past ingest. The costs are
+real: weeks of binary-protocol work, an undecoded crypto layer, no prior art, and the terms
+contradiction above deserves a careful read first.</li>
+<li><strong>Option 2 (iPhone)</strong> — only if the spike shows the NotePin S <em>does</em> support
+background auto-transfer, because otherwise you're building against a throughput wall that Plaud's own
+engineers avoided. If you do proceed, pay the $99 and keep the older Mac for the debug loop; verify it
+runs macOS Tahoe 26 first, since Xcode 26 requires it.</li>
+<li><strong>Option 3 (GitHub)</strong> — interesting to know, and I'd leave it. It can't publish
+privately below GHEC, it can't do ingest at all, and it costs you the observability that made today's six
+production bugs findable.</li>
+</ol>
+
+<p><strong>And regardless of which you pick:</strong> supersede ADR-001. Its rationale rests on two
+transports that testing has since disproved, and leaving it as the project's standing answer will mislead
+whoever reads it next — including you, in six months.</p>
+
+<p class="small muted">One thing none of these options fixes: whichever transport wins, ambient audio
+still lands permanently in git history. That was the audit's open privacy item and it's independent of
+this decision.</p>
+</section>
+
+<section class="card" id="provenance">
+<h2>What was verified, and what wasn't</h2>
+
+<h4>Verified directly on this machine</h4>
+<ul>
+<li>Forge's Bluetooth controller exists, is not blocked, and completed a 25-second scan seeing 35 devices.
+No device advertising service <code>0x1910</code> was visible — expected, since the pin is currently bound
+to the iPhone and so isn't advertising for new connections. <strong>This does not prove the pin is
+reachable</strong>; that needs it in a pairing state.</li>
+<li><code>claude setup-token</code> exists and requires a Claude subscription — the basis for option 3's
+cost-neutral path.</li>
+<li>Both repos use <code>default_workflow_permissions: read</code>.</li>
+<li>The vault is 10 MB after ~24 recordings (~0.45 MB each), extrapolating to ~270 MB/month at 20/day.</li>
+<li>The Plaud SDK's cloud dependency, read from the compiled <code>.swiftinterface</code>:
+<code>signDeviceSn</code>, <code>generateRsaKeyPair</code> returning a private key, and
+<code>connectBleDevice(…devToken…)</code>. I also checked and <strong>disproved</strong> a possible escape
+hatch — <code>PlaudBleSDK.generateRSAKeyPair</code> is a vendored RSA primitives library, not a local
+alternative to the server-minted E2EE key.</li>
+<li>ADR-001's trigger conditions against <code>docs/transport-tests.md</code>.</li>
+</ul>
+
+<h4>Researched, not independently reproduced</h4>
+<ul>
+<li>iOS background-BLE behaviour, TN3115's iOS 26 relaunch table, sideloading status, and xtool's
+capabilities and open bugs.</li>
+<li>GitHub Actions pricing, the per-job minute rounding, Pages visibility rules, and the cache
+constraints.</li>
+<li>Plaud's Auto-transfer firmware requirement and the Fast Transfer foreground requirement.</li>
+</ul>
+
+<h4>Known unknowns that would change the answer</h4>
+<ul>
+<li>Whether the NotePin S reports <code>portVersion ≥ 20</code> (ChaCha20 on every frame).</li>
+<li>Whether an unbound pin honours requests 26/28 at all.</li>
+<li>Whether Claude subscription limits tolerate ~150 CI agent runs/month.</li>
+<li>Your GitHub org plan — not readable with the current token, and it decides both GHEC-gated blockers.</li>
+<li>WarDog's Bluetooth hardware — the host refused SSH.</li>
+</ul>
+</section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Feasibility study · 2026-07-30 · Plaud NotePin S transport options and pipeline hosting</p>
+  <p class="small">Findings from two parallel research passes plus direct inspection of the vendor SDK,
+  this repository's prior reverse-engineering notes, and both hosts. Claims are labelled by how they were
+  established.</p>
+</footer>
+
+</div>
+</body>
+</html>
