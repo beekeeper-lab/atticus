@@ -22,6 +22,7 @@ programmatic route to a real NotebookLM audio overview — was deprecated in 202
 with no new allowlisting, so there is no API to call. This reproduces the format
 (two hosts, conversational, summarising one source) with a TTS model instead.
 """
+import html
 import json
 import re
 import shutil
@@ -46,6 +47,23 @@ _TITLE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 # report often wraps its title in a header block, and landing inside that block
 # breaks the layout in ways that are invisible until someone opens the page.
 _BODY_OPEN = re.compile(r"(?i)<body[^>]*>")
+
+# The injected block is fenced by comments so it can be replaced as a unit — the
+# markup inside it changes, and matching on a class name cannot tell "there is a
+# player" from "there is a CURRENT player". Comments survive the vault's
+# sanitiser, which only rewrites active constructs.
+BLOCK_OPEN = "<!--atticus-audio-->"
+BLOCK_CLOSE = "<!--/atticus-audio-->"
+_BLOCK = re.compile(re.escape(BLOCK_OPEN) + r".*?" + re.escape(BLOCK_CLOSE),
+                    re.DOTALL)
+
+# The first shipped block had no fences. Reports published in that window are
+# already in the vault, so an upgrade has to be able to find one — matching only
+# the fenced form appended a second player instead of replacing the first, which
+# is what happened on 2026-07-31T135221Z before this existed.
+_LEGACY_BLOCK = re.compile(
+    r"<style>\.atticus-audio\{.*?</style>\s*"
+    r'<div class="atticus-audio">.*?</div>', re.DOTALL)
 
 # gpt-4o-mini-tts bills per token, but the useful unit for an estimate made
 # BEFORE the call is characters of script. OpenAI documents roughly $0.015 per
@@ -152,7 +170,8 @@ def _concat(parts: list[Path], dest: Path) -> None:
                            f"{(p.stderr or '').strip()[:200]}")
 
 
-def player_html(audio_name: str, title: str, seconds: float) -> str:
+def player_html(audio_name: str, title: str, seconds: float,
+                audio_url: str = "") -> str:
     """The block injected into the report.
 
     Self-contained and style-scoped. Agent-authored pages are served with
@@ -166,6 +185,7 @@ def player_html(audio_name: str, title: str, seconds: float) -> str:
     secs = int(seconds % 60)
     length = f"{mins}:{secs:02d}" if mins else f"0:{secs:02d}"
     return (
+        BLOCK_OPEN + "\n"
         '<style>.atticus-audio{margin:0 0 1.5rem;padding:.9rem 1rem;border-radius:8px;'
         'border:1px solid rgba(127,127,127,.35);background:rgba(127,127,127,.08);'
         'font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}'
@@ -173,23 +193,45 @@ def player_html(audio_name: str, title: str, seconds: float) -> str:
         'text-transform:uppercase;letter-spacing:.05em;font-size:11px;font-weight:600}'
         '.atticus-audio audio{width:100%;max-width:34rem;display:block}'
         '.atticus-audio .dl{display:inline-block;margin-top:.45rem;font-size:12px;'
-        'opacity:.7}</style>\n'
+        'opacity:.7}'
+        '.atticus-audio .atticus-audio-url{font-size:12px;word-break:break-all}'
+        '</style>\n'
         '<div class="atticus-audio">'
         f'<span class="lab">Listen &middot; {length}</span>'
         f'<audio controls preload="none" src="{audio_name}"></audio>'
         f'<a class="dl" href="{audio_name}" download>Download the audio</a>'
-        '</div>\n'
+        # Screen-hidden, print-visible (site/assets/print.css). A PDF of this
+        # report is meant to be shared, and a shared PDF that mentions a
+        # recording without saying where it lives is a dead reference. The URL is
+        # absolute for the same reason — relative to nothing, once it is a file
+        # on someone's phone.
+        f'<span class="atticus-audio-url">Audio overview ({length}): '
+        f'{html.escape(audio_url or audio_name)}</span>'
+        '</div>\n' + BLOCK_CLOSE + "\n"
     )
 
 
 def inject_player(html_path: Path, block: str) -> bool:
-    """Put the player near the top of the report. Idempotent."""
-    html = html_path.read_text(errors="replace")
-    if 'class="atticus-audio"' in html:
-        return False                      # already carries a player
-    m = _BODY_OPEN.search(html)
-    html = (html[:m.end()] + "\n" + block + html[m.end():]) if m else block + html
-    html_path.write_text(html)
+    """Put the player near the top of the report, replacing any earlier one.
+
+    Delimited by HTML comments rather than matched on class names, so the whole
+    block — its <style> included — can be swapped wholesale. It REPLACES rather
+    than skips because the block's markup evolves: when the print-only absolute
+    URL was added, every already-published report was carrying a version without
+    it, and a skip-if-present rule silently left them that way. Re-running is
+    now how you upgrade them.
+    """
+    text = html_path.read_text(errors="replace")
+    existing = _BLOCK.search(text) or _LEGACY_BLOCK.search(text)
+    if existing:
+        if existing.group(0).strip() == block.strip():
+            return False                  # already current; nothing to write
+        text = text[:existing.start()] + block + text[existing.end():]
+        html_path.write_text(text)
+        return True
+    m = _BODY_OPEN.search(text)
+    text = (text[:m.end()] + "\n" + block + text[m.end():]) if m else block + text
+    html_path.write_text(text)
     return True
 
 
@@ -269,7 +311,11 @@ def generate(outdir: Path, cfg, *, log=print) -> dict:
     # lie by a page whose whole value is being trustworthy. ffprobe is already a
     # hard dependency of the transcribe path, so this costs nothing new.
     actual = au.probe_seconds(dest) or est["seconds"]
-    injected = inject_player(report, player_html(AUDIO_NAME, title, actual))
+    base = (getattr(cfg, "site_base_url", "") or "").rstrip("/")
+    stem = outdir.name
+    audio_url = f"{base}/docs/{stem}/{AUDIO_NAME}" if base else AUDIO_NAME
+    injected = inject_player(report,
+                             player_html(AUDIO_NAME, title, actual, audio_url))
     meta = {"made": True, "reason": "ok", **est,
             "audio": AUDIO_NAME, "bytes": dest.stat().st_size,
             "report": report.name, "injected": injected, "title": title,
