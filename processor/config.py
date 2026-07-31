@@ -138,6 +138,31 @@ class Config:
             "\"Atticus\".",
         )
 
+        # Audio overview ("podcast"). Opt-in: the agent only writes
+        # output/podcast-script.md when the spoken request asked to listen to the
+        # report, so with no script this stage does nothing and costs nothing.
+        # Same provider as transcription deliberately — one audio stack, and the
+        # key is already in ~/.config/ai/env, so no new credential enters the
+        # pipeline. NotebookLM itself has no API: Google's Discovery Engine
+        # Podcast API was deprecated in 2026 with no new allowlisting.
+        self.tts_url = g("ATTICUS_TTS_URL", "https://api.openai.com/v1/audio/speech")
+        self.tts_model = g("ATTICUS_TTS_MODEL", "gpt-4o-mini-tts")
+        self.tts_timeout = int(g("ATTICUS_TTS_TIMEOUT", "120"))
+        # Two clearly distinct voices. Same-sounding hosts defeat the format —
+        # the listener cannot tell who is asking and who is answering.
+        self.tts_voice_a = g("ATTICUS_TTS_VOICE_A", "onyx")
+        self.tts_voice_b = g("ATTICUS_TTS_VOICE_B", "nova")
+        self.tts_instructions = g(
+            "ATTICUS_TTS_INSTRUCTIONS",
+            "Conversational podcast host. Natural pace, warm but not "
+            "performative. Do not sound like an advertisement.",
+        )
+        # Per-episode ceiling on REAL money, checked against an estimate before
+        # the first request rather than discovered afterwards. The estimate is
+        # derived from script length; a ten-minute episode runs about $0.15, so
+        # the default stops a runaway script, not a normal one.
+        self.podcast_max_usd = float(g("ATTICUS_PODCAST_MAX_USD", "0.50") or 0)
+
         # Ingest (WarDog). The transport is a pluggable executable — see
         # ingest/poller.py. Whichever transport wins (SPEC §2.2.1), it ships
         # a fetcher implementing the same four-command CLI.

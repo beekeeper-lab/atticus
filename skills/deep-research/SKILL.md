@@ -65,6 +65,16 @@ Structure that works for reading on a phone:
 Length follows the question. A definition needs a page. "Compare local models
 for my hardware" needs a table and real numbers.
 
+## If the request also asked to listen to it
+
+Phrases like "and make me a podcast", "I want to listen to this on the drive",
+or "give me an audio version" mean the report is wanted *and* a spoken version.
+Write the report first, then follow the **`podcast-companion`** skill to add
+`output/podcast-script.md`. Do not attempt audio yourself — you hold no TTS
+credential and the pipeline voices the script after you exit.
+
+Say nothing about audio in the HTML. The pipeline injects the player.
+
 ## Notes
 
 - Include concrete specifics: version numbers, prices, benchmark figures, dates.

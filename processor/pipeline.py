@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import Config                                    # noqa: E402
 from lock import AlreadyRunning, single_instance             # noqa: E402
 import execute as ex                                         # noqa: E402
+import podcast as pod                                        # noqa: E402
 import transcribe as stt                                     # noqa: E402
 import usage                                                 # noqa: E402
 import wake                                                  # noqa: E402
@@ -379,6 +380,56 @@ def stage_execute(rec, cfg, log, dry_run=False):
                 budget_usd=res.get("budget_usd"))
 
 
+def stage_podcast(rec, cfg, log, dry_run=False):
+    """Voice output/podcast-script.md, if the agent wrote one.
+
+    Swallows everything. The only outcome that reaches the record is metadata
+    saying what happened, because there is no failure here worth withholding a
+    finished report over.
+    """
+    outdir = rec.outdir(cfg.vault)
+    if pod.find_script(outdir) is None:
+        return                                # audio was not asked for
+    if dry_run:
+        log.info("    [dry-run] skipping audio")
+        return
+
+    # TTS is real money on the same key and the same monthly budget as
+    # transcription, so it respects the same exhaustion check. Checked here
+    # rather than inside podcast.py so the module stays free of budget policy.
+    state = usage.budget_state(cfg.vault, cfg)
+    if state.get("exhausted"):
+        log.warn(f"    podcast skipped — monthly API budget exhausted "
+                 f"(${state.get('spent', 0):.2f})")
+        rec.data["podcast"] = {"made": False, "reason": "monthly API budget exhausted"}
+        return
+
+    try:
+        res = pod.generate(outdir, cfg, log=log.info)
+    except Exception as e:                    # noqa: BLE001 — see docstring
+        # A bug in this module must not cost the report. Name it loudly instead.
+        log.warn(f"    podcast failed unexpectedly: {type(e).__name__}: {e}")
+        rec.data["podcast"] = {"made": False,
+                               "reason": f"unexpected {type(e).__name__}: {e}"}
+        return
+
+    if res.get("made"):
+        log.info(f"    ♪ audio: {res['audio']} ({res['bytes']:,} bytes, "
+                 f"~{res['seconds']:.0f}s) → player in {res['report']}")
+        # seconds/usd here are MEASURED off the finished file, not the pre-flight
+        # estimate — see podcast.generate(). estimated_usd is kept alongside so
+        # drift between the two stays visible in the ledger.
+        usage.record(cfg.vault, kind="tts", billing=usage.API, stem=rec.stem,
+                     model=cfg.tts_model, usd=res["usd"], log=log.warn,
+                     audio_seconds=res["seconds"], turns=res["turns"],
+                     characters=res["chars"], estimated_usd=res["estimated_usd"])
+    elif res.get("reason", "").startswith("no script"):
+        pass                                  # not requested; nothing to report
+    else:
+        log.warn(f"    podcast not made: {res.get('reason')}")
+    rec.data["podcast"] = res
+
+
 def _execution_is_live(rec, cfg, log) -> bool:
     """Is some process still working on this EXECUTING record?
 
@@ -479,6 +530,11 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
             stage_execute(rec, cfg, log, dry_run)
 
         if rec.status == EXECUTED:
+            # Best-effort, and deliberately BEFORE publish so the audio and the
+            # player land in the same commit as the report. Cannot fail the
+            # record: the HTML is the deliverable and audio is a companion, so a
+            # TTS outage must not quarantine good research.
+            stage_podcast(rec, cfg, log, dry_run)
             # Explicit, rather than letting absence imply it. The gated path
             # writes executed=False, so "no key" used to mean "executed" — a
             # default that is easy to read the wrong way round.
