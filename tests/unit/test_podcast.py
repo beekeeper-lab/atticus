@@ -121,8 +121,37 @@ def test_player_block_is_a_self_contained_fragment():
     assert 'src="podcast.mp3"' in block
     assert "download" in block, "a player with no download is a dead end offline"
     assert "<head>" not in block and "<body" not in block, "must splice into a page"
-    assert "http://" not in block and "https://" not in block, \
-        "no remote reference — the vault sanitiser would strip it anyway"
+
+
+def test_the_player_carries_a_print_only_absolute_url(tmp_path, cfg, monkeypatch):
+    """A shared PDF that mentions a recording without saying where it lives is a
+    dead reference, and the <audio> control prints as a grey rectangle. So the
+    block carries the absolute URL, hidden on screen and shown by print.css."""
+    cfg.site_base_url = "http://forge/atticus"
+    monkeypatch.setattr(pod, "_speak",
+                        lambda t, v, c, d: d.write_bytes(b"\xff\xfbfake"))
+    monkeypatch.setattr(pod, "_concat", lambda parts, dest: dest.write_bytes(b"x"))
+    monkeypatch.setattr(pod.au, "probe_seconds", lambda p: 372.0)
+    outdir = _write(tmp_path / "2026-07-31T135221Z_deadbeef")
+    pod.generate(outdir, cfg)
+    page = (outdir / "report.html").read_text()
+    assert ('http://forge/atticus/docs/2026-07-31T135221Z_deadbeef/podcast.mp3'
+            in page)
+    assert 'class="atticus-audio-url"' in page
+
+
+def test_with_no_site_base_url_the_printed_reference_stays_relative(tmp_path, cfg,
+                                                                   monkeypatch):
+    """Better a relative filename than a fabricated host."""
+    cfg.site_base_url = ""
+    monkeypatch.setattr(pod, "_speak",
+                        lambda t, v, c, d: d.write_bytes(b"\xff\xfbfake"))
+    monkeypatch.setattr(pod, "_concat", lambda parts, dest: dest.write_bytes(b"x"))
+    outdir = _write(tmp_path / "o")
+    pod.generate(outdir, cfg)
+    page = (outdir / "report.html").read_text()
+    assert "http://" not in page and "https://" not in page
+    assert "Audio overview" in page
 
 
 def test_inject_places_the_player_immediately_after_body(tmp_path):
@@ -139,9 +168,45 @@ def test_inject_is_idempotent(tmp_path):
     p.write_text("<html><body><h1>T</h1></body></html>")
     block = pod.player_html("podcast.mp3", "T", 60)
     assert pod.inject_player(p, block) is True
-    assert pod.inject_player(p, block) is False, "a re-run must not stack players"
+    assert pod.inject_player(p, block) is False, "an identical re-run writes nothing"
     assert p.read_text().count('<div class="atticus-audio">') == 1
     assert p.read_text().count("<audio") == 1
+
+
+def test_an_unfenced_legacy_block_is_replaced_not_duplicated(tmp_path):
+    """The first shipped block had no comment fences, and reports published in
+    that window are already in the vault. Matching only the fenced form appended
+    a SECOND player instead of replacing the first — observed on a real report."""
+    legacy = (
+        '<style>.atticus-audio{margin:0}</style>\n'
+        '<div class="atticus-audio"><span class="lab">Listen &middot; 1:00</span>'
+        '<audio controls src="podcast.mp3"></audio></div>\n')
+    p = tmp_path / "r.html"
+    p.write_text(f"<html><body>\n{legacy}<h1>T</h1></body></html>")
+    new = pod.player_html("podcast.mp3", "T", 372, "http://forge/atticus/x.mp3")
+    assert pod.inject_player(p, new) is True
+    text = p.read_text()
+    assert text.count('<div class="atticus-audio">') == 1, "must not stack players"
+    assert text.count("<audio") == 1
+    assert "1:00" not in text and "6:12" in text
+    assert "http://forge/atticus/x.mp3" in text
+
+
+def test_a_stale_player_block_is_replaced_not_skipped(tmp_path):
+    """The block's markup evolves. When the print-only URL was added, every
+    already-published report held a version without it — and a skip-if-present
+    rule left them that way silently. Re-running must upgrade."""
+    p = tmp_path / "r.html"
+    p.write_text("<html><body><h1>T</h1><p>keep me</p></body></html>")
+    old = pod.player_html("podcast.mp3", "T", 60)
+    assert pod.inject_player(p, old) is True
+    new = pod.player_html("podcast.mp3", "T", 372, "http://forge/atticus/x.mp3")
+    assert pod.inject_player(p, new) is True, "a changed block must be rewritten"
+    text = p.read_text()
+    assert text.count('<div class="atticus-audio">') == 1, "must replace, not stack"
+    assert "http://forge/atticus/x.mp3" in text
+    assert "6:12" in text and "1:00" not in text, "the stale length must be gone"
+    assert "keep me" in text, "the report itself must survive an upgrade"
 
 
 def test_inject_survives_html_with_no_body_tag(tmp_path):
