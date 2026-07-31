@@ -144,6 +144,13 @@ class Config:
                            (g("ATTICUS_BRIEF_TAGS", "") or "").split(",")
                            if t.strip()]
 
+        # Should the daily briefing also be voiced? Recurring daily spend, so it
+        # gets its own switch rather than riding on the podcast setting: about
+        # $0.09 an episode on Gemini, so roughly $2.80 a month at daily cadence,
+        # which is a real fraction of ATTICUS_API_BUDGET_USD.
+        self.brief_audio = (g("ATTICUS_BRIEF_AUDIO", "true") or "").strip().lower() \
+            in ("1", "true", "yes", "on")
+
         # Audio overview ("podcast"). Opt-in: the agent only writes
         # output/podcast-script.md when the spoken request asked to listen to the
         # report, so with no script this stage does nothing and costs nothing.
@@ -151,11 +158,51 @@ class Config:
         # key is already in ~/.config/ai/env, so no new credential enters the
         # pipeline. NotebookLM itself has no API: Google's Discovery Engine
         # Podcast API was deprecated in 2026 with no new allowlisting.
+        # Which engine voices the script. Gemini is the default after a blind
+        # A/B/C/D on one excerpt on 2026-07-31: ElevenLabs v3 won on quality but
+        # costs 12x, and Gemini beat both OpenAI variants while being marginally
+        # CHEAPER per episode than OpenAI — not because the rate is lower (both
+        # work out to $0.015/min) but because its delivery is faster for the same
+        # words, so there are fewer seconds to bill.
+        #
+        # The reason it wins is architectural, not cosmetic: Gemini takes both
+        # speakers in ONE call, so it paces the whole conversation. OpenAI
+        # synthesises one line per call, so a reply never knows it is a reply, and
+        # 56 isolated lines read as two narrators rather than a conversation. No
+        # amount of per-turn styling fixed that; variant B tried and came third.
+        self.tts_provider = (g("ATTICUS_TTS_PROVIDER", "gemini") or "gemini").strip().lower()
+
+        # Gemini path. Audio bills at a MEASURED 25 tokens/second (verified
+        # 24.97-25.00 across three runs), and the API returns usageMetadata — so
+        # cost here is measured rather than derived from duration.
+        self.gemini_tts_url = g(
+            "ATTICUS_GEMINI_TTS_URL",
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            "{model}:generateContent")
+        self.gemini_tts_model = g("ATTICUS_GEMINI_TTS_MODEL",
+                                  "gemini-2.5-flash-preview-tts")
+        self.gemini_voice_a = g("ATTICUS_GEMINI_VOICE_A", "Charon")
+        self.gemini_voice_b = g("ATTICUS_GEMINI_VOICE_B", "Aoede")
+        # One call renders the whole episode, so this is minutes not seconds:
+        # a 56-turn script took 162s to return. Too tight a bound turns a working
+        # episode into a timeout.
+        self.gemini_tts_timeout = int(g("ATTICUS_GEMINI_TTS_TIMEOUT", "900"))
+        self.gemini_tts_style = g(
+            "ATTICUS_GEMINI_TTS_STYLE",
+            "Read this as a natural, brisk two-host podcast conversation. "
+            "{a} explains and is confident; {b} is curious and slightly "
+            "skeptical, and reacts quickly. Do not sound like an advertisement.")
+
+        # OpenAI path, retained as a fallback and for comparison.
         self.tts_url = g("ATTICUS_TTS_URL", "https://api.openai.com/v1/audio/speech")
         self.tts_model = g("ATTICUS_TTS_MODEL", "gpt-4o-mini-tts")
         self.tts_timeout = int(g("ATTICUS_TTS_TIMEOUT", "120"))
         # Two clearly distinct voices. Same-sounding hosts defeat the format —
         # the listener cannot tell who is asking and who is answering.
+        # 128 kbps on 24 kHz mono speech is wasteful — the 12 kHz ceiling is the
+        # limiter, not the bitrate — and every episode is a permanent git blob.
+        # 48 kbps is transparent for two people talking and cuts each file ~60%.
+        self.tts_bitrate_kbps = int(g("ATTICUS_TTS_BITRATE_KBPS", "48"))
         self.tts_voice_a = g("ATTICUS_TTS_VOICE_A", "onyx")
         self.tts_voice_b = g("ATTICUS_TTS_VOICE_B", "nova")
         self.tts_instructions = g(
@@ -309,6 +356,7 @@ class Config:
                              if w.strip()]
 
         self._openai_key = None
+        self._gemini_key = None
 
     @property
     def openai_key(self) -> str:
@@ -323,6 +371,26 @@ class Config:
                 raise RuntimeError("OPENAI_API_KEY does not look like an OpenAI key")
             self._openai_key = k
         return self._openai_key
+
+    @property
+    def gemini_key(self) -> str:
+        """Read on demand from the shared credential file. Never logged.
+
+        Same convention as openai_key. No prefix check: Google API keys start
+        "AIza" today but that is not a documented contract, and rejecting a valid
+        key on a guessed shape is worse than passing a bad one to the API, which
+        answers with a clear 401.
+        """
+        if self._gemini_key is None:
+            k = (os.environ.get("GEMINI_API_KEY")
+                 or _parse_env(AI_ENV).get("GEMINI_API_KEY", ""))
+            if not k:
+                raise RuntimeError(
+                    f"GEMINI_API_KEY not found in environment or {AI_ENV} — "
+                    f"needed because ATTICUS_TTS_PROVIDER is 'gemini'"
+                )
+            self._gemini_key = k
+        return self._gemini_key
 
     def redacted(self) -> dict:
         """Safe to log. Deliberately omits anything credential-shaped."""

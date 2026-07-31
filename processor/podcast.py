@@ -22,6 +22,7 @@ programmatic route to a real NotebookLM audio overview — was deprecated in 202
 with no new allowlisting, so there is no API to call. This reproduces the format
 (two hosts, conversational, summarising one source) with a TTS model instead.
 """
+import base64
 import html
 import json
 import re
@@ -78,6 +79,14 @@ _LEGACY_BLOCK = re.compile(
 # rather than this one.
 _USD_PER_AUDIO_MINUTE = 0.015
 _CHARS_PER_SECOND = 14.0
+
+# Gemini's published rates (ai.google.dev/gemini-api/docs/pricing, 2026-07-31).
+# Audio bills at a measured 25 tokens/second, so $10/1M works out to the same
+# $0.015/minute as OpenAI — the saving comes from faster delivery, not a cheaper
+# rate. Kept as named constants because they are the only figures in this module
+# that a provider can change under us.
+_GEMINI_AUDIO_USD_PER_MTOK = 10.00
+_GEMINI_TEXT_USD_PER_MTOK = 0.50
 
 # A hard structural bound, separate from the money bound. A script this long is
 # not a summary and almost certainly means the agent misunderstood the task.
@@ -145,6 +154,93 @@ def _speak(text: str, voice: str, cfg, dest: Path) -> None:
     if not resp.content:
         raise PodcastError("TTS returned an empty body")
     dest.write_bytes(resp.content)
+
+
+def _speak_gemini(turns: list[tuple[str, str]], cfg, dest: Path) -> dict:
+    """Render the WHOLE dialogue in one Gemini call. Returns measured usage.
+
+    This is the path that fixes the thing per-turn synthesis cannot: the model
+    sees the entire conversation, so a reply is paced as a reply. It also removes
+    the per-turn loop and the ffmpeg concat entirely — one request, one decode.
+
+    Gemini returns raw 16-bit little-endian PCM at 24 kHz mono, not a container,
+    so ffmpeg wraps it. And it returns usageMetadata, which means cost here is
+    MEASURED rather than derived from duration — no estimate to drift.
+    """
+    a, b = "Alex", "Blake"
+    script = "\n".join(f"{a if spk == 'A' else b}: {text}" for spk, text in turns)
+    style = (cfg.gemini_tts_style or "").format(a=a, b=b)
+    body = {
+        "contents": [{"parts": [{"text": f"{style}\n\n{script}" if style else script}]}],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {"multiSpeakerVoiceConfig": {"speakerVoiceConfigs": [
+                {"speaker": a, "voiceConfig": {
+                    "prebuiltVoiceConfig": {"voiceName": cfg.gemini_voice_a}}},
+                {"speaker": b, "voiceConfig": {
+                    "prebuiltVoiceConfig": {"voiceName": cfg.gemini_voice_b}}},
+            ]}},
+        },
+    }
+    url = cfg.gemini_tts_url.format(model=cfg.gemini_tts_model)
+    try:
+        resp = requests.post(url, json=body, timeout=cfg.gemini_tts_timeout,
+                             headers={"x-goog-api-key": cfg.gemini_key})
+    except requests.Timeout:
+        raise PodcastError(f"Gemini TTS timeout after {cfg.gemini_tts_timeout}s")
+    except requests.RequestException as e:
+        raise PodcastError(f"Gemini TTS network error: {type(e).__name__}")
+    if resp.status_code != 200:
+        if resp.status_code in (401, 403):
+            raise PodcastError(f"Gemini TTS auth rejected ({resp.status_code}) — "
+                               f"check GEMINI_API_KEY in ~/.config/ai/env")
+        raise PodcastError(f"Gemini TTS returned {resp.status_code}: "
+                           f"{resp.text[:160]}")
+    try:
+        payload = resp.json()
+        cand = payload["candidates"][0]
+        inline = cand["content"]["parts"][0]["inlineData"]
+        pcm = base64.b64decode(inline["data"])
+    except (ValueError, KeyError, IndexError, TypeError) as e:
+        raise PodcastError(f"Gemini TTS response not understood: {type(e).__name__}")
+
+    # A truncated render sounds like a complete episode that stops mid-sentence,
+    # which is worse than a failure because nothing flags it. Refuse it.
+    reason = cand.get("finishReason")
+    if reason and reason != "STOP":
+        raise PodcastError(f"Gemini stopped early (finishReason={reason}) — the "
+                           f"script is probably too long for one call")
+    if not pcm:
+        raise PodcastError("Gemini TTS returned no audio")
+
+    exe = shutil.which("ffmpeg")
+    if not exe:
+        raise PodcastError("ffmpeg is not installed, so the PCM cannot be encoded")
+    with tempfile.TemporaryDirectory() as td:
+        raw = Path(td) / "audio.pcm"
+        raw.write_bytes(pcm)
+        p = subprocess.run(
+            [exe, "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "s16le", "-ar", "24000", "-ac", "1", "-i", str(raw),
+             "-c:a", "libmp3lame", "-b:a", str(cfg.tts_bitrate_kbps) + "k",
+             str(dest)],
+            capture_output=True, text=True, timeout=300)
+    if p.returncode != 0 or not dest.is_file() or dest.stat().st_size == 0:
+        raise PodcastError(f"ffmpeg could not encode the audio: "
+                           f"{(p.stderr or '').strip()[:200]}")
+
+    meta = payload.get("usageMetadata") or {}
+    audio_tok = next((d.get("tokenCount", 0)
+                      for d in meta.get("candidatesTokensDetails") or []
+                      if d.get("modality") == "AUDIO"), 0)
+    in_tok = meta.get("promptTokenCount", 0)
+    return {
+        "audio_tokens": audio_tok,
+        "input_tokens": in_tok,
+        "usd": round(audio_tok / 1e6 * _GEMINI_AUDIO_USD_PER_MTOK
+                     + in_tok / 1e6 * _GEMINI_TEXT_USD_PER_MTOK, 6),
+        "calls": 1,
+    }
 
 
 def _concat(parts: list[Path], dest: Path) -> None:
@@ -282,28 +378,38 @@ def generate(outdir: Path, cfg, *, log=print) -> dict:
         return {"made": False, **est,
                 "reason": "no HTML report to attach the player to"}
 
-    voices = {"A": cfg.tts_voice_a, "B": cfg.tts_voice_b}
+    provider = getattr(cfg, "tts_provider", "gemini")
     log(f"    podcast: {est['turns']} turns, ~{est['seconds']:.0f}s, "
-        f"~${est['usd']:.4f} estimated")
+        f"~${est['usd']:.4f} estimated, via {provider}")
+    dest = outdir / AUDIO_NAME
+    measured = {}
 
-    with tempfile.TemporaryDirectory() as td:
-        parts = []
-        for i, (speaker, text) in enumerate(turns):
-            part = Path(td) / f"{i:04d}.mp3"
-            try:
-                _speak(text, voices.get(speaker, cfg.tts_voice_a), cfg, part)
-            except PodcastError as e:
-                # Partial audio is worse than none: it stops mid-argument and
-                # sounds like a bug rather than a summary.
-                return {"made": False, **est,
-                        "reason": f"turn {i + 1}/{len(turns)} failed: {e}"}
-            parts.append(part)
-        dest = outdir / AUDIO_NAME
+    if provider == "gemini":
         try:
-            _concat(parts, dest)
+            measured = _speak_gemini(turns, cfg, dest)
         except PodcastError as e:
             dest.unlink(missing_ok=True)
             return {"made": False, **est, "reason": str(e)}
+    else:
+        voices = {"A": cfg.tts_voice_a, "B": cfg.tts_voice_b}
+        with tempfile.TemporaryDirectory() as td:
+            parts = []
+            for i, (speaker, text) in enumerate(turns):
+                part = Path(td) / f"{i:04d}.mp3"
+                try:
+                    _speak(text, voices.get(speaker, cfg.tts_voice_a), cfg, part)
+                except PodcastError as e:
+                    # Partial audio is worse than none: it stops mid-argument and
+                    # sounds like a bug rather than a summary.
+                    return {"made": False, **est,
+                            "reason": f"turn {i + 1}/{len(turns)} failed: {e}"}
+                parts.append(part)
+            try:
+                _concat(parts, dest)
+            except PodcastError as e:
+                dest.unlink(missing_ok=True)
+                return {"made": False, **est, "reason": str(e)}
+        measured = {"calls": len(turns)}
 
     # The player's running time must be the file's, not the pre-flight guess. The
     # estimate is good (measured within 5% on a real run) but it is still an
@@ -316,15 +422,21 @@ def generate(outdir: Path, cfg, *, log=print) -> dict:
     audio_url = f"{base}/docs/{stem}/{AUDIO_NAME}" if base else AUDIO_NAME
     injected = inject_player(report,
                              player_html(AUDIO_NAME, title, actual, audio_url))
+    # Cost: Gemini REPORTS what it billed, so use that. OpenAI does not, so it is
+    # derived from measured duration. Either way the estimate is kept beside it —
+    # the ceiling has to be decided before spending, and keeping both is how a
+    # drifting estimate stays visible instead of confirming itself.
+    if measured.get("usd") is not None:
+        billed = measured["usd"]
+    else:
+        billed = round((actual / 60.0) * _USD_PER_AUDIO_MINUTE, 6)
     meta = {"made": True, "reason": "ok", **est,
             "audio": AUDIO_NAME, "bytes": dest.stat().st_size,
             "report": report.name, "injected": injected, "title": title,
-            # The ceiling is checked against the estimate because it has to be
-            # decided before spending; the LEDGER gets the measured figure,
-            # because that is what was actually billed. Keeping both means a
-            # drifting estimate is visible rather than self-confirming.
+            "provider": provider,
             "estimated_usd": est["usd"],
             "seconds": round(actual, 1),
-            "usd": round((actual / 60.0) * _USD_PER_AUDIO_MINUTE, 6)}
+            "usd": billed,
+            **{k: v for k, v in measured.items() if k != "usd"}}
     (outdir / "podcast.json").write_text(json.dumps(meta, indent=2) + "\n")
     return meta

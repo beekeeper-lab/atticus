@@ -101,7 +101,11 @@ def test_no_html_report_means_no_episode(tmp_path, cfg, monkeypatch):
 
 
 def test_a_failed_turn_produces_no_partial_audio(tmp_path, cfg, monkeypatch):
-    """Half an episode stops mid-argument and reads as a bug, not a summary."""
+    """Half an episode stops mid-argument and reads as a bug, not a summary.
+
+    OpenAI path only — the Gemini path renders in one call, so there is no
+    per-turn failure to contain."""
+    cfg.tts_provider = "openai"
     def boom(text, voice, c, dest):
         if "ignores commands" in text:
             raise pod.PodcastError("upstream 503")
@@ -128,6 +132,7 @@ def test_the_player_carries_a_print_only_absolute_url(tmp_path, cfg, monkeypatch
     dead reference, and the <audio> control prints as a grey rectangle. So the
     block carries the absolute URL, hidden on screen and shown by print.css."""
     cfg.site_base_url = "http://forge/atticus"
+    cfg.tts_provider = "openai"
     monkeypatch.setattr(pod, "_speak",
                         lambda t, v, c, d: d.write_bytes(b"\xff\xfbfake"))
     monkeypatch.setattr(pod, "_concat", lambda parts, dest: dest.write_bytes(b"x"))
@@ -144,6 +149,7 @@ def test_with_no_site_base_url_the_printed_reference_stays_relative(tmp_path, cf
                                                                    monkeypatch):
     """Better a relative filename than a fabricated host."""
     cfg.site_base_url = ""
+    cfg.tts_provider = "openai"
     monkeypatch.setattr(pod, "_speak",
                         lambda t, v, c, d: d.write_bytes(b"\xff\xfbfake"))
     monkeypatch.setattr(pod, "_concat", lambda parts, dest: dest.write_bytes(b"x"))
@@ -231,7 +237,10 @@ def test_primary_html_prefers_index_then_largest(tmp_path):
 # ── the happy path ─────────────────────────────────────────────────────────
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")
 def test_a_real_join_produces_audio_and_a_player(tmp_path, cfg, monkeypatch):
-    """End to end with a genuine ffmpeg concat over real (tiny) MP3 frames."""
+    """End to end with a genuine ffmpeg concat over real (tiny) MP3 frames.
+
+    OpenAI path — this is the concat that the Gemini path does not need."""
+    cfg.tts_provider = "openai"
     silent = _one_frame_mp3()
 
     def fake(text, voice, c, dest):
@@ -249,6 +258,8 @@ def test_a_real_join_produces_audio_and_a_player(tmp_path, cfg, monkeypatch):
 
 
 def test_the_two_hosts_get_different_voices(tmp_path, cfg, monkeypatch):
+    """OpenAI path: distinct voices are selected per speaker."""
+    cfg.tts_provider = "openai"
     seen = {}
 
     def fake(text, voice, c, dest):
@@ -269,3 +280,93 @@ def _one_frame_mp3() -> bytes:
     # 0xFF 0xFB = sync + MPEG1 Layer3 no-CRC; 0x90 = 128kbps 44.1k; 0x00 = mono-ish
     header = b"\xff\xfb\x90\x00"
     return (header + b"\x00" * 413) * 4
+
+
+# ── the Gemini path — one call, measured cost ──────────────────────────────
+def _gemini_response(seconds=8.0, audio_tokens=200, finish="STOP"):
+    """A realistic response envelope: raw 24 kHz mono PCM, base64, plus usage."""
+    import base64
+    pcm = b"\x00\x00" * int(24000 * seconds)
+    return {
+        "candidates": [{"finishReason": finish, "content": {"parts": [
+            {"inlineData": {"mimeType": "audio/L16;codec=pcm;rate=24000",
+                            "data": base64.b64encode(pcm).decode()}}]}}],
+        "usageMetadata": {
+            "promptTokenCount": 300,
+            "candidatesTokensDetails": [
+                {"modality": "AUDIO", "tokenCount": audio_tokens}],
+        },
+    }
+
+
+class _Resp:
+    def __init__(self, payload, status=200, text=""):
+        self._p, self.status_code, self.text = payload, status, text
+
+    def json(self):
+        if self._p is None:
+            raise ValueError("not json")
+        return self._p
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")
+def test_gemini_renders_the_whole_dialogue_in_one_call(tmp_path, cfg, monkeypatch):
+    """The reason Gemini was chosen: one call, so the model paces the whole
+    conversation instead of synthesising 56 lines that never heard each other."""
+    calls = []
+
+    def fake_post(url, **kw):
+        calls.append(kw["json"])
+        return _Resp(_gemini_response(seconds=8.0, audio_tokens=200))
+    monkeypatch.setattr(pod.requests, "post", fake_post)
+    outdir = _write(tmp_path / "o")
+    res = pod.generate(outdir, cfg)
+    assert res["made"] is True, res.get("reason")
+    assert len(calls) == 1, "the whole episode must be ONE request"
+    assert res["provider"] == "gemini" and res["calls"] == 1
+    # both speakers configured in that single request
+    speakers = (calls[0]["generationConfig"]["speechConfig"]
+                ["multiSpeakerVoiceConfig"]["speakerVoiceConfigs"])
+    assert {s["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] for s in speakers} \
+        == {cfg.gemini_voice_a, cfg.gemini_voice_b}
+    assert (outdir / pod.AUDIO_NAME).stat().st_size > 0
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")
+def test_gemini_cost_is_measured_not_derived(tmp_path, cfg, monkeypatch):
+    """Gemini reports what it billed, so there is no estimate to drift. 200 audio
+    tokens at $10/1M plus 300 text tokens at $0.50/1M."""
+    monkeypatch.setattr(pod.requests, "post",
+                        lambda url, **kw: _Resp(_gemini_response(audio_tokens=200)))
+    res = pod.generate(_write(tmp_path / "o"), cfg)
+    assert res["audio_tokens"] == 200 and res["input_tokens"] == 300
+    assert res["usd"] == pytest.approx(200 / 1e6 * 10.0 + 300 / 1e6 * 0.5)
+    assert res["usd"] != res["estimated_usd"], "measured must not be the estimate"
+
+
+def test_a_truncated_gemini_render_is_refused(tmp_path, cfg, monkeypatch):
+    """A cut-off render sounds like a complete episode that stops mid-sentence,
+    which is worse than a failure because nothing flags it."""
+    monkeypatch.setattr(pod.requests, "post", lambda url, **kw: _Resp(
+        _gemini_response(finish="MAX_TOKENS")))
+    res = pod.generate(_write(tmp_path / "o"), cfg)
+    assert res["made"] is False
+    assert "finishReason=MAX_TOKENS" in res["reason"]
+    assert "too long" in res["reason"], "must say what to do about it"
+    assert not (tmp_path / "o" / pod.AUDIO_NAME).exists()
+
+
+@pytest.mark.parametrize("status,expect", [
+    (401, "GEMINI_API_KEY"), (403, "GEMINI_API_KEY"), (500, "returned 500")])
+def test_gemini_http_failures_are_named(tmp_path, cfg, monkeypatch, status, expect):
+    monkeypatch.setattr(pod.requests, "post",
+                        lambda url, **kw: _Resp(None, status, "upstream boom"))
+    res = pod.generate(_write(tmp_path / "o"), cfg)
+    assert res["made"] is False and expect in res["reason"]
+
+
+def test_a_gemini_response_that_makes_no_sense_is_refused(tmp_path, cfg, monkeypatch):
+    monkeypatch.setattr(pod.requests, "post",
+                        lambda url, **kw: _Resp({"candidates": []}))
+    res = pod.generate(_write(tmp_path / "o"), cfg)
+    assert res["made"] is False and "not understood" in res["reason"]
