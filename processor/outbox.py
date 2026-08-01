@@ -209,6 +209,11 @@ def process(outdir: Path, cfg, *, log=print, stem: str = "") -> dict:
     reqs = read_requests(outdir, log=log)
     if not reqs:
         return {"requests": 0, "done": 0, "refused": 0, "failed": 0, "receipts": []}
+    for req in reqs:
+        # Which recording asked. Underscored like _file: pipeline-supplied, so a
+        # request cannot claim to be another recording — handlers that derive
+        # idempotency keys from it (todo.add) rely on that.
+        req["_stem"] = stem
 
     cap = int(getattr(cfg, "outbox_max_actions", 5) or 0)
     receipts = []

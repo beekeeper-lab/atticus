@@ -1,340 +1,199 @@
-"""`todo.add` — the first credentialed handler, and the proof of the #42 gate.
-
-Issue #51. Nothing here touches the network, a real token, or a subprocess: the
-whole `requests` module is replaced inside the handler, so a test that forgets to
-mock fails loudly instead of quietly calling Microsoft with the operator's token.
+"""`todo.add` and the vault todo store. Issue #51, decided 2026-08-01: the list
+lives in the vault, not Microsoft To Do (ADR-007). The Graph version's tests
+died with the Graph version — git history has both.
 
 The properties worth pinning are the ones that will actually bite:
 
-  * **Write consent does not exist yet.** The stored m365 token is read-only, so
-    the normal state of this handler on first deploy is "refused by Azure". It has
-    to say `Tasks.ReadWrite` out loud, because the fix is a human action.
+  * **A retry cannot double an item.** `pipeline.py --retry` re-runs a whole
+    outbox; the id must be deterministic in (stem, list, title), and a replay
+    must not resurrect an item the operator has since checked off.
   * **INTERNAL means unattended.** If this ever drifts to held, the feature is
-    useless — you would read "a task is pending" instead of finding it on a phone.
-  * **A due date is never guessed**, and a list is never created.
-  * **The m365 CLI's token file is read, never written.** Two processes rotating
-    one refresh token is how an account locks itself out.
+    useless — you would read "a task is pending" instead of finding the item on
+    the list.
+  * **A due date is never guessed.** `YYYY-MM-DD` or a refusal that names the
+    fix; a phrase must fail the add, not file a dateless item silently.
+  * **Three writers, no coordination.** The ledger is append-only, written by
+    the handler, the vault browser's API and a human; a torn line from a
+    concurrent append must not blind the reader to the rows around it.
 """
 import json
 
 import outbox
 import pytest
-import requests
-from handlers import todo
-
-TOKEN_OK = {"access_token": "at-1", "refresh_token": "rt-rotated",
-            "scope": "offline_access Tasks.ReadWrite", "expires_in": 3600}
-LISTS = {"value": [
-    {"id": "L-flag", "displayName": "Flagged email", "wellknownListName": "flaggedEmails"},
-    {"id": "L-def", "displayName": "Tasks", "wellknownListName": "defaultList"},
-    {"id": "L-shop", "displayName": "Shopping", "wellknownListName": "none"},
-]}
-
-_NO_JSON = object()
+import todos as store
+from handlers import todo  # noqa: F401  registers todo.add
 
 
-class _Resp:
-    def __init__(self, status=200, payload=None, text=None):
-        self.status_code = status
-        self._payload = payload
-        self.text = text if text is not None else json.dumps(
-            payload if payload is not _NO_JSON else {})
-
-    def json(self):
-        if self._payload is _NO_JSON:
-            raise ValueError("not json")
-        return self._payload
+def _titles(vault):
+    return [t["title"] for t in store.open_todos(vault)]
 
 
-class _FakeRequests:
-    """Stands in for the `requests` module inside the handler."""
+# ── the store ───────────────────────────────────────────────────────────────
 
-    RequestException = requests.RequestException
-
-    def __init__(self):
-        self.token = _Resp(200, TOKEN_OK)
-        self.lists = _Resp(200, LISTS)
-        self.created = _Resp(201, {"id": "T-1"})
-        self.raise_on = None            # exception to raise instead of answering
-        self.token_posts = []
-        self.graph = []
-
-    def post(self, url, data=None, timeout=None):
-        self.token_posts.append({"url": url, "data": data, "timeout": timeout})
-        if self.raise_on == "token":
-            raise requests.ConnectionError("no route")
-        return self.token
-
-    def request(self, method, url, headers=None, timeout=None, json=None):
-        self.graph.append({"method": method, "url": url, "headers": headers,
-                           "json": json, "timeout": timeout})
-        if self.raise_on == "graph":
-            raise requests.ConnectionError("no route")
-        return self.lists if method == "GET" else self.created
+def test_add_and_list(tmp_path):
+    rec = store.add(tmp_path, title="Pick up the prescription",
+                    due="2026-08-07", note="spoken 'by Friday'", stem="r1")
+    assert rec["duplicate"] is False
+    assert len(rec["id"]) == 12
+    items = store.open_todos(tmp_path)
+    assert [t["title"] for t in items] == ["Pick up the prescription"]
+    assert items[0]["due"] == "2026-08-07"
+    assert items[0]["status"] == store.OPEN
 
 
-@pytest.fixture
-def net(monkeypatch):
-    f = _FakeRequests()
-    monkeypatch.setattr(todo, "requests", f)
-    return f
+def test_the_ledger_lives_under_state(tmp_path):
+    """`.state/` is where every other cross-process ledger lives, and the vault
+    site build reads this exact path from the other repo."""
+    store.add(tmp_path, title="x", stem="r1")
+    assert (tmp_path / ".state/todo.jsonl").is_file()
 
 
-@pytest.fixture
-def token_file(tmp_path, cfg):
-    """A token store shaped exactly like the m365 CLI's, pointed at by config."""
-    p = tmp_path / "m365.json"
-    p.write_text(json.dumps({
-        "client_id": "cid", "tenant_id": "tid", "refresh_token": "rt-original",
-        "timezone": "America/New_York",
-        "access_token": "stale-read-only-token", "access_token_expires": 9999999999,
-    }))
-    cfg.todo_token_file = str(p)
-    return p
+def test_a_retry_of_the_same_recording_is_a_duplicate(tmp_path):
+    a = store.add(tmp_path, title="Buy milk", stem="rec-1")
+    b = store.add(tmp_path, title="Buy milk", stem="rec-1")
+    assert b["duplicate"] is True
+    assert b["id"] == a["id"]
+    assert _titles(tmp_path) == ["Buy milk"]
 
 
-def _add(cfg, **body):
-    return todo.add({"verb": "todo.add", **body}, cfg, log=lambda m: None)
+def test_the_same_words_in_a_new_recording_are_a_new_item(tmp_path):
+    """Groceries recur. Only a REPLAY may dedupe, never a fresh request."""
+    a = store.add(tmp_path, title="Buy milk", stem="rec-1")
+    b = store.add(tmp_path, title="Buy milk", stem="rec-2")
+    assert b["duplicate"] is False
+    assert b["id"] != a["id"]
+    assert _titles(tmp_path) == ["Buy milk", "Buy milk"]
 
 
-# ── registration and the gate ──────────────────────────────────────────────
+def test_a_replay_cannot_resurrect_a_done_item(tmp_path):
+    a = store.add(tmp_path, title="Buy milk", stem="rec-1")
+    store.append(tmp_path, a["id"], store.DONE)
+    again = store.add(tmp_path, title="Buy milk", stem="rec-1")
+    assert again["duplicate"] is True
+    assert _titles(tmp_path) == []          # still done
+
+
+def test_a_title_is_required_and_bounded(tmp_path):
+    with pytest.raises(store.TodoError):
+        store.add(tmp_path, title="   ")
+    rec = store.add(tmp_path, title="  a\n lot   of\twhitespace  " + "x" * 300)
+    assert rec["title"].startswith("a lot of whitespace")
+    assert len(rec["title"]) == store.MAX_TITLE
+
+
+def test_a_due_phrase_is_refused_with_the_fix_named(tmp_path):
+    with pytest.raises(store.TodoError, match="YYYY-MM-DD"):
+        store.add(tmp_path, title="x", due="by Friday")
+    with pytest.raises(store.TodoError, match="not a real date"):
+        store.add(tmp_path, title="x", due="2026-02-30")
+    assert _titles(tmp_path) == []          # a bad due fails the WHOLE add
+
+
+def test_ordering_is_soonest_due_then_arrival(tmp_path):
+    store.add(tmp_path, title="dateless-early", stem="a")
+    store.add(tmp_path, title="due-late", due="2026-09-01", stem="b")
+    store.add(tmp_path, title="due-soon", due="2026-08-05", stem="c")
+    store.add(tmp_path, title="dateless-late", stem="d")
+    assert _titles(tmp_path) == ["due-soon", "due-late",
+                                 "dateless-early", "dateless-late"]
+
+
+def test_resolve_by_id_and_by_title(tmp_path):
+    a = store.add(tmp_path, title="Renew the domain", stem="r1")
+    store.add(tmp_path, title="Call the bank", stem="r2")
+    assert store.resolve(tmp_path, store.DONE, a["id"])["status"] == store.DONE
+    assert store.resolve(tmp_path, store.DROPPED, "BANK")["status"] == store.DROPPED
+    assert _titles(tmp_path) == []
+
+
+def test_resolve_refuses_ambiguity_and_misses(tmp_path):
+    """Acting on a guess is worse than asking again — same rule as the GitHub
+    handler's repo matching."""
+    store.add(tmp_path, title="Call the bank", stem="r1")
+    store.add(tmp_path, title="Call the plumber", stem="r2")
+    with pytest.raises(store.TodoError, match="ambiguous"):
+        store.resolve(tmp_path, store.DONE, "call")
+    with pytest.raises(store.TodoError, match="no open todo"):
+        store.resolve(tmp_path, store.DONE, "nonexistent")
+    assert len(_titles(tmp_path)) == 2      # a refusal changes nothing
+
+
+def test_a_torn_ledger_line_does_not_blind_the_reader(tmp_path):
+    store.add(tmp_path, title="before", stem="r1")
+    with store.ledger_path(tmp_path).open("a") as f:
+        f.write('{"id": "zzz", "status"')   # a crash mid-append
+    store.add(tmp_path, title="after", stem="r2")
+    assert _titles(tmp_path) == ["before", "after"]
+
+
+def test_append_refuses_an_unknown_status(tmp_path):
+    with pytest.raises(store.TodoError, match="unknown status"):
+        store.append(tmp_path, "abc", "did-it-ish")
+
+
+# ── the handler ─────────────────────────────────────────────────────────────
+
+def _req(**kw):
+    return {"verb": "todo.add", "_file": "001-todo.add.json",
+            "_stem": "rec-9", **kw}
+
+
 def test_the_verb_is_registered_with_a_required_title():
     h = outbox.handler_for("todo.add")
     assert h is not None, "importing handlers.todo must register the verb"
     assert h["schema"] == ("title",)
+    with pytest.raises(outbox.OutboxError, match="needs title"):
+        outbox.validate(_req())
 
 
 def test_the_risk_class_is_internal_so_it_runs_unattended(cfg):
     """Only the operator sees a todo and undoing it is one tap. Holding it for
-    confirmation would defeat the point: the item has to be on the phone."""
+    confirmation would defeat the point: the item has to be on the list."""
     assert outbox.handler_for("todo.add")["risk"] == outbox.INTERNAL
-    assert outbox.gate(cfg, outbox.INTERNAL) == "auto"
+    assert outbox.gate(cfg, outbox.INTERNAL, "todo.add") == "auto"
 
 
-def test_an_unattended_pass_actually_performs_the_add(tmp_path, cfg, net, token_file):
-    """End to end through the outbox, with nobody present to approve."""
+def test_the_handler_writes_the_vault_ledger(cfg):
+    out = todo.add(_req(title="Renew the domain", due="2026-08-15",
+                        list="Errands", note="ctx"), cfg, log=lambda m: None)
+    assert out["due"] == "2026-08-15"
+    assert out["list"] == "Errands"
+    items = store.open_todos(cfg.vault)
+    assert [t["title"] for t in items] == ["Renew the domain"]
+    assert items[0]["source"] == "001-todo.add.json"
+    assert items[0]["stem"] == "rec-9"
+
+
+def test_the_handler_reports_a_duplicate_instead_of_staying_quiet(cfg):
+    first = todo.add(_req(title="Buy milk"), cfg, log=lambda m: None)
+    assert "already_added" not in first
+    again = todo.add(_req(title="Buy milk"), cfg, log=lambda m: None)
+    assert again["already_added"] is True
+    assert again["id"] == first["id"]
+
+
+def test_the_handler_translates_store_refusals(cfg):
+    with pytest.raises(outbox.OutboxError, match="YYYY-MM-DD"):
+        todo.add(_req(title="x", due="soonish"), cfg, log=lambda m: None)
+    assert store.open_todos(cfg.vault) == []
+
+
+def test_describe_reads_like_a_receipt():
+    d = outbox.describe(_req(title="Buy milk", list="Shopping", due="2026-08-05"))
+    assert "Buy milk" in d and "Shopping" in d and "2026-08-05" in d
+
+
+def test_an_unattended_pass_actually_performs_the_add(tmp_path, cfg):
+    """End to end through outbox.process() — including the _stem injection the
+    dedupe key depends on, which requests cannot supply for themselves."""
     out = tmp_path / "output"
     (out / "outbox").mkdir(parents=True)
     (out / "outbox" / "001-todo.add.json").write_text(json.dumps(
-        {"verb": "todo.add", "title": "Pick up the prescription"}))
-    res = outbox.process(out, cfg, log=lambda m: None)
-    assert res["done"] == 1 and res["failed"] == 0 and res["refused"] == 0
-    rec = res["receipts"][0]
-    assert rec["status"] == "done" and rec["risk"] == outbox.INTERNAL
-    assert rec["id"] == "T-1"
-    assert "Pick up the prescription" in rec["summary"], "the operator reads this"
-
-
-def test_the_summary_names_the_task_the_list_and_the_date():
-    s = outbox.describe({"verb": "todo.add", "title": "Renew the domain",
-                         "list": "Shopping", "due": "2026-08-07"})
-    assert "Renew the domain" in s and "Shopping" in s and "2026-08-07" in s
-
-
-# ── not authorised yet: the normal state on first deploy ────────────────────
-def test_azure_refusing_the_write_scope_names_the_scope(cfg, net, token_file):
-    """The stored token is read-only. Until someone re-consents this is what
-    happens on every pass, and the message is the only thing that gets it fixed."""
-    net.token = _Resp(400, {"error": "invalid_grant",
-                            "error_description": "AADSTS65001: The user has not "
-                                                 "consented to Tasks.ReadWrite"})
-    with pytest.raises(outbox.OutboxError) as e:
-        _add(cfg, title="Pick up the prescription")
-    msg = str(e.value)
-    assert "Tasks.ReadWrite" in msg
-    assert "m365-auth" in msg, "must say what the operator has to run"
-    assert "AADSTS65001" in msg, "must carry Microsoft's own reason"
-    assert not net.graph, "nothing may be attempted against Graph"
-
-
-def test_a_token_granted_without_the_write_scope_is_refused_before_the_post(
-        cfg, net, token_file):
-    """Azure can hand back a narrower token than the one asked for; that must not
-    surface later as an unexplained 403."""
-    net.token = _Resp(200, {**TOKEN_OK, "scope": "offline_access Tasks.Read"})
-    with pytest.raises(outbox.OutboxError, match="Tasks.ReadWrite"):
-        _add(cfg, title="x")
-    assert not net.graph
-
-
-def test_graph_refusing_the_write_is_reported_as_a_consent_problem(cfg, net, token_file):
-    """Consent can be revoked between passes."""
-    net.created = _Resp(403, _NO_JSON, text="ErrorAccessDenied")
-    with pytest.raises(outbox.OutboxError, match="Tasks.ReadWrite"):
-        _add(cfg, title="x")
-
-
-def test_no_token_file_at_all_says_so_and_names_the_command(cfg, net, tmp_path):
-    cfg.todo_token_file = str(tmp_path / "nope.json")
-    with pytest.raises(outbox.OutboxError) as e:
-        _add(cfg, title="x")
-    assert "nope.json" in str(e.value) and "m365-auth" in str(e.value)
-    assert not net.token_posts, "must not try to mint a token with nothing to mint from"
-
-
-def test_a_token_file_missing_its_refresh_token_is_named_field_by_field(
-        cfg, net, tmp_path):
-    p = tmp_path / "m365.json"
-    p.write_text(json.dumps({"client_id": "cid", "tenant_id": "tid"}))
-    cfg.todo_token_file = str(p)
-    with pytest.raises(outbox.OutboxError, match="refresh_token"):
-        _add(cfg, title="x")
-
-
-def test_a_network_failure_is_a_sentence_not_a_traceback(cfg, net, token_file):
-    net.raise_on = "token"
-    with pytest.raises(outbox.OutboxError, match="ConnectionError"):
-        _add(cfg, title="x")
-
-
-# ── the successful add ─────────────────────────────────────────────────────
-def test_a_task_is_created_in_the_default_list(cfg, net, token_file):
-    res = _add(cfg, title="Pick up the prescription")
-    assert res == {"id": "T-1", "list": "Tasks",
-                   "title": "Pick up the prescription", "due": None}
-    post = [g for g in net.graph if g["method"] == "POST"]
-    assert len(post) == 1
-    assert post[0]["url"].endswith("/me/todo/lists/L-def/tasks"), \
-        "wellknownListName=defaultList, not simply the first list"
-    assert post[0]["json"] == {"title": "Pick up the prescription"}
-    assert post[0]["headers"]["Authorization"] == "Bearer at-1"
-
-
-def test_the_token_request_asks_only_for_the_write_scope(cfg, net, token_file):
-    _add(cfg, title="x")
-    data = net.token_posts[0]["data"]
-    assert data["grant_type"] == "refresh_token"
-    assert data["refresh_token"] == "rt-original"
-    assert "Tasks.ReadWrite" in data["scope"] and "offline_access" in data["scope"]
-    assert "Mail.Read" not in data["scope"], "a todo token must not be able to read mail"
-
-
-def test_the_m365_token_file_is_never_rewritten(cfg, net, token_file):
-    """Azure keeps the old refresh token valid, so there is nothing to save — and
-    two writers rotating one token is how the account locks itself out."""
-    before = token_file.read_text()
-    _add(cfg, title="x")
-    assert token_file.read_text() == before
-
-
-def test_a_note_becomes_the_task_body(cfg, net, token_file):
-    _add(cfg, title="Renew the domain", note='spoken: "renew the attic us dev domain"')
-    body = [g for g in net.graph if g["method"] == "POST"][0]["json"]
-    assert body["body"] == {"content": 'spoken: "renew the attic us dev domain"',
-                            "contentType": "text"}
-
-
-def test_a_long_title_is_trimmed_rather_than_silently_truncated_by_graph(
-        cfg, net, token_file):
-    res = _add(cfg, title="z" * 400)
-    assert len(res["title"]) == todo.TITLE_MAX
-
-
-# ── due dates ──────────────────────────────────────────────────────────────
-def test_a_calendar_date_becomes_local_noon_expressed_in_utc(cfg, net, token_file):
-    """To Do treats a due date as date-only but Graph demands a datetime. Midnight
-    lands on the wrong day under one of the two plausible client behaviours; noon
-    is right under both. The token file says America/New_York (UTC-4 in August)."""
-    _add(cfg, title="x", due="2026-08-07")
-    body = [g for g in net.graph if g["method"] == "POST"][0]["json"]
-    assert body["dueDateTime"] == {"dateTime": "2026-08-07T16:00:00.0000000",
-                                   "timeZone": "UTC"}
-
-
-def test_a_spoken_phrase_in_due_is_refused_and_nothing_is_created(cfg, net, token_file):
-    """Resolving "by Friday" needs the day the words were spoken, which the agent
-    has and the pipeline does not. A phrase arriving here means it could not."""
-    with pytest.raises(outbox.OutboxError) as e:
-        _add(cfg, title="x", due="by Friday")
-    assert "YYYY-MM-DD" in str(e.value)
-    assert not [g for g in net.graph if g["method"] == "POST"]
-
-
-def test_an_impossible_date_is_refused(cfg, net, token_file):
-    with pytest.raises(outbox.OutboxError, match="not a real date"):
-        _add(cfg, title="x", due="2026-02-31")
-
-
-def test_an_unknown_timezone_falls_back_to_utc_rather_than_failing(
-        cfg, net, tmp_path):
-    p = tmp_path / "m365.json"
-    p.write_text(json.dumps({"client_id": "c", "tenant_id": "t",
-                             "refresh_token": "r", "timezone": "Mars/Olympus"}))
-    cfg.todo_token_file = str(p)
-    _add(cfg, title="x", due="2026-08-07")
-    body = [g for g in net.graph if g["method"] == "POST"][0]["json"]
-    assert body["dueDateTime"]["dateTime"] == "2026-08-07T12:00:00.0000000"
-
-
-def test_no_due_date_sends_no_due_date(cfg, net, token_file):
-    _add(cfg, title="x")
-    assert "dueDateTime" not in [g for g in net.graph if g["method"] == "POST"][0]["json"]
-
-
-# ── which list ─────────────────────────────────────────────────────────────
-def test_a_named_list_is_matched_case_insensitively(cfg, net, token_file):
-    _add(cfg, title="milk", list="shopping")
-    assert [g for g in net.graph if g["method"] == "POST"][0]["url"].endswith(
-        "/me/todo/lists/L-shop/tasks")
-
-
-def test_the_config_default_list_is_used_when_the_request_names_none(
-        cfg, net, token_file):
-    cfg.todo_list = "Shopping"
-    _add(cfg, title="milk")
-    assert [g for g in net.graph if g["method"] == "POST"][0]["url"].endswith(
-        "/me/todo/lists/L-shop/tasks")
-
-
-def test_the_request_overrides_the_config_default(cfg, net, token_file):
-    cfg.todo_list = "Shopping"
-    _add(cfg, title="x", list="Tasks")
-    assert [g for g in net.graph if g["method"] == "POST"][0]["url"].endswith(
-        "/me/todo/lists/L-def/tasks")
-
-
-def test_an_unknown_list_is_refused_and_never_created(cfg, net, token_file):
-    """A misheard "Groseries" beside "Groceries" would be a task the operator never
-    finds — the quiet failure this project treats as the worst kind."""
-    with pytest.raises(outbox.OutboxError) as e:
-        _add(cfg, title="milk", list="Groseries")
-    msg = str(e.value)
-    assert "Groseries" in msg and "Shopping" in msg, "name the lists that do exist"
-    assert not [g for g in net.graph if g["method"] == "POST"], "no list, no task"
-
-
-def test_an_account_with_no_lists_says_so(cfg, net, token_file):
-    net.lists = _Resp(200, {"value": []})
-    with pytest.raises(outbox.OutboxError, match="no To Do lists"):
-        _add(cfg, title="x")
-
-
-# ── configuration ──────────────────────────────────────────────────────────
-def test_the_token_file_defaults_to_the_m365_clis_own_store(partial_cfg):
-    """No setting configured: use exactly the path `m365` uses, because that token
-    is already on the host."""
-    assert todo._token_file(partial_cfg).as_posix().endswith("/.secrets/m365.json")
-
-
-def test_a_named_account_resolves_like_m365_account(cfg):
-    cfg.todo_token_file = ""
-    cfg.todo_account = "organservices"
-    assert todo._token_file(cfg).name == "m365-organservices.json"
-
-
-def test_an_account_name_cannot_escape_the_secrets_directory(cfg):
-    cfg.todo_token_file = ""
-    cfg.todo_account = "../../etc/passwd"
-    p = todo._token_file(cfg)
-    assert p.parent.name == ".secrets" and ".." not in p.name
-
-
-def test_settings_are_read_with_defaults_so_an_older_config_still_works(partial_cfg,
-                                                                        net, tmp_path):
-    """`partial_cfg` genuinely lacks every todo_* attribute."""
-    p = tmp_path / "m365.json"
-    p.write_text(json.dumps({"client_id": "c", "tenant_id": "t", "refresh_token": "r"}))
-    partial_cfg.todo_token_file = str(p)
-    assert todo.add({"verb": "todo.add", "title": "x"}, partial_cfg,
-                    log=lambda m: None)["id"] == "T-1"
-    assert net.graph[0]["timeout"] == 20
+        {"verb": "todo.add", "title": "Pick up the prescription",
+         "_stem": "forged-by-the-agent"}))
+    summary = outbox.process(out, cfg, log=lambda *_: None, stem="2026-08-01T1_ab")
+    assert (summary["done"], summary["refused"], summary["failed"]) == (1, 0, 0)
+    items = store.open_todos(cfg.vault)
+    assert items[0]["stem"] == "2026-08-01T1_ab"   # pipeline's stem, not the forgery
+    receipt = json.loads((out / "outbox-receipt.json").read_text())
+    assert receipt["receipts"][0]["status"] == "done"

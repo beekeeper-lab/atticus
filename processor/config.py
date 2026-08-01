@@ -343,13 +343,9 @@ class Config:
         self.ado_tags = _csv(g("ATTICUS_ADO_TAGS", "atticus"))
         self.ado_timeout = int(g("ATTICUS_ADO_TIMEOUT", "30"))
 
-        # Microsoft To Do (skills/todo). Writes need Tasks.ReadWrite, which the
-        # shared read-only m365 token does not carry — see the skill for the two
-        # ways to grant it. Lists are never created; an unknown name refuses.
-        self.todo_account = g("ATTICUS_TODO_ACCOUNT", "default")
-        self.todo_token_file = (g("ATTICUS_TODO_TOKEN_FILE", "") or "").strip()
-        self.todo_list = (g("ATTICUS_TODO_LIST", "") or "").strip()
-        self.todo_timeout = int(g("ATTICUS_TODO_TIMEOUT", "20"))
+        # The todo list (skills/todo) needs NO configuration: it is a ledger in
+        # the vault (processor/todos.py), decided in #51 / ADR-007. The four
+        # ATTICUS_TODO_* settings the Graph backend used were removed with it.
 
         # Outlook (skills/outlook). Draft and calendar-event writes only; reading
         # is issue #63, not a gap in this skill. Two accounts exist with different

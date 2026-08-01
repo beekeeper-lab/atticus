@@ -1,35 +1,37 @@
 ---
 name: todo
 description: |
-  Adds an item to Gregg's Microsoft To Do list — the same list his phone and
-  Outlook show. Use when the transcript asks to put something on a list, remind
-  him to do something, add a task, add a to-do, or "don't let me forget" —
-  "add picking up the prescription to my list", "remind me to renew the
-  domain", "put milk on the shopping list". Writes an outbox request; the
-  pipeline creates the task after you exit. Do NOT use this to research or
-  decide anything (that is a normal task or `deep-research`), do NOT use it for
-  a calendar event with a time and a duration, and do NOT use it to file work
-  for other people to see — a GitHub issue or an ADO work item is a different
-  verb with a different gate.
+  Adds an item to Gregg's todo list — the list in his vault, which he reads on
+  his phone and in the vault browser. Use when the transcript asks to put
+  something on a list, remind him to do something, add a task, add a to-do, or
+  "don't let me forget" — "add picking up the prescription to my list", "remind
+  me to renew the domain", "put milk on the shopping list". Writes an outbox
+  request; the pipeline files the item after you exit. Do NOT use this to
+  research or decide anything (that is a normal task or `deep-research`), do
+  NOT use it for a calendar event with a time and a duration, and do NOT use it
+  to file work for other people to see — a GitHub issue or an ADO work item is
+  a different verb with a different gate.
 ---
 
 # todo
 
 Someone said one sentence into a wearable pin and walked off. The whole job is
-that the right item is waiting on their phone, worded so it still makes sense
+that the right item is waiting on their list, worded so it still makes sense
 tomorrow. That is a small job and it should stay small: **one spoken request is
 one task.**
 
-## The backend is Microsoft To Do, and it already exists
+## The backend is the vault's own list
 
-Do not build a list, do not write a Markdown checklist in the output directory,
-do not suggest an app. `todo.add` goes to Microsoft To Do over Graph, which is
-the same list the phone app, Outlook and `m365 tasks` all show — so items added
-elsewhere are already there and this one joins them.
+The list is a ledger in the vault, rendered by the vault site and checked off in
+the vault browser — the same browser the operator already uses on their phone.
+Decided in issue #51 (ADR-007): the pin is the capture path and the browser is
+the view, so no external app, no credential, and nothing you write here leaves
+the operator's own infrastructure.
 
-A plain Markdown list in the vault was considered and rejected: it needs no
-credential, but it cannot be seen on a phone at the pharmacy, which is the only
-moment the item matters.
+You do not write the list. Do not create a `todo.md`, a checklist, or any file
+pretending to be the list in your output directory — the pipeline appends to the
+real ledger after you exit, and a second list that looks like the first is worse
+than none.
 
 ## Write the request
 
@@ -49,7 +51,7 @@ One file, `./output/outbox/001-todo.add.json`:
 | `title` | yes | the task, as a short imperative. Trimmed to 255 characters. |
 | `note` | no | context that does not belong in the title, including the original wording |
 | `due` | no | a calendar date, `YYYY-MM-DD`, and nothing else |
-| `list` | no | an existing list's name. Omitted → the default list. |
+| `list` | no | a grouping label, shown as a section on the list. Omitted → the main list. |
 
 ### The title is the whole task
 
@@ -85,17 +87,16 @@ nothing. The rule:
 - **Never send a phrase in `due`.** The pipeline refuses anything that is not
   `YYYY-MM-DD`, and the task is then not created at all.
 
-There is no time-of-day. To Do due dates are dates; if the request really has a
-time and a place, it is a calendar event and this is the wrong skill.
+There is no time-of-day. A due date is a date; if the request really has a time
+and a place, it is a calendar event and this is the wrong skill.
 
 ### Lists
 
-Omit `list` and the item goes to the default To Do list, which is the right
-answer almost always. Name a list only when the transcript names one ("put it on
-the shopping list"), and use the name as spoken — the pipeline matches it
-case-insensitively against the lists that exist and **refuses rather than
-creating a new one**, because a misheard "Groseries" would be a task the operator
-never finds. If that refusal happens it is reported in the receipt.
+Omit `list` and the item goes on the main list, which is the right answer almost
+always. Name a list only when the transcript names one ("put it on the shopping
+list"), and use the name as spoken. It is a plain label — the rendered page
+groups by it, so even a misheard "Groseries" sits two lines from everything else
+in plain sight rather than becoming a list nobody opens.
 
 ## Then write the report
 
@@ -131,9 +132,7 @@ Rules:
   instead of it: the report is what the operator reads to find out what you did.
 
 `todo.add` is classed **internal** — only the operator sees it and undoing it is
-one tap — so it is performed unattended rather than held. It can still fail, for
-one boring reason worth knowing about: **Graph write consent.** Until someone
-approves the `Tasks.ReadWrite` scope on this host, every `todo.add` fails with a
-message saying exactly that. Nothing you can write changes it, so do not retry,
-do not fall back to a file in the vault, and do not mention credentials in the
-report beyond "the task is pending".
+one tap — so it is performed unattended rather than held, and it needs no
+credential, so there is nothing to consent to and no token that can be missing.
+The one way it fails is a malformed `due`, and the receipt says so; follow the
+date rules above and it will not.

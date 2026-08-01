@@ -114,10 +114,6 @@ copies.
 | `ATTICUS_STT_PROMPT` | `Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules. The speaker is dictating a short instruction or request, and often begins by saying the name "Atticus".` | Steering prompt. Measurably improves punctuation and capitalization — carried over from hyprwhspr's config and extended for instruction-shaped audio. Change with care. |
 | `ATTICUS_STT_TIMEOUT` | `60` |  |
 | `ATTICUS_STT_URL` | `https://api.openai.com/v1/audio/transcriptions` | ── transcription ──────────────────────────────────────────────────── Same endpoint and model as the machine's existing dictation (hyprwhspr), deliberately: one transcription stack, not two. The AP… |
-| `ATTICUS_TODO_ACCOUNT` | `default` | Microsoft To Do — already exists and is already authenticated for READS via the m365 CLI. Writing needs Tasks.ReadWrite, which that shared read-only token does not carry; skills/todo/SKILL.md gives… |
-| `ATTICUS_TODO_LIST` | *(empty)* |  |
-| `ATTICUS_TODO_TIMEOUT` | `20` |  |
-| `ATTICUS_TODO_TOKEN_FILE` | *(empty)* |  |
 | `ATTICUS_TRANSCRIPTION_BUDGET_USD` | `2.00` | Transcription, plus the wake adjudicator (same key, derived from a transcript). The pipeline cannot run without this, so exhaustion is a HARD stop needing a human. It is pennies — about $0.003 a re… |
 | `ATTICUS_TTS_BITRATE_KBPS` | `48` | 24 kHz mono speech is capped at 12 kHz by the sample rate, so 128 kbps buys nothing audible and every episode is a permanent git blob. 48 kbps is transparent for two people talking and cuts each fi… |
 | `ATTICUS_TTS_BUDGET_USD` | `10.00` | Text-to-speech. Optional, on demand, and the expensive one per unit (about $0.05-0.10 an episode). Exhaustion skips ONLY the audio: the transcript, the agent run and the published report all still … |
@@ -139,4 +135,4 @@ copies.
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*128 settings.*
+*124 settings.*
