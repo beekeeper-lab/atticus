@@ -10,6 +10,17 @@ copies.
 
 | Setting | Default | Purpose |
 |---|---|---|
+| `ATTICUS_ADO_AREA_PATH` | *(empty)* |  |
+| `ATTICUS_ADO_ASSIGNED_TO` | *(empty)* |  |
+| `ATTICUS_ADO_BASE_URL` | `https://dev.azure.com` |  |
+| `ATTICUS_ADO_ITERATION_PATH` | *(empty)* |  |
+| `ATTICUS_ADO_ORG` | *(empty)* |  |
+| `ATTICUS_ADO_PAT` | *(empty)* | Azure DevOps — PAT scoped to work-item read/write on ONE project, not the organisation. Project, area and iteration come from here; the agent has no basis for guessing them. Task is the default typ… |
+| `ATTICUS_ADO_PROJECT` | *(empty)* |  |
+| `ATTICUS_ADO_TAGS` | `atticus` |  |
+| `ATTICUS_ADO_TIMEOUT` | `30` |  |
+| `ATTICUS_ADO_WORKITEM_TYPE` | `Task` |  |
+| `ATTICUS_ADO_WORKITEM_TYPES` | `Task,Bug,Issue,User Story,Product Backlog Item,Feature,Epic` |  |
 | `ATTICUS_ALARM_THROTTLE_HOURS` | `6` | One alarm per condition per this many hours. The ingest timer rediscovers a dead session every 15 minutes; alarming each time is how you learn to ignore the alarm. |
 | `ATTICUS_ALLOWED_TOOLS` | `WebSearch,WebFetch,Read,Write,Edit,Glob,Grep,Bash` | Tools the agent may use, comma-separated. WebSearch/WebFetch are granted deliberately. Denying them bought NO security: the sandbox leaves the network namespace intact because research needs it, an… |
 | `ATTICUS_API_BUDGET_USD` | *(empty)* | SUPERSEDED — leave blank. Setting it does nothing except print a warning at startup. It was one pot for transcription AND text-to-speech, which is exactly the bug the two budgets above fix: audio s… |
@@ -23,6 +34,18 @@ copies.
 | `ATTICUS_CHUNK_SECONDS` | `1200` | Chunk length and overlap, seconds. The API caps a request at 1400s, so chunk_seconds is clamped to that. Chunks overlap because a hard cut lands mid-word about as often as not, and a word split acr… |
 | `ATTICUS_CLAUDE_BIN` | `claude` | ── execution ──────────────────────────────────────────────────────── Leave model unset to use the Claude Code default. |
 | `ATTICUS_CLAUDE_MODEL` | *(empty)* |  |
+| `ATTICUS_CONTACTS_AMBIGUITY_MARGIN` | `0.15` |  |
+| `ATTICUS_CONTACTS_CACHE_PATH` | *(empty)* |  |
+| `ATTICUS_CONTACTS_CACHE_TTL_HOURS` | `168` |  |
+| `ATTICUS_CONTACTS_GIT_MAX_COMMITS` | `2000` |  |
+| `ATTICUS_CONTACTS_GIT_REPOS` | *(empty)* |  |
+| `ATTICUS_CONTACTS_M365_ACCOUNTS` | *(empty)* |  |
+| `ATTICUS_CONTACTS_M365_LIMIT` | *(empty)* |  |
+| `ATTICUS_CONTACTS_MAX_RESULTS` | `8` |  |
+| `ATTICUS_CONTACTS_MIN_CONFIDENCE` | `0.75` |  |
+| `ATTICUS_CONTACTS_PHONETIC` | `on` |  |
+| `ATTICUS_CONTACTS_SOURCES` | `m365:people,m365:contacts` | Contact resolution (processor/contacts.py, ADR-006). Pipeline-side infrastructure the handlers call to turn "Robbie" into an address — NOT an agent-facing lookup, which would be a read (issue #63).… |
+| `ATTICUS_CONTACTS_TIMEOUT` | `20` |  |
 | `ATTICUS_EXEC_TIMEOUT` | `1800` |  |
 | `ATTICUS_FETCHER` | `ingest/plaud_web.py` | THE TRANSPORT IS A PLUGGABLE EXECUTABLE. ingest/poller.py shells out to this and requires only that it implement: <fetcher> whoami --json <fetcher> list --days N --json   → {"recordings":[{id,creat… |
 | `ATTICUS_FETCHER_TIMEOUT` | `300` |  |
@@ -32,10 +55,15 @@ copies.
 | `ATTICUS_GEMINI_TTS_URL` | *(empty)* |  |
 | `ATTICUS_GEMINI_VOICE_A` | `Charon` | Voices: Charon (deeper) and Aoede (brighter). They must be clearly distinct or the format fails — the listener cannot tell who is asking from who is answering. |
 | `ATTICUS_GEMINI_VOICE_B` | `Aoede` |  |
+| `ATTICUS_GH_BIN` | `gh` | The gh binary, and how long one call may take. gh must be authenticated for the user the processor unit runs as — `gh auth status` as that user, not as you. |
+| `ATTICUS_GITHUB_LABELS` | *(empty)* | Labels put on every issue Atticus files, so machine-filed ones are distinguishable from hand-filed ones. Comma-separated. Each label must ALREADY EXIST in the target repo or gh fails the whole crea… |
+| `ATTICUS_GITHUB_REPOS` | *(empty)* | ── GitHub, through `gh` (issue #50) ────────────────────────────────── WHICH REPOSITORIES A SPOKEN SENTENCE MAY FILE INTO. Comma-separated owner/name; the first is the default when a request names … |
+| `ATTICUS_GITHUB_TIMEOUT` | `60` |  |
 | `ATTICUS_GIT_AUTHOR_EMAIL` | `atticus@localhost` |  |
 | `ATTICUS_GIT_AUTHOR_NAME` | `Atticus Processor` | Git identity for automated commits. Distinguish the hosts so the vault history shows which side of the pipeline made each commit. ingest    → "Atticus Ingest" processor → "Atticus Processor" When b… |
 | `ATTICUS_GLOBAL_SKILLS` | `html-artifact-output,dataviz` | Which of the operator's GLOBAL (~/.claude/skills) skills the agent may see. Binding the whole directory handed it an inventory of unrelated infrastructure — M365 addresses, ntfy topics, provider co… |
 | `ATTICUS_HOST` | *(empty)* | Overrides the hostname used to name this host's dedupe ledger (.state/seen-<host>.jsonl) and to identify it in alarms. Blank = the real hostname, which is almost always what you want. Set it only i… |
+| `ATTICUS_LOCAL_TZ` | *(empty)* | ── reminders (issue #52) ───────────────────────────────────────────── "Atticus, remind me at four to call the bank." A reminder is a DELIVERY AT A TIME, which is a different thing from a todo: a t… |
 | `ATTICUS_LOG_LEVEL` | `INFO` | DEBUG \| INFO \| WARNING \| ERROR |
 | `ATTICUS_MAX_BUDGET_USD` | `2.00` | Per-recording ceiling on the AGENT run. BLANK = disabled, which is the default and the right answer for most deployments. Read this before setting it. It is IMPUTED, NOT MONEY. `claude -p` authenti… |
 | `ATTICUS_MAX_COMMAND_CHARS` | `600` | Hard bound on the prompt handed to the agent, cut at a sentence boundary. The FULL transcript is still written to the vault — this only limits how much ambient speech can reach an autonomous agent.… |
@@ -53,17 +81,43 @@ copies.
 | `ATTICUS_OUTBOX_MAX_ACTIONS` | `5` | Bound the fan-out: one misheard sentence must not send thirty messages. 0 = no cap. |
 | `ATTICUS_OUTBOX_OUTWARD` | `confirm` |  |
 | `ATTICUS_OUTBOX_TRACKED` | `confirm` |  |
+| `ATTICUS_OUTLOOK_ACCOUNT` | `default` | Outlook — draft and calendar-event WRITES only. Reading mail or the calendar is issue #63 and is not a gap in the skill. Two accounts exist with different licensing and organservices' calendar is e… |
+| `ATTICUS_OUTLOOK_EVENT_MINUTES` | `30` |  |
+| `ATTICUS_OUTLOOK_GRAPH_URL` | `https://graph.microsoft.com/v1.0` |  |
+| `ATTICUS_OUTLOOK_LOGIN_URL` | `https://login.microsoftonline.com` |  |
+| `ATTICUS_OUTLOOK_MAX_RECIPIENTS` | `5` |  |
+| `ATTICUS_OUTLOOK_MIN_CONFIDENCE` | `0.9` |  |
+| `ATTICUS_OUTLOOK_SECRETS` | *(empty)* |  |
+| `ATTICUS_OUTLOOK_TIMEOUT` | `30` |  |
+| `ATTICUS_OUTLOOK_TIMEZONE` | *(empty)* |  |
 | `ATTICUS_PODCAST_MAX_USD` | `0.50` | Per-episode ceiling on REAL money, tested against an estimate BEFORE the first request. TTS bills to the same key and the same monthly budget as transcription, so ATTICUS_API_BUDGET_USD also applie… |
 | `ATTICUS_PUSH_RETRIES` | `3` | Both hosts push to the same repo. Bounded retry on rebase conflict before quarantining and notifying. See SPEC §4.3. |
+| `ATTICUS_REMINDER_MAX_DAYS` | `365` | Refuse a due date further out than this. It catches a misparsed year, which would otherwise be stored as a reminder that simply never fires, leaving a line in a JSONL file as the only evidence. 0 r… |
+| `ATTICUS_REMINDER_MAX_LATE_HOURS` | `24` | How late a reminder may still fire after the box was down. Inside the window it is delivered with "this was due at 4:00 PM — 3h 12m ago", because a late reminder is usually still worth having and s… |
 | `ATTICUS_RESULT_NOTIFY_URL` | *(empty)* | ── results ────────────────────────────────────────────────────────── Where finished-recording pushes go. Blank = reuse ATTICUS_NOTIFY_URL. Split them onto a separate topic if pipeline alarms start… |
 | `ATTICUS_SANDBOX` | `on` | Contain the agent in a bwrap mount namespace: no $HOME, no ~/.ssh, no ~/.config/ai/env, no vault. "off" is a real trade, not a formality — without it the agent can read every credential this host h… |
 | `ATTICUS_SANDBOX_NET` | `host` | Sandbox networking. "host" (default) shares the host network namespace, which research needs — but loopback is shared too, so the agent can reach local services including the vault's own web UI and… |
+| `ATTICUS_SIGNAL_CLI` | `signal-cli` |  |
+| `ATTICUS_SIGNAL_CONFIG_DIR` | *(empty)* |  |
+| `ATTICUS_SIGNAL_FROM` | *(empty)* |  |
+| `ATTICUS_SIGNAL_MAX_CHARS` | `1000` |  |
+| `ATTICUS_SIGNAL_RECIPIENTS` | *(empty)* | Signal — the highest-consequence handler. A message to a person, immediate, not recallable. The allowlist maps a spoken label to E.164 and matching is EXACT: "Nadya" does not reach "Nadia", because… |
+| `ATTICUS_SIGNAL_TIMEOUT` | `60` |  |
 | `ATTICUS_SITE_BASE_URL` | *(empty)* | Public base URL of the vault browser, no trailing slash. Used to build a tappable link to the page a recording produced: <base>/docs/<stem>/<file>.html Blank = no links in notifications, which is c… |
 | `ATTICUS_SKILLS_DIR` | *(empty)* |  |
+| `ATTICUS_SLACK_API_URL` | `https://slack.com/api/chat.postMessage` |  |
+| `ATTICUS_SLACK_BOT_TOKEN` | *(empty)* | Slack — a BOT token (xoxb-) scoped to chat:write, never a user token. The channel is a selection from the allowlist, never a value from the request. |
+| `ATTICUS_SLACK_CHANNELS` | *(empty)* |  |
+| `ATTICUS_SLACK_DEFAULT_CHANNEL` | *(empty)* |  |
+| `ATTICUS_SLACK_TIMEOUT` | `15` |  |
 | `ATTICUS_STT_MODEL` | `gpt-4o-transcribe` | gpt-4o-transcribe ($0.006/min) not gpt-4o-mini-transcribe ($0.003/min). Different job from dictation: nobody is waiting on this, so latency is free and accuracy is worth buying. A misheard word her… |
 | `ATTICUS_STT_PROMPT` | `Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules. The speaker is dictating a short instruction or request, and often begins by saying the name "Atticus".` | Steering prompt. Measurably improves punctuation and capitalization — carried over from hyprwhspr's config and extended for instruction-shaped audio. Change with care. |
 | `ATTICUS_STT_TIMEOUT` | `60` |  |
 | `ATTICUS_STT_URL` | `https://api.openai.com/v1/audio/transcriptions` | ── transcription ──────────────────────────────────────────────────── Same endpoint and model as the machine's existing dictation (hyprwhspr), deliberately: one transcription stack, not two. The AP… |
+| `ATTICUS_TODO_ACCOUNT` | `default` | Microsoft To Do — already exists and is already authenticated for READS via the m365 CLI. Writing needs Tasks.ReadWrite, which that shared read-only token does not carry; skills/todo/SKILL.md gives… |
+| `ATTICUS_TODO_LIST` | *(empty)* |  |
+| `ATTICUS_TODO_TIMEOUT` | `20` |  |
+| `ATTICUS_TODO_TOKEN_FILE` | *(empty)* |  |
 | `ATTICUS_TRANSCRIPTION_BUDGET_USD` | `2.00` | Transcription, plus the wake adjudicator (same key, derived from a transcript). The pipeline cannot run without this, so exhaustion is a HARD stop needing a human. It is pennies — about $0.003 a re… |
 | `ATTICUS_TTS_BITRATE_KBPS` | `48` | 24 kHz mono speech is capped at 12 kHz by the sample rate, so 128 kbps buys nothing audible and every episode is a permanent git blob. 48 kbps is transparent for two people talking and cuts each fi… |
 | `ATTICUS_TTS_BUDGET_USD` | `10.00` | Text-to-speech. Optional, on demand, and the expensive one per unit (about $0.05-0.10 an episode). Exhaustion skips ONLY the audio: the transcript, the agent run and the published report all still … |
@@ -85,4 +139,4 @@ copies.
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*74 settings.*
+*128 settings.*

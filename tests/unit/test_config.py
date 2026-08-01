@@ -51,11 +51,24 @@ def _documented() -> set[str]:
 
 
 def _read_by_code() -> set[str]:
-    """Every ATTICUS_/PLAUD_ name any Python file in the repo actually reads."""
+    """Every ATTICUS_/PLAUD_ name any Python file in the repo actually reads.
+
+    Two holes closed 2026-08-01, both of which made settings invisible to BOTH
+    directions of this check — the one place that is supposed to notice.
+
+    `processor/handlers/` was not globbed, so every setting an outbox handler reads
+    was exempt. Seven handlers arrived at once, which is a lot of exemption.
+
+    The name pattern was `[A-Z_]+` with no digits, so anything with a number in it
+    — ATTICUS_CONTACTS_M365_ACCOUNTS, ATTICUS_CONTACTS_M365_LIMIT — was silently
+    skipped. It had been that way since the check was written.
+    """
     found = set()
-    for py in list(REPO.glob("processor/*.py")) + list(REPO.glob("ingest/*.py")) \
+    for py in list(REPO.glob("processor/*.py")) \
+            + list(REPO.glob("processor/handlers/*.py")) \
+            + list(REPO.glob("ingest/*.py")) \
             + list(REPO.glob("ops/*.py")) + [REPO / "atticus_cli.py"]:
-        found |= set(re.findall(r'["\']((?:ATTICUS|PLAUD)_[A-Z_]+)["\']', py.read_text()))
+        found |= set(re.findall(r'["\']((?:ATTICUS|PLAUD)_[A-Z0-9_]+)["\']', py.read_text()))
     return found
 
 

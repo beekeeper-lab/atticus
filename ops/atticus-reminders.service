@@ -1,0 +1,71 @@
+[Unit]
+Description=Atticus reminders — deliver anything that has come due
+Documentation=https://github.com/beekeeper-lab/atticus/blob/main/skills/reminders/SKILL.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/atticus
+ExecStart=/usr/bin/python3 %h/atticus/processor/reminders.py
+
+EnvironmentFile=-%h/.config/ai/env
+EnvironmentFile=-%h/atticus/ops/.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+# NO GIT_SSH_COMMAND, and that is not an oversight — this unit never runs git.
+#
+# It appends delivery marks to the vault's .state/reminders.jsonl working tree and
+# stops there. `.state` is in OWNED_PROCESSOR, so the next processor pass commits
+# and pushes them within five minutes, and both units run on the same host against
+# the same checkout. A one-minute timer that pulled and pushed for itself would be
+# ~1,440 git round trips a day, every one of them contending the vault git lock
+# with ingest and the processor, to commit a line that is about to be committed
+# anyway.
+
+# WHY THIS IS ITS OWN UNIT RATHER THAN A STEP IN THE 5-MINUTE PROCESSOR PASS.
+# Three reasons, and the first is decisive:
+#
+#   1. A processor pass holds a single-instance lock and may spend up to
+#      ATTICUS_EXEC_TIMEOUT (default 1800s) inside one agent run. Folding the
+#      drain in means a reminder can be delivered up to half an hour after it was
+#      due — which is exactly the failure this feature cannot have, because a late
+#      reminder reads as a broken reminder.
+#   2. The processor exits early on a git pull failure (return 3), before it would
+#      reach any drain. A vault sync problem would then silence reminders too,
+#      coupling delivery to something delivery does not need.
+#   3. This needs no credential but the ntfy URL, no git, and no agent — so it can
+#      run every minute inside a far tighter sandbox than the processor's
+#      agent-shaped one, instead of inheriting it.
+#
+# It is deliberately NOT sandboxed the processor's way either: no bwrap, no
+# namespace, so none of the user-unit ssh breakage the other units work around
+# applies here.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# install.sh appends the vault, exactly as it does for the processor and the
+# briefing. Do NOT add a commented example line containing a vault path — the
+# installer's idempotency guard once matched such a comment, concluded its work
+# was done, and left the active line without the vault.
+ReadWritePaths=%h/atticus
+
+# THE PLAUD CREDENTIAL MUST BE INVISIBLE HERE, for the same reason it is on the
+# processor and briefing units. This job never needs the vendor browser session,
+# and ProtectHome=read-only still permits reads. The leading '-' is load-bearing:
+# without it a host lacking the directory fails namespace setup (226/NAMESPACE)
+# and every activation dies.
+InaccessiblePaths=-%h/.local/share/claude-fetchers
+
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=atticus-reminders
+
+[Install]
+WantedBy=default.target

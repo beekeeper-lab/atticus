@@ -203,9 +203,13 @@ def main():
     # next_elapse=infinity for 76 minutes and motivated this file, and it was
     # never watched either. unit_exists() skips whatever this host does not have.
     def check_scheduled():
+        # atticus-reminders belongs here for the same reason as retention, only
+        # more so: a reminder that is never delivered produces NO error anywhere.
+        # The operator asked to be interrupted at four, four passed in silence,
+        # and the only trace is a `pending` row nobody reads.
         for t in ("atticus-ingest.timer", "atticus-processor.timer",
                   "atticus-retention.timer", "atticus-vault-site.timer",
-                  "atticus-brief.timer"):
+                  "atticus-brief.timer", "atticus-reminders.timer"):
             if not unit_exists(t):
                 continue        # this host does not have that role
             if timer_is_scheduled(t):
@@ -233,8 +237,14 @@ def main():
         # No other check in this file can see that.
         budgets = {"atticus-retention.service": 36.0,
                    "atticus-brief.service": 36.0}
+        # atticus-reminders keeps the DEFAULT budget: it is on a one-minute timer,
+        # so "has not run in six hours" is unambiguous. It is also the one unit
+        # here whose non-zero exit is a real signal rather than a crash — it
+        # returns 1 when a reminder push FAILED and 2 on an unusable
+        # ATTICUS_LOCAL_TZ, both of which mean reminders are not being delivered.
         for u in ("atticus-ingest.service", "atticus-processor.service",
-                  "atticus-retention.service", "atticus-brief.service"):
+                  "atticus-retention.service", "atticus-brief.service",
+                  "atticus-reminders.service"):
             if not unit_exists(u):
                 continue        # this host does not have that role
             if unit_is_running(u):

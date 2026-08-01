@@ -55,6 +55,10 @@ self-contained HTML file. Name it for the topic.
 | Skill | State |
 |---|---|
 | `deep-research` | ✅ built |
+| `podcast-companion` | ✅ built — companion only, never routed to directly |
+| `ai-brief` | ✅ built — driven by a timer, not by speech |
+| `github` | ✅ built — files an issue or a comment through the outbox (#50). Issue create/comment only: no push, merge, workflow or settings, and no reads |
+| `reminders` | ✅ built — a push at a time, via ntfy and a one-minute timer (#52). Needs NO external service and no credential; one-shot only, and a REMINDER (delivery at a time) is deliberately distinct from a `todo` (no deadline behaviour) |
 | `price-scout` | planned — SPEC W9 |
 | `idea-to-spec` | planned — SPEC W9 |
 | `capture-task` | planned — SPEC W9, needs credentials |

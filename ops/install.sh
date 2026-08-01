@@ -194,6 +194,15 @@ PATH will not find it; add its directory to Environment=PATH in the service"
   # same sandbox shape as the processor — not retention's, which runs no bwrap.
   install_units atticus-brief.service atticus-brief.timer
   grant_vault "$UNITS/atticus-brief.service"
+
+  # Reminders. Its own timer rather than a step in the processor pass, because a
+  # pass can spend up to ATTICUS_EXEC_TIMEOUT inside one agent run and a reminder
+  # delivered half an hour late reads as a broken reminder. It runs no agent and
+  # no git, but it DOES write .state/reminders.jsonl in the vault, so it needs the
+  # same grant — ProtectSystem=strict otherwise makes the vault read-only and
+  # every delivery mark fails.
+  install_units atticus-reminders.service atticus-reminders.timer
+  grant_vault "$UNITS/atticus-reminders.service"
 fi
 
 # ---- heartbeat (both roles) -----------------------------------------------
@@ -221,6 +230,8 @@ if (( DO_PROCESSOR )); then
   ok "retention timer enabled (daily)"
   systemctl --user enable --now atticus-brief.timer
   ok "AI briefing timer enabled (07:00 local)"
+  systemctl --user enable --now atticus-reminders.timer
+  ok "reminders timer enabled (every minute)"
 fi
 # Heartbeat runs on every host, whatever its role.
 systemctl --user enable --now atticus-heartbeat.timer
