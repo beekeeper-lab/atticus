@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import Config                                    # noqa: E402
 from lock import AlreadyRunning, single_instance             # noqa: E402
 import execute as ex                                         # noqa: E402
+import audio_on_demand                                       # noqa: E402
 import podcast as pod                                        # noqa: E402
 import transcribe as stt                                     # noqa: E402
 import usage                                                 # noqa: E402
@@ -756,6 +757,21 @@ def main():
         if not todo:
             print(f"no record matching {(args.once or args.retry)!r}", file=sys.stderr)
             return 2
+
+    # On-demand audio requested from the vault browser's "+ Audio" button. Run
+    # BEFORE the "nothing to do" exit, or a pass with no new recordings — which is
+    # most passes — would never fulfil one. Skipped entirely for --once/--retry,
+    # which target a named record.
+    if not (args.once or args.retry) and not args.dry_run:
+        try:
+            aod = audio_on_demand.run(cfg, log=log.info)
+            if aod["done"] or aod["failed"]:
+                git.commit_push(f"on-demand audio: {aod['done']} done, "
+                                f"{aod['failed']} failed")
+        except VaultSyncError:
+            raise
+        except Exception as e:                      # noqa: BLE001
+            log.warn(f"audio request queue failed: {type(e).__name__}: {e}")
 
     if not todo:
         log.info("nothing to do")
