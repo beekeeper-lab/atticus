@@ -13,6 +13,7 @@ import json
 from datetime import date
 
 import brief
+import usage
 import pytest
 
 TODAY = date(2026, 8, 15)
@@ -240,13 +241,38 @@ def test_an_agent_failure_leaves_no_partial_report(cfg, monkeypatch):
     assert not list((cfg.vault / "reports").glob("*.partial"))
 
 
-def test_an_exhausted_monthly_budget_skips_without_spending(cfg, monkeypatch):
-    monkeypatch.setattr(brief.ex, "run",
-                        lambda *a, **k: pytest.fail("must not spend"))
-    monkeypatch.setattr(brief.usage, "budget_state",
-                        lambda v, c: {"exhausted": True, "spent": 4.2})
+def test_a_spent_money_budget_does_not_stop_the_briefing(cfg, monkeypatch):
+    """Writing a briefing costs NO real money — the agent is subscription-billed.
+    This used to block the whole briefing on the combined money budget, so an
+    audio-heavy month silently stopped the morning briefing over spend it had not
+    incurred. Only the optional audio is gated now."""
+    _fake_agent(cfg, monkeypatch=monkeypatch)
+    monkeypatch.setattr(usage, "budget_state",
+                        lambda v, c, cat="tts": {"exhausted": True,
+                                                 "spent_usd": 99.0,
+                                                 "budget_usd": 10.0,
+                                                 "month": "2026-08",
+                                                 "env": "ATTICUS_TTS_BUDGET_USD"})
     res = brief.run(cfg, today=TODAY, log=lambda m: None)
-    assert res["made"] is False and "budget" in res["reason"]
+    assert res["made"] is True, "the briefing itself must still be written"
+    assert (cfg.vault / "reports" / "ai-brief-2026-08-15" / "index.html").is_file()
+
+
+def test_an_exhausted_tts_budget_skips_only_the_audio(cfg, monkeypatch):
+    _fake_agent(cfg, monkeypatch=monkeypatch)
+    cfg.brief_audio = True
+    monkeypatch.setattr(brief.pod, "generate",
+                        lambda *a, **k: pytest.fail("must not spend"))
+    monkeypatch.setattr(usage, "budget_state",
+                        lambda v, c, cat="tts": {"exhausted": True,
+                                                 "spent_usd": 99.0,
+                                                 "budget_usd": 10.0,
+                                                 "month": "2026-08",
+                                                 "env": "ATTICUS_TTS_BUDGET_USD"})
+    said = []
+    res = brief.run(cfg, today=TODAY, log=said.append)
+    assert res["made"] is True and res["audio"] is False
+    assert any("TTS budget" in s for s in said)
 
 
 def test_the_run_is_recorded_as_subscription_not_money(cfg, monkeypatch):

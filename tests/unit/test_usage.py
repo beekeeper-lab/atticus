@@ -47,7 +47,7 @@ def test_billing_must_be_named_explicitly(tmp_path):
 
 def test_budget_exhausts_on_api_spend_only(tmp_path, cfg):
     v = _vault(tmp_path)
-    cfg.api_budget_usd = 1.00
+    cfg.transcription_budget_usd = 1.00
     usage.record(v, kind="agent", billing=usage.SUBSCRIPTION, usd=500.0)
     assert usage.budget_state(v, cfg)["exhausted"] is False, \
         "subscription usage must never exhaust the money budget"
@@ -59,7 +59,7 @@ def test_a_zero_budget_disables_the_cap(tmp_path, cfg):
     """Otherwise a blank setting would read as instantly-exhausted and stop the
     pipeline dead — the opposite of 'no limit configured'."""
     v = _vault(tmp_path)
-    cfg.api_budget_usd = 0
+    cfg.transcription_budget_usd = 0
     usage.record(v, kind="transcription", billing=usage.API, usd=10.0)
     st = usage.budget_state(v, cfg)
     assert st["enabled"] is False and st["exhausted"] is False
@@ -68,7 +68,7 @@ def test_a_zero_budget_disables_the_cap(tmp_path, cfg):
 
 def test_spend_is_scoped_to_the_current_month(tmp_path, cfg):
     v = _vault(tmp_path)
-    cfg.api_budget_usd = 1.00
+    cfg.transcription_budget_usd = 1.00
     # A prior month's line, written directly.
     (v / ".state" / "usage-old.jsonl").write_text(json.dumps(
         {"month": "2020-01", "billing": "api", "usd": 99.0, "kind": "transcription"}) + "\n")
@@ -173,7 +173,7 @@ def test_an_exhausted_budget_stops_transcription_non_retryably(tmp_path, cfg,
     v = _vault(tmp_path)
     (v / "inbox").mkdir(exist_ok=True)
     cfg.vault = v
-    cfg.api_budget_usd = 0.01
+    cfg.transcription_budget_usd = 0.01
     usage.record(v, kind="transcription", billing=usage.API, usd=0.02)
 
     meta = v / "inbox" / "r.json"
@@ -185,7 +185,8 @@ def test_an_exhausted_budget_stops_transcription_non_retryably(tmp_path, cfg,
         pipeline.stage_transcribe(rec, cfg, pipeline.Log("ERROR"))
     assert e.value.retryable is False
     assert "budget" in str(e.value).lower()
-    assert "ATTICUS_API_BUDGET_USD" in str(e.value), "must name the remedy"
+    assert "ATTICUS_TRANSCRIPTION_BUDGET_USD" in str(e.value), \
+        "must name the remedy"
 
 
 def test_a_healthy_budget_does_not_block_transcription(tmp_path, cfg, monkeypatch):
@@ -196,7 +197,7 @@ def test_a_healthy_budget_does_not_block_transcription(tmp_path, cfg, monkeypatc
     v = _vault(tmp_path)
     (v / "inbox").mkdir(exist_ok=True)
     cfg.vault = v
-    cfg.api_budget_usd = 4.00
+    cfg.transcription_budget_usd = 4.00
 
     meta = v / "inbox" / "r.json"
     meta.write_text(json.dumps({"plaud_id": "p", "status": "raw",
@@ -219,8 +220,8 @@ def _spend(v, amount):
 
 def test_thresholds_fire_as_spend_passes_them(tmp_path, cfg):
     v = _vault(tmp_path)
-    cfg.api_budget_usd = 4.00
-    cfg.budget_alert_usd = [2.00, 3.00, 4.00]
+    cfg.transcription_budget_usd = 4.00
+    cfg.budget_alert_pct = [50, 75, 100]   # of $4.00 -> $2 / $3 / $4
 
     assert usage.newly_crossed(v, cfg) == []
     _spend(v, 2.10)
@@ -231,8 +232,8 @@ def test_a_threshold_is_announced_exactly_once(tmp_path, cfg):
     """The property that matters. Spend stays over a threshold for the rest of the
     month, so anything time-based would re-announce it every 5-minute pass."""
     v = _vault(tmp_path)
-    cfg.api_budget_usd = 4.00
-    cfg.budget_alert_usd = [2.00, 3.00, 4.00]
+    cfg.transcription_budget_usd = 4.00
+    cfg.budget_alert_pct = [50, 75, 100]   # of $4.00 -> $2 / $3 / $4
     _spend(v, 2.50)
 
     assert usage.newly_crossed(v, cfg) == [2.00]
@@ -245,16 +246,16 @@ def test_a_threshold_is_announced_exactly_once(tmp_path, cfg):
 def test_a_jump_past_two_thresholds_announces_both_in_order(tmp_path, cfg):
     """A single expensive recording must not silently skip a warning."""
     v = _vault(tmp_path)
-    cfg.api_budget_usd = 4.00
-    cfg.budget_alert_usd = [2.00, 3.00, 4.00]
+    cfg.transcription_budget_usd = 4.00
+    cfg.budget_alert_pct = [50, 75, 100]   # of $4.00 -> $2 / $3 / $4
     _spend(v, 3.50)
     assert usage.newly_crossed(v, cfg) == [2.00, 3.00]
 
 
 def test_markers_do_not_count_as_spend_or_pollute_the_report(tmp_path, cfg):
     v = _vault(tmp_path)
-    cfg.api_budget_usd = 4.00
-    cfg.budget_alert_usd = [2.00]
+    cfg.transcription_budget_usd = 4.00
+    cfg.budget_alert_pct = [50]  # of $4.00 -> $2
     _spend(v, 2.00)
     before = usage.api_spend(v)
     usage.mark_alerted(v, 2.00, 2.00)
@@ -268,16 +269,16 @@ def test_markers_do_not_count_as_spend_or_pollute_the_report(tmp_path, cfg):
 
 def test_subscription_usage_never_trips_a_threshold(tmp_path, cfg):
     v = _vault(tmp_path)
-    cfg.api_budget_usd = 4.00
-    cfg.budget_alert_usd = [2.00, 3.00, 4.00]
+    cfg.transcription_budget_usd = 4.00
+    cfg.budget_alert_pct = [50, 75, 100]   # of $4.00 -> $2 / $3 / $4
     usage.record(v, kind="agent", billing=usage.SUBSCRIPTION, usd=500.0)
     assert usage.newly_crossed(v, cfg) == []
 
 
 def test_no_thresholds_configured_means_no_alerts(tmp_path, cfg):
     v = _vault(tmp_path)
-    cfg.api_budget_usd = 4.00
-    cfg.budget_alert_usd = []
+    cfg.transcription_budget_usd = 4.00
+    cfg.budget_alert_pct = []
     _spend(v, 99.0)
     assert usage.newly_crossed(v, cfg) == []
 
@@ -285,8 +286,8 @@ def test_no_thresholds_configured_means_no_alerts(tmp_path, cfg):
 def test_thresholds_reset_next_month(tmp_path, cfg):
     """Last month's announcement must not silence this month's crossing."""
     v = _vault(tmp_path)
-    cfg.api_budget_usd = 4.00
-    cfg.budget_alert_usd = [2.00]
+    cfg.transcription_budget_usd = 4.00
+    cfg.budget_alert_pct = [50]  # of $4.00 -> $2
     (v / ".state" / "usage-old.jsonl").write_text(json.dumps(
         {"month": "2020-01", "billing": usage.META, "kind": "budget-alert",
          "threshold_usd": 2.00, "usd": 0}) + "\n")
@@ -303,15 +304,15 @@ def test_the_final_threshold_reports_that_transcription_stopped(tmp_path, cfg,
                         lambda cfg, text, log, **kw: sent.append((text, kw)))
     v = _vault(tmp_path)
     cfg.vault = v
-    cfg.api_budget_usd = 4.00
-    cfg.budget_alert_usd = [2.00, 4.00]
+    cfg.transcription_budget_usd = 4.00
+    cfg.budget_alert_pct = [50, 100]   # of $4.00 -> $2 and $4
     _spend(v, 4.00)
 
     pipeline._alarm_budget_thresholds(cfg, pipeline.Log("ERROR"))
     assert len(sent) == 2, "both thresholds announced"
     final_text, final_kw = sent[-1]
     assert "STOPPED" in final_text
-    assert "ATTICUS_API_BUDGET_USD" in final_text, "must name the remedy"
+    assert "ATTICUS_TRANSCRIPTION_BUDGET_USD" in final_text, "must name the remedy"
     assert final_kw["priority"] == "high"
     # And it is not announced again on the next pass.
     sent.clear()
@@ -328,8 +329,8 @@ def test_a_warning_threshold_says_the_agent_is_not_counted(tmp_path, cfg,
                         lambda cfg, text, log, **kw: sent.append((text, kw)))
     v = _vault(tmp_path)
     cfg.vault = v
-    cfg.api_budget_usd = 4.00
-    cfg.budget_alert_usd = [2.00]
+    cfg.transcription_budget_usd = 4.00
+    cfg.budget_alert_pct = [50]  # of $4.00 -> $2
     _spend(v, 2.00)
 
     pipeline._alarm_budget_thresholds(cfg, pipeline.Log("ERROR"))
@@ -363,8 +364,8 @@ def test_alerts_go_through_the_REAL_notify_path(tmp_path, cfg, monkeypatch):
     v = _vault(tmp_path)
     cfg.vault = v
     cfg.notify_url = "https://ntfy.example/atticus"
-    cfg.api_budget_usd = 4.00
-    cfg.budget_alert_usd = [2.00]
+    cfg.transcription_budget_usd = 4.00
+    cfg.budget_alert_pct = [50]  # of $4.00 -> $2
     _spend(v, 2.00)
 
     pipeline._alarm_budget_thresholds(cfg, pipeline.Log("ERROR"))
@@ -396,3 +397,113 @@ def test_a_custom_title_no_longer_collides(cfg):
     finally:
         nt.notify = orig
         pipeline._notify = orig
+
+
+# ── the split: two budgets, two different consequences ─────────────────────
+# These exist because the budgets used to be ONE pot. TTS spent against the pot
+# the transcribe gate checks, so an audio-heavy month would halt the core
+# pipeline over an optional companion feature.
+
+def test_tts_spend_does_not_touch_the_transcription_budget(tmp_path, cfg):
+    """The bug, stated as a test. $50 of audio must not stop transcription."""
+    v = _vault(tmp_path)
+    cfg.transcription_budget_usd = 2.00
+    cfg.tts_budget_usd = 10.00
+    usage.record(v, kind="tts", billing=usage.API, usd=50.0)
+    assert usage.budget_state(v, cfg, "transcription")["exhausted"] is False, \
+        "audio spend must never be able to stop transcription"
+    assert usage.budget_state(v, cfg, "tts")["exhausted"] is True
+
+
+def test_transcription_spend_does_not_touch_the_tts_budget(tmp_path, cfg):
+    v = _vault(tmp_path)
+    cfg.transcription_budget_usd = 2.00
+    cfg.tts_budget_usd = 10.00
+    usage.record(v, kind="transcription", billing=usage.API, usd=5.0)
+    assert usage.budget_state(v, cfg, "tts")["exhausted"] is False
+
+
+def test_the_adjudicator_counts_as_transcription(tmp_path, cfg):
+    """It bills the same key, is derived from a transcript, and costs ~$0.0001 —
+    so it shares that budget rather than earning a third one."""
+    v = _vault(tmp_path)
+    cfg.transcription_budget_usd = 0.001
+    usage.record(v, kind="adjudicator", billing=usage.API, usd=0.002)
+    assert usage.budget_state(v, cfg, "transcription")["exhausted"] is True
+    assert usage.budget_state(v, cfg, "tts")["exhausted"] is False
+
+
+def test_the_agent_is_in_neither_money_budget(tmp_path, cfg):
+    """`claude -p` bills no dollars. Counting imputed tokens as money is the
+    mistake the whole billing split exists to prevent."""
+    v = _vault(tmp_path)
+    cfg.transcription_budget_usd = 0.01
+    cfg.tts_budget_usd = 0.01
+    usage.record(v, kind="agent", billing=usage.SUBSCRIPTION, usd=99.0)
+    assert usage.budget_state(v, cfg, "transcription")["exhausted"] is False
+    assert usage.budget_state(v, cfg, "tts")["exhausted"] is False
+
+
+def test_an_exhausted_tts_budget_skips_audio_and_fails_nothing(tmp_path, cfg,
+                                                              monkeypatch):
+    """The consequence asymmetry, which is the point of the split: no transcript,
+    no agent run and no report may be lost because audio ran out of money."""
+    import pipeline as pl
+    import podcast as pod
+    from conftest import write_record
+    from vault import EXECUTED, load_records
+
+    v = _vault(tmp_path)
+    cfg.vault = v
+    cfg.tts_budget_usd = 0.01
+    usage.record(v, kind="tts", billing=usage.API, usd=1.0)
+
+    write_record(v, status=EXECUTED, executed=True)
+    rec = load_records(v)[0]
+    out = rec.outdir(v)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "report.html").write_text("<html><body><h1>R</h1></body></html>")
+    (out / pod.SCRIPT_NAME).write_text("# T\n\n**A:** One.\n**B:** Two.\n")
+
+    monkeypatch.setattr(pod, "generate",
+                        lambda *a, **k: pytest.fail("must not spend"))
+    log = type("L", (), {"info": lambda s, m: None,
+                         "warn": lambda s, m: None})()
+    pl.stage_podcast(rec, cfg, log)
+    assert rec.status == EXECUTED, "the record must not move backwards"
+    assert rec.data["podcast"]["made"] is False
+    assert "budget" in rec.data["podcast"]["reason"]
+    assert (out / "report.html").is_file(), "the report must survive"
+
+
+def test_alerts_are_scoped_per_budget(tmp_path, cfg):
+    """Crossing 50% of one budget must not mark the other's 50% as announced."""
+    v = _vault(tmp_path)
+    cfg.transcription_budget_usd = 2.00
+    cfg.tts_budget_usd = 10.00
+    cfg.budget_alert_pct = [50]
+    usage.record(v, kind="transcription", billing=usage.API, usd=1.50)
+    usage.record(v, kind="tts", billing=usage.API, usd=6.00)
+    assert usage.newly_crossed(v, cfg, "transcription") == [1.00]
+    usage.mark_alerted(v, 1.00, 1.50, category="transcription")
+    assert usage.newly_crossed(v, cfg, "transcription") == []
+    assert usage.newly_crossed(v, cfg, "tts") == [5.00], \
+        "the tts threshold must still be pending"
+
+
+def test_thresholds_follow_a_changed_budget(tmp_path, cfg):
+    """Percentages, not dollars: raising a budget moves its thresholds with it,
+    which a fixed dollar list could not do."""
+    v = _vault(tmp_path)
+    cfg.budget_alert_pct = [50]
+    cfg.transcription_budget_usd = 2.00
+    _spend(v, 1.20)
+    assert usage.newly_crossed(v, cfg, "transcription") == [1.00]
+    cfg.transcription_budget_usd = 10.00
+    assert usage.newly_crossed(v, cfg, "transcription") == [], \
+        "$1.20 is no longer half of a $10 budget"
+
+
+def test_an_unknown_budget_category_is_a_programmer_error(tmp_path, cfg):
+    with pytest.raises(ValueError, match="unknown budget category"):
+        usage.budget_state(_vault(tmp_path), cfg, "nonsense")

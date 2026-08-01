@@ -162,46 +162,62 @@ def _alarm_budget_thresholds(cfg, log):
     transcript is written and the money is spent either way.
     """
     try:
-        crossed = usage.newly_crossed(cfg.vault, cfg)
+        for category in ("transcription", "tts"):
+            _alarm_one_budget(cfg, log, category)
+    except Exception as e:                          # noqa: BLE001
+        log.warn(f"    ! budget alert check failed: {type(e).__name__}: {e}")
+
+
+def _alarm_one_budget(cfg, log, category):
+    try:
+        crossed = usage.newly_crossed(cfg.vault, cfg, category)
         if not crossed:
             return
-        state = usage.budget_state(cfg.vault, cfg)
+        state = usage.budget_state(cfg.vault, cfg, category)
+        label = "transcription" if category == "transcription" else "TTS"
         for t in crossed:
             final = state["enabled"] and t >= state["budget_usd"]
-            if final:
-                body = (f"Atticus has spent ${state['spent_usd']:.2f} of its "
-                        f"${state['budget_usd']:.2f} API budget for "
+            if final and category == "transcription":
+                body = (f"Atticus has spent ${state['spent_usd']:.4f} of its "
+                        f"${state['budget_usd']:.2f} transcription budget for "
                         f"{state['month']}.\n\n"
-                        f"TRANSCRIPTION IS NOW STOPPED. Recordings keep arriving "
-                        f"in the vault and will be processed once the budget is "
-                        f"raised (ATTICUS_API_BUDGET_USD) or the month rolls "
-                        f"over. Nothing is lost.")
-                title, tags, priority = ("Atticus — API budget SPENT",
+                        f"TRANSCRIPTION IS NOW STOPPED. Recordings keep arriving in "
+                        f"the vault and will be processed once the budget is raised "
+                        f"({state['env']}) or the month rolls over. Nothing is "
+                        f"lost.\n\nAt about $0.003 a recording this should not "
+                        f"happen in normal use — check for a runaway loop before "
+                        f"raising it.")
+                title, tags, priority = ("Atticus — transcription budget SPENT",
                                          "rotating_light", "high")
+            elif final:
+                body = (f"Atticus has spent ${state['spent_usd']:.2f} of its "
+                        f"${state['budget_usd']:.2f} TTS budget for "
+                        f"{state['month']}.\n\n"
+                        f"AUDIO IS NOW SKIPPED. Everything else continues normally "
+                        f"— recordings are still transcribed, the agent still runs, "
+                        f"reports are still published. They just will not get an "
+                        f"episode attached until {state['env']} is raised or the "
+                        f"month rolls over.")
+                title, tags, priority = ("Atticus — TTS budget spent",
+                                         "mute", "default")
             else:
                 remaining = state.get("remaining_usd")
                 tail = (f" ${remaining:.2f} left of ${state['budget_usd']:.2f}."
                         if remaining is not None else "")
-                body = (f"Atticus API spend for {state['month']} has passed "
-                        f"${t:.2f} (now ${state['spent_usd']:.2f}).{tail}\n\n"
-                        f"This is transcription and the wake adjudicator only — "
-                        f"the agent runs on your Claude subscription and is not "
-                        f"counted here. Run `atticus-usage` for the breakdown.")
-                title, tags, priority = ("Atticus — API budget warning",
+                body = (f"Atticus {label} spend for {state['month']} has passed "
+                        f"${t:.2f} (now ${state['spent_usd']:.4f}).{tail}\n\n"
+                        f"Real money, {label} only. The agent runs on your Claude "
+                        f"subscription and is not counted in any money budget. Run "
+                        f"`atticus usage` for the breakdown.")
+                title, tags, priority = (f"Atticus — {label} budget warning",
                                          "warning", "default")
-            log.warn(f"  ! api spend passed ${t:.2f} "
+            log.warn(f"  ! {label} spend passed ${t:.2f} "
                      f"(${state['spent_usd']:.4f} of ${state['budget_usd']:.2f})")
-            notify(cfg, body, log, key=f"budget-{state['month']}-{t:.2f}",
+            notify(cfg, body, log,
+                   key=f"budget-{category}-{state['month']}-{t:.2f}",
                    title=title, tags=tags, priority=priority)
-            # Marked whether or not delivery succeeded, and that is a deliberate
-            # trade. Retrying until it lands would re-announce the same crossing
-            # every 5-minute pass for the rest of the month if ntfy is
-            # unreachable or unset — the alarm-fatigue failure this codebase
-            # already avoids elsewhere. notify() logs its own failures loudly, the
-            # standing state is always in `atticus-usage`, and the threshold that
-            # actually matters ($budget) also stops transcription, which raises a
-            # separate per-recording alarm. So a missed push cannot hide it.
-            usage.mark_alerted(cfg.vault, t, state["spent_usd"], log=log.warn)
+            usage.mark_alerted(cfg.vault, t, state["spent_usd"],
+                               log=log.warn, category=category)
     except Exception as e:                          # noqa: BLE001
         log.warn(f"  ! budget threshold check failed: {type(e).__name__}: {e}")
 
@@ -214,13 +230,14 @@ def stage_transcribe(rec, cfg, log):
     # so retrying would just re-check the same wall three times. Audio is already
     # durable in the vault, so nothing is lost — the recording waits for a human
     # to raise the ceiling or for the month to roll over.
-    state = usage.budget_state(cfg.vault, cfg)
+    state = usage.budget_state(cfg.vault, cfg, "transcription")
     if state["exhausted"]:
         raise stt.TranscriptionError(
-            f"the ${state['budget_usd']:.2f} API budget for {state['month']} is "
-            f"spent (${state['spent_usd']:.4f}). Transcription is STOPPED so it "
-            f"cannot keep charging. Raise ATTICUS_API_BUDGET_USD to continue this "
-            f"month, or wait for the month to roll over.",
+            f"the ${state['budget_usd']:.2f} transcription budget for "
+            f"{state['month']} is spent (${state['spent_usd']:.4f}). Transcription "
+            f"is STOPPED so it cannot keep charging. At roughly $0.003 a recording "
+            f"this should not happen in normal use — check for a runaway loop "
+            f"before raising {state['env']}.",
             retryable=False, kind="quota")
 
     # Two genuinely different jobs, and the record decides which one this is.
@@ -391,14 +408,20 @@ def stage_podcast(rec, cfg, log, dry_run=False):
         log.info("    [dry-run] skipping audio")
         return
 
-    # TTS is real money on the same key and the same monthly budget as
-    # transcription, so it respects the same exhaustion check. Checked here
-    # rather than inside podcast.py so the module stays free of budget policy.
-    state = usage.budget_state(cfg.vault, cfg)
-    if state.get("exhausted"):
-        log.warn(f"    podcast skipped — monthly API budget exhausted "
-                 f"(${state.get('spent', 0):.2f})")
-        rec.data["podcast"] = {"made": False, "reason": "monthly API budget exhausted"}
+    # TTS has its OWN budget, and exhausting it costs only the audio. The
+    # transcript, the agent run and the published report have all already
+    # happened; the report simply does not get an episode attached. Checked here
+    # rather than inside podcast.py so that module stays free of budget policy.
+    state = usage.budget_state(cfg.vault, cfg, "tts")
+    if state["exhausted"]:
+        log.warn(f"    audio skipped — the ${state['budget_usd']:.2f} TTS budget "
+                 f"for {state['month']} is spent (${state['spent_usd']:.4f}). The "
+                 f"report is published without an episode; raise {state['env']} "
+                 f"to resume.")
+        rec.data["podcast"] = {
+            "made": False,
+            "reason": f"TTS budget exhausted (${state['spent_usd']:.4f} of "
+                      f"${state['budget_usd']:.2f})"}
         return
 
     try:
