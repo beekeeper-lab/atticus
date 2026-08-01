@@ -79,6 +79,16 @@ def cfg(tmp_path):
     c.stt_prompt = "p"
     c.stt_timeout = 1
     c.exec_timeout = 60
+    # The Microsoft 365 credential path points INTO THE SCRATCH TREE, where no
+    # file exists. Without this, any handler that reaches for the credential —
+    # reminders' calendar companion does it on every set — would read the
+    # operator's real ~/.secrets/m365.json and then POST to the real Microsoft
+    # login, rotating a refresh token other tools depend on. The absent file
+    # stops the handler before any network is touched (OutboxError), which is
+    # also the honest first-run state. Tests that need the credential present
+    # write their own fake store and override this (see `wired`).
+    c.outlook_secrets = str(tmp_path / "no-such-m365.json")
+    c.outlook_timeout = 1
     c.push_retries = 1
     c.git_name, c.git_email = "t", "t@t"
     c.notify_url = None

@@ -449,3 +449,77 @@ def test_the_skill_declares_the_verb_the_handler_registers():
     assert "todo" in front, "the description must route AWAY from todo"
     for word in ("at four", "in twenty minutes"):
         assert word in front, f"the description needs a time-bearing example: {word}"
+
+
+# ── the calendar companion (#66) ────────────────────────────────────────────
+# The operator's verdict on ntfy alone was "too soft"; the free step up on iOS
+# is a calendar alert (Time Sensitive). The properties worth pinning: the event
+# is attendee-free BY CONSTRUCTION, its alert fires AT the moment, a missing
+# consent degrades to push-only rather than failing the reminder, and a replay
+# cannot create a second event.
+
+@pytest.fixture
+def cal(monkeypatch):
+    """Capture the synthesized outlook.event request; answer like Graph did."""
+    from handlers import outlook as ol
+    calls = []
+
+    def fake_event(req, cfg, log=print):
+        calls.append(req)
+        if fake_event.raise_with:
+            raise outbox.OutboxError(fake_event.raise_with)
+        return {"id": "EV1", "web_link": "https://outlook.office.com/ev1"}
+    fake_event.raise_with = ""
+    monkeypatch.setattr(ol, "event", fake_event)
+    return calls
+
+
+def test_setting_a_reminder_also_books_the_calendar_moment(rcfg, cal):
+    out = _set(rcfg)
+    assert out["calendar"] == {"created": True, "id": "EV1",
+                               "web_link": "https://outlook.office.com/ev1"}
+    req = cal[0]
+    assert req["subject"] == "⏰ Call the bank"
+    assert req["start"] == out["at"], "the event IS the reminder's moment, in UTC"
+    assert req["alert_minutes_before"] == 0, "the start is the moment; alert AT it"
+    assert req["minutes"] == 15
+    assert "attendees" not in req, "attendee-free by construction — see the handler"
+    # And it is answerable from the vault later, not only from the receipt.
+    assert any(r.get("calendar_event_id") == "EV1" for r in _rows(rcfg.vault))
+
+
+def test_missing_consent_degrades_to_push_only_not_failure(rcfg, cal):
+    """The expected first-run state: Calendars.ReadWrite is not consented yet.
+    The reminder must still set, the receipt must say which channel is missing
+    and why, and the ledger must not record an event that was never made."""
+    from handlers import outlook as ol
+    ol.event.raise_with = "the Microsoft 365 token does not grant Calendars.ReadWrite"
+    out = _set(rcfg)
+    assert "already_set" not in out, "the reminder itself succeeded"
+    assert out["calendar"]["created"] is False
+    assert "Calendars.ReadWrite" in out["calendar"]["reason"]
+    assert store.open_reminders(rcfg.vault), "still owed a push"
+    assert not any(r.get("calendar_event_id") for r in _rows(rcfg.vault))
+
+
+def test_a_replay_does_not_book_a_second_event(rcfg, cal):
+    _set(rcfg)
+    again = _set(rcfg)
+    assert again.get("already_set")
+    assert len(cal) == 1, "the companion was made when the reminder was first set"
+
+
+def test_the_companion_can_be_switched_off(rcfg, cal):
+    rcfg.reminder_calendar = "off"
+    out = _set(rcfg)
+    assert "calendar" not in out
+    assert cal == []
+
+
+def test_no_credential_at_all_is_the_degraded_path_not_a_crash(rcfg):
+    """No mock: the real handlers.outlook runs against the cfg fixture, whose
+    secret path points into the scratch tree. This is exactly a fresh install."""
+    out = _set(rcfg)
+    assert out["calendar"]["created"] is False
+    assert "m365-auth" in out["calendar"]["reason"]
+    assert store.open_reminders(rcfg.vault)

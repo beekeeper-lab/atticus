@@ -22,6 +22,49 @@ import outbox
 import reminders as store          # processor/reminders.py — the ledger and drain
 
 
+def _calendar_companion(when, text: str, cfg, log) -> dict | None:
+    """Also put the reminder on the operator's own calendar. Issue #66.
+
+    The operator's verdict on ntfy delivery was "too soft — it drowns among the
+    other notifications", and on iOS the only free notification class that
+    breaks through Focus is Time Sensitive, which calendar alerts get. Pushcut
+    (a literal Clock alarm) was rejected on cost. So: the push stays, and a
+    15-minute event with an alert at start doubles it on the strong channel.
+
+    This calls the outlook.event handler FUNCTION, deliberately not the outbox
+    gate in front of it. outlook.event is TRACKED because an event can carry
+    attendees — visible to other people the moment it lands. This request is
+    synthesized by the pipeline with a fixed shape: the operator's own calendar,
+    NO attendees ever, subject bounded by the reminder's own MAX_TEXT. With
+    nothing outward it is internal-shaped, same class as the reminder itself.
+    Do not add an attendees field here; that would cross the gate this comment
+    exists to mark.
+
+    Best-effort by design: Calendars.ReadWrite is not consented until the
+    operator runs `m365-auth` with the wider scope, and a reminder that pushes
+    but has no calendar event is degraded, not failed. The receipt says which
+    of the two channels are armed.
+    """
+    if str(getattr(cfg, "reminder_calendar", "on") or "on").strip().lower() == "off":
+        return None
+    from handlers import outlook
+    minutes = max(1, int(getattr(cfg, "reminder_event_minutes", 15) or 15))
+    req = {"subject": f"⏰ {text}",
+           "start": store.iso_z(when),        # tz-aware Z form → UTC in Graph
+           "minutes": minutes,
+           "alert_minutes_before": 0,
+           "body": "Set by Atticus reminders (#66). The ntfy push fires at the "
+                   "same moment; this event exists because a calendar alert "
+                   "breaks through Focus and a push does not."}
+    try:
+        ev = outlook.event(req, cfg, log=log)
+        return {"created": True, "id": ev.get("id"), "web_link": ev.get("web_link")}
+    except outbox.OutboxError as e:
+        # Expected until consent is granted; the message names the fix.
+        log(f"    reminder: calendar event skipped — {e}")
+        return {"created": False, "reason": str(e)[:300]}
+
+
 def _describe(req: dict) -> str:
     """What the operator reads in the receipt.
 
@@ -57,9 +100,22 @@ def set_reminder(req: dict, cfg, log=print) -> dict:
     if rec.get("duplicate"):
         # Same instant, same text — the id is derived from both, so a re-run of one
         # recording cannot double a reminder. Report it rather than staying quiet:
-        # "already set" and "set" are different facts about the pass.
+        # "already set" and "set" are different facts about the pass. The calendar
+        # companion is skipped for the same reason the ledger append is: it was
+        # made (or attempted) when the reminder was first set.
         log(f"    reminder {rec['id']} already set for {local} ({label})")
         return {"id": rec["id"], "at": rec.get("at"), "at_local": local,
                 "tz": label, "already_set": True}
+
+    cal = _calendar_companion(when, text, cfg, log)
+    if cal and cal.get("created"):
+        # Recorded on the ledger too, so "did that get a calendar event?" is
+        # answerable from the vault long after the receipt scrolls away.
+        store.append(cfg.vault, rec["id"], store.PENDING,
+                     calendar_event_id=cal.get("id"))
+
     log(f"    reminder set for {local} ({label}) — {text}")
-    return {"id": rec["id"], "at": rec["at"], "at_local": local, "tz": label}
+    out = {"id": rec["id"], "at": rec["at"], "at_local": local, "tz": label}
+    if cal is not None:
+        out["calendar"] = cal
+    return out

@@ -294,6 +294,17 @@ class Config:
         # would otherwise be stored as a reminder that simply never fires and
         # leaves a JSONL line as the only evidence. 0 disables the bound.
         self.reminder_max_days = int(g("ATTICUS_REMINDER_MAX_DAYS", "365") or 0)
+        # Also drop a short event on the operator's OWN calendar when a reminder
+        # is set (issue #66). The operator's verdict on ntfy alone was "too soft
+        # among all the other notifications", and a calendar alert is the only
+        # free notification class on iOS that breaks through Focus (Time
+        # Sensitive). Best-effort: until Calendars.ReadWrite is consented the
+        # event is skipped with a receipt line and the push still works. "off"
+        # disables the attempt entirely.
+        self.reminder_calendar = (g("ATTICUS_REMINDER_CALENDAR", "on") or "on").strip().lower()
+        # Length of that event. 15 minutes reads as a block to act on, not a
+        # meeting; the alert fires at the START (the reminder's moment).
+        self.reminder_event_minutes = int(g("ATTICUS_REMINDER_EVENT_MINUTES", "15") or 15)
 
         # ---- outbox handler settings, one block per service -----------------
         # Every secret here defaults to EMPTY and every allowlist defaults to
