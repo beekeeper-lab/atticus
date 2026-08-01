@@ -238,3 +238,51 @@ def test_sandbox_net_none_removes_the_network(tmp_path):
     p = subprocess.run(cmd, env=ex.agent_env(tmp_path, tmp_path / "output"),
                        capture_output=True, text=True, timeout=60)
     assert p.stdout.strip() == "NONET", f"network still reachable: {p.stdout!r}"
+
+
+def test_token_mode_keeps_the_credential_file_out_of_the_namespace(tmp_path):
+    """#68 — with ATTICUS_CLAUDE_TOKEN_FILE set, the operator's credential file
+    (and the refresh token inside it) must not be bound in at all, and the
+    agent's env must carry exactly the dedicated token instead."""
+    tf = tmp_path / "oat"
+    tf.write_text("sk-ant-" + "oat01-test-token\n")
+    (tmp_path / "output").mkdir(exist_ok=True)
+    cfg = types.SimpleNamespace(sandbox=True, claude_bin="true",
+                                claude_token_file=str(tf))
+    args = ex.wrap_sandbox(["/usr/bin/true"], tmp_path, tmp_path / "output", cfg,
+                           log=lambda m: None)
+    assert not any(".credentials.json" in str(a) for a in args), \
+        "token mode must not bind the interactive credential"
+    env = ex.agent_env(tmp_path, tmp_path / "output", cfg)
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-" + "oat01-test-token"
+
+
+def test_blank_token_file_keeps_the_old_bind(tmp_path):
+    (tmp_path / "output").mkdir(exist_ok=True)
+    cfg = types.SimpleNamespace(sandbox=True, claude_bin="true",
+                                claude_token_file="")
+    args = ex.wrap_sandbox(["/usr/bin/true"], tmp_path, tmp_path / "output", cfg,
+                           log=lambda m: None)
+    if (Path.home() / ".claude/.credentials.json").is_file():
+        assert any(".credentials.json" in str(a) for a in args)
+    env = ex.agent_env(tmp_path, tmp_path / "output", cfg)
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+
+
+@pytest.mark.parametrize("prep", ["missing", "empty", "multiline"])
+def test_a_configured_but_unusable_token_refuses_rather_than_falls_back(tmp_path, prep):
+    """Silent fallback to the credential file would quietly un-do the migration
+    this setting exists for. Refusal, naming the fix, is the contract."""
+    tf = tmp_path / "oat"
+    if prep == "empty":
+        tf.write_text("")
+    elif prep == "multiline":
+        tf.write_text("line-one\nline-two\n")
+    cfg = types.SimpleNamespace(sandbox=True, claude_token_file=str(tf))
+    with pytest.raises(ex.ExecutionError, match="setup-token"):
+        ex.agent_env(tmp_path, tmp_path / "output", cfg)
+
+
+def test_expired_interactive_credential_is_not_blamed_in_token_mode():
+    cfg = types.SimpleNamespace(claude_token_file="/anywhere")
+    assert ex._credential_problem(cfg) is None

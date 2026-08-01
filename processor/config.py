@@ -484,6 +484,18 @@ class Config:
 
         # Execution
         self.claude_bin = g("ATTICUS_CLAUDE_BIN", "claude")
+        # How the agent AUTHENTICATES. Blank (the default) bind-mounts the
+        # operator's ~/.claude/.credentials.json read-only — which works only
+        # while some interactive session has refreshed its 8-hour access token,
+        # so an idle overnight box fails every run until a human shows up
+        # (observed 2026-07-30). Set this to a 0600 file holding the output of
+        # `claude setup-token` (a long-lived subscription token, ~1 year) and
+        # the pipeline instead passes CLAUDE_CODE_OAUTH_TOKEN into the sandbox
+        # and stops binding the credential file entirely — no 8-hour dependency,
+        # and the operator's refresh token never enters the sandbox (#68).
+        # Set-but-unusable REFUSES the run loudly rather than silently falling
+        # back to the credential this setting exists to retire.
+        self.claude_token_file = (g("ATTICUS_CLAUDE_TOKEN_FILE", "") or "").strip()
         # Contain the agent in its own mount namespace. Off is a real choice
         # with a real cost: without it the agent can read every credential on
         # the host, including the vault deploy key.

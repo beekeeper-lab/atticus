@@ -225,6 +225,8 @@ in the prompt, but fencing is mitigation, not a control: treat arbitrary shell
 inside the sandbox as reachable from anything spoken near the pin, and rely on
 the namespace rather than the tool list.
 
-**Two secrets remain inside the sandbox boundary** — the Claude Code credential
-(bound in so the CLI can authenticate) and, because the network namespace is
-shared by default, anything served on loopback. See `SECURITY.md`.
+**Two secrets remain inside the sandbox boundary** — the agent's auth secret
+(with `ATTICUS_CLAUDE_TOKEN_FILE` set, a dedicated long-lived `setup-token`
+passed via env, independently revocable; blank, the operator's own credential
+file with its refresh token — prefer the former) and, because the network
+namespace is shared by default, anything served on loopback. See `SECURITY.md`.

@@ -85,12 +85,17 @@ removes the network entirely and closes this; the durable fix is a network
 namespace with an allowlist proxy, which keeps research working while denying
 loopback and the tailnet.
 
-*The Claude Code credential is inside the boundary by construction.*
-`~/.claude/.credentials.json` is bind-mounted read-only so the CLI can
-authenticate, and it contains a refresh token. An agent acting on injected
-instructions has `Bash` and egress, so treat that credential as reachable:
-rotate it if you suspect a run was influenced, and prefer a short-lived or
-per-run token if you extend this.
+*An agent auth secret is inside the boundary by construction* — which one is a
+configuration choice with different blast radii. Blank
+`ATTICUS_CLAUDE_TOKEN_FILE` bind-mounts `~/.claude/.credentials.json`
+read-only, which contains the operator's **refresh token**: an agent acting on
+injected instructions has `Bash` and egress, so treat it as reachable, and
+rotate it if you suspect a run was influenced. Setting
+`ATTICUS_CLAUDE_TOKEN_FILE` to a `claude setup-token` output replaces that
+with a dedicated long-lived token passed via `CLAUDE_CODE_OAUTH_TOKEN` — still
+exfiltratable, but revocable without touching the operator's own sessions,
+and the refresh token never enters the namespace. Prefer the token mode; a
+per-run short-lived token or auth broker (#68) remains the durable fix.
 
 Earlier versions asserted this and did not deliver it: the vault deploy key was
 readable and the agent has a shell, so "the agent never touches git" was
