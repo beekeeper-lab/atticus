@@ -19,6 +19,32 @@ AI_ENV = Path.home() / ".config/ai/env"
 _ASSIGN = re.compile(r'^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$')
 
 
+def _csv(raw) -> list[str]:
+    """A comma-separated setting as a list. Accepts an already-parsed list too, so
+    a test can assign the shape it means without going through the string form."""
+    if isinstance(raw, (list, tuple)):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    return [p.strip() for p in (raw or "").split(",") if p.strip()]
+
+
+def _pairs(raw) -> dict:
+    """`label=value,other=value` as a dict, for an allowlist that maps one to the
+    other. A duplicate label is kept as the FIRST value and the collision is left
+    for the handler to refuse — silently preferring one of two spellings of the
+    same person is how a message reaches the wrong number."""
+    if isinstance(raw, dict):
+        return {str(k).strip().lower(): str(v).strip() for k, v in raw.items()}
+    out = {}
+    for part in _csv(raw):
+        if "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        k, v = k.strip().lower(), v.strip()
+        if k and v and k not in out:
+            out[k] = v
+    return out
+
+
 def _parse_env(path: Path) -> dict:
     out = {}
     if not path.is_file():
@@ -197,6 +223,153 @@ class Config:
         # messages, and a legitimate request rarely needs more than a couple of
         # actions. 0 removes the cap.
         self.outbox_max_actions = int(g("ATTICUS_OUTBOX_MAX_ACTIONS", "5") or 0)
+
+        # ---- GitHub, through `gh` (issue #50) --------------------------------
+        #
+        # WHICH REPOSITORIES A SPOKEN SENTENCE MAY FILE INTO. This list is the
+        # control, and it is why the target repo is configuration rather than
+        # something the agent supplies: `gh` on this host is authenticated as a
+        # write-capable token on the operator's own account (ops/pr.sh depends on
+        # it), so anything the token can reach is reachable by whatever was said
+        # near the pin. A request may only SELECT from this list; a name that is
+        # not on it is refused by processor/handlers/github.py.
+        #
+        # BLANK DISABLES THE CAPABILITY, which is the right default: nothing in
+        # this repo should name a particular repository, and an operator who has
+        # not thought about the blast radius should not have one. The first entry
+        # is the default when a request names no repo at all.
+        # Comma-separated owner/name.
+        self.github_repos = [r.strip() for r in
+                             (g("ATTICUS_GITHUB_REPOS", "") or "").split(",")
+                             if r.strip()]
+        # Labels applied to every issue Atticus files, so machine-filed issues are
+        # distinguishable from hand-filed ones. Each label must ALREADY EXIST in
+        # the target repo — `gh` fails the whole create otherwise — so this ships
+        # blank rather than assuming a label anyone has.
+        self.github_labels = [t.strip() for t in
+                              (g("ATTICUS_GITHUB_LABELS", "") or "").split(",")
+                              if t.strip()]
+        self.gh_bin = g("ATTICUS_GH_BIN", "gh")
+        # One API call behind a local binary. Generous enough for a slow network,
+        # short enough that a hung `gh` cannot hold the pass open.
+        self.github_timeout = int(g("ATTICUS_GITHUB_TIMEOUT", "60"))
+
+        # ---- reminders (issue #52) ------------------------------------------
+        # The operator's LOCAL timezone, as an IANA name. Everything else in this
+        # project is UTC ISO-8601 by convention, deliberately — but "remind me at
+        # four" is unambiguously local, and reading it as UTC does not ship a
+        # misconfigured feature, it ships one that looks broken: a push four hours
+        # late reads as a bug in the reminder.
+        #
+        # A NAME, never a fixed offset, because a reminder can be on the far side
+        # of a DST boundary from the moment it was set. Blank falls back to the
+        # host zone read out of /etc/localtime (still a real IANA name, so still
+        # DST-correct); a name zoneinfo does not know is REFUSED rather than
+        # quietly treated as UTC. See processor/reminders.py.
+        self.local_tz = (g("ATTICUS_LOCAL_TZ", "") or "").strip()
+        # How late a reminder may still fire after the box was down. Inside the
+        # window it fires with "this was due at four — 3h ago", because a late
+        # reminder is usually still worth having and silently dropping one is the
+        # only outcome with no recovery. Past it, the reminder is marked expired
+        # and reported in a single grouped push — a week of downtime should not
+        # fire nine days of stale errands at once. 0 disables the bound (fire
+        # everything, however old).
+        self.reminder_max_late_hours = float(g("ATTICUS_REMINDER_MAX_LATE_HOURS", "24") or 0)
+        # Refuse a due date further out than this. Catches a misparsed year, which
+        # would otherwise be stored as a reminder that simply never fires and
+        # leaves a JSONL line as the only evidence. 0 disables the bound.
+        self.reminder_max_days = int(g("ATTICUS_REMINDER_MAX_DAYS", "365") or 0)
+
+        # ---- outbox handler settings, one block per service -----------------
+        # Every secret here defaults to EMPTY and every allowlist defaults to
+        # EMPTY, so a fresh install has every integration OFF and each handler
+        # refuses by naming what is missing. That is deliberate: a credential that
+        # arrives before the operator decided to grant it is a credential nobody
+        # chose. `ops/.env.example` keeps the secrets blank for the same reason —
+        # the test `cfg` fixture is built from that file, and several handlers'
+        # refusal tests depend on the credential being absent.
+
+        # Signal (skills/signal). The highest-consequence handler: a message to a
+        # person, immediate and not recallable. The recipient allowlist maps a
+        # spoken label to E.164 and matching is EXACT — "Nadya" does not reach
+        # "Nadia". Empty means every send refuses.
+        self.signal_recipients = _pairs(g("ATTICUS_SIGNAL_RECIPIENTS", ""))
+        self.signal_from = (g("ATTICUS_SIGNAL_FROM", "") or "").strip()
+        self.signal_cli = g("ATTICUS_SIGNAL_CLI", "signal-cli")
+        self.signal_config_dir = (g("ATTICUS_SIGNAL_CONFIG_DIR", "") or "").strip()
+        self.signal_max_chars = int(g("ATTICUS_SIGNAL_MAX_CHARS", "1000") or 0)
+        self.signal_timeout = int(g("ATTICUS_SIGNAL_TIMEOUT", "60"))
+
+        # Slack (skills/slack). A bot token (xoxb-), never a user token, and the
+        # channel is a SELECTION from this allowlist rather than a value from the
+        # request — "the standup channel" is one mishearing from #general.
+        self.slack_bot_token = (g("ATTICUS_SLACK_BOT_TOKEN", "") or "").strip()
+        self.slack_channels = _csv(g("ATTICUS_SLACK_CHANNELS", ""))
+        self.slack_default_channel = (g("ATTICUS_SLACK_DEFAULT_CHANNEL", "") or "").strip()
+        self.slack_api_url = g("ATTICUS_SLACK_API_URL",
+                               "https://slack.com/api/chat.postMessage")
+        self.slack_timeout = int(g("ATTICUS_SLACK_TIMEOUT", "15"))
+
+        # Azure DevOps (skills/azure-devops). Project, area and iteration come from
+        # HERE, never from the request: the agent has no basis for guessing them.
+        # Default type is Task because it is the only work-item type present in
+        # every default ADO process, so any other default can 404 by project.
+        self.ado_pat = (g("ATTICUS_ADO_PAT", "") or "").strip()
+        self.ado_org = (g("ATTICUS_ADO_ORG", "") or "").strip()
+        self.ado_project = (g("ATTICUS_ADO_PROJECT", "") or "").strip()
+        self.ado_base_url = g("ATTICUS_ADO_BASE_URL", "https://dev.azure.com")
+        self.ado_area_path = (g("ATTICUS_ADO_AREA_PATH", "") or "").strip()
+        self.ado_iteration_path = (g("ATTICUS_ADO_ITERATION_PATH", "") or "").strip()
+        self.ado_workitem_type = g("ATTICUS_ADO_WORKITEM_TYPE", "Task")
+        self.ado_workitem_types = _csv(g(
+            "ATTICUS_ADO_WORKITEM_TYPES",
+            "Task,Bug,Issue,User Story,Product Backlog Item,Feature,Epic"))
+        self.ado_assigned_to = (g("ATTICUS_ADO_ASSIGNED_TO", "") or "").strip()
+        self.ado_tags = _csv(g("ATTICUS_ADO_TAGS", "atticus"))
+        self.ado_timeout = int(g("ATTICUS_ADO_TIMEOUT", "30"))
+
+        # Microsoft To Do (skills/todo). Writes need Tasks.ReadWrite, which the
+        # shared read-only m365 token does not carry — see the skill for the two
+        # ways to grant it. Lists are never created; an unknown name refuses.
+        self.todo_account = g("ATTICUS_TODO_ACCOUNT", "default")
+        self.todo_token_file = (g("ATTICUS_TODO_TOKEN_FILE", "") or "").strip()
+        self.todo_list = (g("ATTICUS_TODO_LIST", "") or "").strip()
+        self.todo_timeout = int(g("ATTICUS_TODO_TIMEOUT", "20"))
+
+        # Outlook (skills/outlook). Draft and calendar-event writes only; reading
+        # is issue #63, not a gap in this skill. Two accounts exist with different
+        # licensing and organservices' calendar is empty, so writing to the wrong
+        # one looks like success — hence an explicit account rather than a guess.
+        self.outlook_account = g("ATTICUS_OUTLOOK_ACCOUNT", "default")
+        self.outlook_secrets = (g("ATTICUS_OUTLOOK_SECRETS", "") or "").strip()
+        self.outlook_timeout = int(g("ATTICUS_OUTLOOK_TIMEOUT", "30"))
+        self.outlook_timezone = (g("ATTICUS_OUTLOOK_TIMEZONE", "") or "").strip()
+        self.outlook_event_minutes = int(g("ATTICUS_OUTLOOK_EVENT_MINUTES", "30"))
+        self.outlook_max_recipients = int(g("ATTICUS_OUTLOOK_MAX_RECIPIENTS", "5"))
+        self.outlook_min_confidence = float(g("ATTICUS_OUTLOOK_MIN_CONFIDENCE", "0.9"))
+        self.outlook_graph_url = g("ATTICUS_OUTLOOK_GRAPH_URL",
+                                   "https://graph.microsoft.com/v1.0")
+        self.outlook_login_url = g("ATTICUS_OUTLOOK_LOGIN_URL",
+                                   "https://login.microsoftonline.com")
+
+        # Contact resolution (processor/contacts.py, ADR-006). Pipeline-side
+        # infrastructure the handlers call, NOT an agent-facing lookup — that would
+        # be a read, which issue #63 covers. Confidence tiers occupy disjoint
+        # bands so a phonetic hit can never outrank an exact match.
+        self.contacts_sources = _csv(g("ATTICUS_CONTACTS_SOURCES",
+                                       "m365:people,m365:contacts"))
+        self.contacts_m365_accounts = _csv(g("ATTICUS_CONTACTS_M365_ACCOUNTS",
+                                             "default,organservices"))
+        self.contacts_m365_limit = int(g("ATTICUS_CONTACTS_M365_LIMIT", "25"))
+        self.contacts_timeout = int(g("ATTICUS_CONTACTS_TIMEOUT", "20"))
+        self.contacts_cache_ttl_hours = int(g("ATTICUS_CONTACTS_CACHE_TTL_HOURS", "168"))
+        self.contacts_min_confidence = float(g("ATTICUS_CONTACTS_MIN_CONFIDENCE", "0.75"))
+        self.contacts_ambiguity_margin = float(g("ATTICUS_CONTACTS_AMBIGUITY_MARGIN", "0.15"))
+        self.contacts_phonetic = (g("ATTICUS_CONTACTS_PHONETIC", "on") or "").strip().lower()
+        self.contacts_max_results = int(g("ATTICUS_CONTACTS_MAX_RESULTS", "8"))
+        self.contacts_git_repos = _csv(g("ATTICUS_CONTACTS_GIT_REPOS", ""))
+        self.contacts_git_max_commits = int(g("ATTICUS_CONTACTS_GIT_MAX_COMMITS", "2000"))
+        self.contacts_cache_path = g("ATTICUS_CONTACTS_CACHE_PATH", "")
 
         # Daily AI briefing. Extra tags to file it under, beyond "AI brief"
         # which brief.py always applies. Comma-separated; empty is fine.
