@@ -92,6 +92,8 @@ copies.
 | `ATTICUS_OUTLOOK_TIMEZONE` | *(empty)* |  |
 | `ATTICUS_PODCAST_MAX_USD` | `0.50` | Per-episode ceiling on REAL money, tested against an estimate BEFORE the first request. TTS bills to the same key and the same monthly budget as transcription, so ATTICUS_API_BUDGET_USD also applie… |
 | `ATTICUS_PUSH_RETRIES` | `3` | Both hosts push to the same repo. Bounded retry on rebase conflict before quarantining and notifying. See SPEC §4.3. |
+| `ATTICUS_REMINDER_CALENDAR` | `on` | Also drop a short event on the operator's OWN calendar when a reminder is set (issue #66): the operator's verdict on ntfy alone was "too soft among all the other notifications", and a calendar aler… |
+| `ATTICUS_REMINDER_EVENT_MINUTES` | `15` | Length of that event: a block to act on, not a meeting. |
 | `ATTICUS_REMINDER_MAX_DAYS` | `365` | Refuse a due date further out than this. It catches a misparsed year, which would otherwise be stored as a reminder that simply never fires, leaving a line in a JSONL file as the only evidence. 0 r… |
 | `ATTICUS_REMINDER_MAX_LATE_HOURS` | `24` | How late a reminder may still fire after the box was down. Inside the window it is delivered with "this was due at 4:00 PM — 3h 12m ago", because a late reminder is usually still worth having and s… |
 | `ATTICUS_RESULT_NOTIFY_URL` | *(empty)* | ── results ────────────────────────────────────────────────────────── Where finished-recording pushes go. Blank = reuse ATTICUS_NOTIFY_URL. Split them onto a separate topic if pipeline alarms start… |
@@ -135,4 +137,4 @@ copies.
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*124 settings.*
+*126 settings.*

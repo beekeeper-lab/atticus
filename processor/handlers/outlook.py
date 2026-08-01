@@ -470,6 +470,21 @@ def event(req: dict, cfg, log=print) -> dict:
                              for a in attendees]
     if str(req.get("location") or "").strip():
         body["location"] = {"displayName": str(req["location"]).strip()}
+    # Optional explicit alert. Graph's default is client-defined (usually 15 min
+    # before); the reminders companion event (issue #66) needs the alert AT the
+    # start, because the start IS the reminder's moment. Only set when asked, so
+    # ordinary spoken events keep whatever the operator's calendar does normally.
+    if req.get("alert_minutes_before") not in (None, ""):
+        try:
+            # Via str, so a float like 3.7 is refused rather than silently
+            # truncated to an alert three minutes earlier than written.
+            alert = int(str(req["alert_minutes_before"]).strip())
+        except (TypeError, ValueError):
+            raise OutboxError("alert_minutes_before must be a whole number of minutes")
+        if alert < 0:
+            raise OutboxError("alert_minutes_before cannot be negative")
+        body["isReminderOn"] = True
+        body["reminderMinutesBeforeStart"] = alert
 
     ev = _graph_post(cfg, "/me/events", body, token, what="event")
     log(f"    outlook: event created {start.isoformat(timespec='minutes')} {tz}")

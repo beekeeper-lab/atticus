@@ -129,6 +129,13 @@ Once stored, delivery is a one-minute timer, not your run — so the reminder is
 **pending**, never sent, at the moment you write your report. Say so in those
 terms.
 
+Delivery is two channels, both the pipeline's job, neither yours: a push at the
+moment, and a short block on the operator's own calendar whose alert fires at
+the same moment (the calendar alert is the one that breaks through Focus). Do
+not write an `outlook.event` request yourself to imitate this — the pipeline
+creates the companion event with a fixed, attendee-free shape, and a reminder
+request alone gets you both channels.
+
 - Delivery is a push to the operator's own ntfy topic. The **local time and the
   zone are appended to every reminder**, deliberately, so a timezone mistake is
   visible the first time rather than after weeks of vaguely mistimed pushes.

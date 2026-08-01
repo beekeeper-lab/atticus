@@ -121,6 +121,7 @@ def test_an_absent_credential_names_the_file(wired, tmp_path):
 
 def test_the_account_is_configuration_not_a_constant(cfg):
     """Two accounts with different licensing; neither may be assumed."""
+    cfg.outlook_secrets = ""        # the conftest fence points this at scratch
     assert outlook._store_path(cfg).name == "m365.json"
     cfg.outlook_account = "organservices"
     assert outlook._store_path(cfg).name == "m365-organservices.json"
@@ -316,3 +317,29 @@ def test_the_describe_line_shows_who_and_what(wired):
         {"verb": "outlook.draft", "to": ["robbie@example.com"], "subject": "Migration"})
     assert "Sync" in outbox.describe(
         {"verb": "outlook.event", "subject": "Sync", "start": "2026-08-04T14:00"})
+
+
+def test_an_explicit_alert_is_set_and_an_ordinary_event_keeps_the_default(wired):
+    """alert_minutes_before exists for the reminders companion (#66): the alert
+    must fire AT the start. An event that does not ask must not carry reminder
+    fields at all — the operator's calendar default is not ours to override."""
+    wire = wired._install(_Wire(granted="Calendars.ReadWrite"))
+    outlook.event({"subject": "s", "start": "2026-08-04T14:00",
+                   "alert_minutes_before": 0}, wired, log=lambda m: None)
+    body = wire.graph_calls[0]["json"]
+    assert body["isReminderOn"] is True
+    assert body["reminderMinutesBeforeStart"] == 0
+
+    outlook.event({"subject": "s2", "start": "2026-08-04T15:00"}, wired,
+                  log=lambda m: None)
+    body = wire.graph_calls[1]["json"]
+    assert "isReminderOn" not in body and "reminderMinutesBeforeStart" not in body
+
+
+@pytest.mark.parametrize("bad", ["-5", "soon", 3.7])
+def test_an_unusable_alert_is_refused_before_the_credential_is_read(wired, bad):
+    wire = wired._install(_Wire(granted="Calendars.ReadWrite"))
+    with pytest.raises(outbox.OutboxError, match="alert_minutes_before"):
+        outlook.event({"subject": "s", "start": "2026-08-04T14:00",
+                       "alert_minutes_before": bad}, wired, log=lambda m: None)
+    assert wire.graph_calls == []
