@@ -48,6 +48,11 @@ copies.
 | `ATTICUS_NOTIFICATION_DETAIL` | `full` | How much of what you said appears in a push notification. title   - just "Atticus finished" and the link. Nothing spoken. summary - the first 60 characters. full    - up to 180 characters (default)… |
 | `ATTICUS_NOTIFY_NOTES` | `false` | Push for GATED notes too. Off by default: a wearable overhears a lot and notes are the common case. Turn on to catch the failure that matters — a misheard wake word silently filing a real command a… |
 | `ATTICUS_NOTIFY_URL` | *(empty)* | Failure notifications (SPEC T-70). ntfy topic URL, or any endpoint accepting a POST body. Blank disables them. SET THIS. It is the only thing standing between you and a silently dead pipeline. The … |
+| `ATTICUS_OUTBOX` | `on` | ── the outbox: how the agent causes external actions (issue #42) ───── The agent holds NO credentials — that is the main control in this system. So a skill that needs to send, file or create someth… |
+| `ATTICUS_OUTBOX_INTERNAL` | `auto` | Per risk class. "auto" performs it unattended; "confirm" records the intent and waits for a human — and since nobody is present during a pass, confirm means "not this pass". internal  only you see … |
+| `ATTICUS_OUTBOX_MAX_ACTIONS` | `5` | Bound the fan-out: one misheard sentence must not send thirty messages. 0 = no cap. |
+| `ATTICUS_OUTBOX_OUTWARD` | `confirm` |  |
+| `ATTICUS_OUTBOX_TRACKED` | `confirm` |  |
 | `ATTICUS_PODCAST_MAX_USD` | `0.50` | Per-episode ceiling on REAL money, tested against an estimate BEFORE the first request. TTS bills to the same key and the same monthly budget as transcription, so ATTICUS_API_BUDGET_USD also applie… |
 | `ATTICUS_PUSH_RETRIES` | `3` | Both hosts push to the same repo. Bounded retry on rebase conflict before quarantining and notifying. See SPEC §4.3. |
 | `ATTICUS_RESULT_NOTIFY_URL` | *(empty)* | ── results ────────────────────────────────────────────────────────── Where finished-recording pushes go. Blank = reuse ATTICUS_NOTIFY_URL. Split them onto a separate topic if pipeline alarms start… |
@@ -80,4 +85,4 @@ copies.
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*69 settings.*
+*74 settings.*

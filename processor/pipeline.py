@@ -29,6 +29,8 @@ from config import Config                                    # noqa: E402
 from lock import AlreadyRunning, single_instance             # noqa: E402
 import execute as ex                                         # noqa: E402
 import audio_on_demand                                       # noqa: E402
+import handlers            # noqa: E402,F401  (registers outbox handlers)
+import outbox                                                # noqa: E402
 import podcast as pod                                        # noqa: E402
 import transcribe as stt                                     # noqa: E402
 import usage                                                 # noqa: E402
@@ -555,6 +557,19 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
             # player land in the same commit as the report. Cannot fail the
             # record: the HTML is the deliverable and audio is a companion, so a
             # TTS outage must not quarantine good research.
+            # Outbox BEFORE publish, so intent, receipt and deliverable land in
+            # one commit. Never fails the record: the report is what the operator
+            # reads, and a refused or failed action is reported in it rather than
+            # costing it.
+            if not dry_run:
+                try:
+                    ob = outbox.process(rec.outdir(cfg.vault), cfg,
+                                        log=log.info, stem=rec.stem)
+                    if ob["requests"]:
+                        rec.data["outbox"] = {k: v for k, v in ob.items()
+                                              if k != "receipts"}
+                except Exception as e:              # noqa: BLE001
+                    log.warn(f"    ! outbox failed: {type(e).__name__}: {e}")
             stage_podcast(rec, cfg, log, dry_run)
             # Explicit, rather than letting absence imply it. The gated path
             # writes executed=False, so "no key" used to mean "executed" — a
