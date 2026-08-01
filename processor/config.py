@@ -166,6 +166,38 @@ class Config:
             "\"Atticus\".",
         )
 
+        # ---- the outbox (issue #42) -----------------------------------------
+        # How a sandboxed agent causes anything to happen outside itself. It holds
+        # no credentials, so it writes intent into output/outbox/ and the pipeline
+        # performs it. See processor/outbox.py.
+        #
+        # "off" records intent and performs NOTHING, which is also how you test a
+        # new handler safely.
+        self.outbox = (g("ATTICUS_OUTBOX", "on") or "on").strip().lower()
+
+        # Per risk class: "auto" performs it unattended, "confirm" records the
+        # intent and waits for a human. Nobody is present during a pass, so
+        # "confirm" means "not this pass" — deliberately, for anything that cannot
+        # be taken back.
+        #
+        #   internal  only you see it, trivially undone (a todo, a reminder)
+        #   tracked   others see it but it is recoverable and expected (a GitHub
+        #             issue, an ADO work item)
+        #   outward   a message to a person, immediate, NOT recallable (Signal,
+        #             mail, Slack)
+        #
+        # outward defaults to confirm because the instruction originates in a
+        # microphone worn in public. Read SECURITY.md's prompt-scoping section
+        # before setting it to auto.
+        self.outbox_internal = (g("ATTICUS_OUTBOX_INTERNAL", "auto") or "").strip().lower()
+        self.outbox_tracked = (g("ATTICUS_OUTBOX_TRACKED", "confirm") or "").strip().lower()
+        self.outbox_outward = (g("ATTICUS_OUTBOX_OUTWARD", "confirm") or "").strip().lower()
+
+        # Bound the fan-out. One misheard sentence must not be able to send thirty
+        # messages, and a legitimate request rarely needs more than a couple of
+        # actions. 0 removes the cap.
+        self.outbox_max_actions = int(g("ATTICUS_OUTBOX_MAX_ACTIONS", "5") or 0)
+
         # Daily AI briefing. Extra tags to file it under, beyond "AI brief"
         # which brief.py always applies. Comma-separated; empty is fine.
         self.brief_tags = [t.strip() for t in
