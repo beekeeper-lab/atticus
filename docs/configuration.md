@@ -34,6 +34,7 @@ copies.
 | `ATTICUS_CHUNK_SECONDS` | `1200` | Chunk length and overlap, seconds. The API caps a request at 1400s, so chunk_seconds is clamped to that. Chunks overlap because a hard cut lands mid-word about as often as not, and a word split acr… |
 | `ATTICUS_CLAUDE_BIN` | `claude` | ── execution ──────────────────────────────────────────────────────── Leave model unset to use the Claude Code default. |
 | `ATTICUS_CLAUDE_MODEL` | *(empty)* |  |
+| `ATTICUS_CLAUDE_TOKEN_FILE` | *(empty)* | How the agent authenticates. Blank bind-mounts ~/.claude/.credentials.json read-only — which only works while some interactive session refreshed its 8-hour access token, so an idle overnight box fa… |
 | `ATTICUS_CONTACTS_AMBIGUITY_MARGIN` | `0.15` |  |
 | `ATTICUS_CONTACTS_CACHE_PATH` | *(empty)* |  |
 | `ATTICUS_CONTACTS_CACHE_TTL_HOURS` | `168` |  |
@@ -137,4 +138,4 @@ copies.
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*126 settings.*
+*127 settings.*

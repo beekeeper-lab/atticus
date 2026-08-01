@@ -175,6 +175,28 @@ def main():
     # BEFORE expiry is the whole point, since the fix needs a person.
     def check_agent_credential():
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "processor"))
+        # Long-lived-token mode retires the 8-hour cycle: the only things left
+        # to watch are the token FILE being present and sane. Its expiry (~a
+        # year) is not machine-readable from the opaque token, so when it does
+        # die the signal is the run-failure path, which names the re-mint.
+        tf = str(getattr(cfg, "claude_token_file", "") or "").strip()
+        if tf:
+            p = Path(tf).expanduser()
+            try:
+                tok = p.read_text().strip()
+            except OSError:
+                problems.append(
+                    f"ATTICUS_CLAUDE_TOKEN_FILE is set but {p} is unreadable — "
+                    f"EVERY agent run will refuse until `claude setup-token` "
+                    f"output is placed there (0600)")
+                return
+            if not tok or "\n" in tok:
+                problems.append(
+                    f"ATTICUS_CLAUDE_TOKEN_FILE ({p}) does not hold a "
+                    f"single-line token — every agent run will refuse")
+            else:
+                notes.append("agent auth: long-lived token (claude setup-token)")
+            return
         from execute import credential_expiry
         expired, when = credential_expiry()
         if when is None:

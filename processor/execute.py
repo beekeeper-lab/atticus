@@ -139,14 +139,20 @@ def credential_expiry():
         return False, None
 
 
-def _credential_problem() -> str | None:
+def _credential_problem(cfg=None) -> str | None:
+    if str(getattr(cfg, "claude_token_file", "") or "").strip():
+        # Long-lived-token mode: the interactive credential's 8-hour expiry is
+        # someone else's problem. A bad TOKEN fails before the run starts, in
+        # oauth_token(), with its own message.
+        return None
     expired, when = credential_expiry()
     if not expired:
         return None
     return (f"the Claude Code credential expired at "
             f"{when.isoformat(timespec='seconds')}. It is mounted read-only, so "
             f"the CLI cannot refresh it from inside the sandbox. Run `claude` "
-            f"interactively on this host to renew it.")
+            f"interactively on this host to renew it — or retire this failure "
+            f"mode entirely with `claude setup-token` + ATTICUS_CLAUDE_TOKEN_FILE.")
 
 
 class ExecutionError(RuntimeError):
@@ -158,6 +164,39 @@ class ExecutionError(RuntimeError):
         # without carrying it here the ledger recorded $0.00 for the single most
         # expensive kind of event in the system.
         self.usage = usage or {}
+
+
+def oauth_token(cfg) -> str | None:
+    """The long-lived auth token, or None when the mode is not configured.
+
+    `claude setup-token` mints a subscription-backed token good for about a
+    year — the supported path for headless use, and the reason the pipeline no
+    longer has to care whether an interactive session refreshed the 8-hour
+    access token recently (issue #68 has the security half of the story).
+
+    Configured-but-unusable is a REFUSAL, not a fallback: quietly reverting to
+    the bind-mounted credential would un-do the migration this setting exists
+    for, in exactly the way nobody notices until the token they thought retired
+    turns up in an audit again.
+    """
+    path = str(getattr(cfg, "claude_token_file", "") or "").strip()
+    if not path:
+        return None
+    p = Path(path).expanduser()
+    try:
+        tok = p.read_text().strip()
+    except OSError as e:
+        raise ExecutionError(
+            f"ATTICUS_CLAUDE_TOKEN_FILE is set but {p} is unreadable "
+            f"({type(e).__name__}). Mint a token with `claude setup-token`, put "
+            f"it in that file (0600), or blank the setting to fall back to the "
+            f"interactive credential. Nothing was run.", retryable=False)
+    if not tok or "\n" in tok:
+        raise ExecutionError(
+            f"ATTICUS_CLAUDE_TOKEN_FILE ({p}) is {'empty' if not tok else 'not a single-line token'} "
+            f"— it should hold exactly the output of `claude setup-token`. "
+            f"Nothing was run.", retryable=False)
+    return tok
 
 
 def budget_exhausted(stdout: str, stderr: str) -> bool:
@@ -208,9 +247,12 @@ def agent_env(ws: Path, out: Path, cfg=None) -> dict:
     three names from a copy of everything is not a boundary; naming what may
     pass is.
 
-    Nothing credential-shaped is here on purpose. A capability that genuinely
-    needs a secret should be handed exactly that one, at the point of use, not
-    granted to every agent run by default.
+    Nothing credential-shaped is here on purpose, with ONE named exception: the
+    agent's own auth token (ATTICUS_CLAUDE_TOKEN_FILE), which is exactly the
+    "handed exactly that one, at the point of use" case the next sentence
+    demands. A capability that genuinely needs a secret should be handed
+    exactly that one, at the point of use, not granted to every agent run by
+    default.
 
     HOME and PATH are SANDBOX-AWARE. With the sandbox on, the agent gets a
     private HOME inside the workspace and a PATH pointing only at the bound-in
@@ -240,6 +282,9 @@ def agent_env(ws: Path, out: Path, cfg=None) -> dict:
         "PATH": path,
         "ATTICUS_OUTPUT_DIR": str(out),
     })
+    tok = oauth_token(cfg)          # raises, loudly, when configured-but-broken
+    if tok:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = tok
     return env
 
 
@@ -342,14 +387,24 @@ def wrap_sandbox(cmd: list, ws: Path, out: Path, cfg, *, log=print) -> list:
     # Claude Code needs its own credential, and only that. NOT the rest of
     # ~/.claude, which holds session transcripts, history, and hooks. Mounted
     # read-only into the sandbox's private HOME.
+    #
+    # UNLESS a long-lived token is configured (ATTICUS_CLAUDE_TOKEN_FILE): then
+    # the CLI authenticates from CLAUDE_CODE_OAUTH_TOKEN in its environment
+    # (agent_env), and the operator's credential file — access token, REFRESH
+    # token, the works — stays outside the namespace entirely. That is most of
+    # the point of the token mode (#68): what the sandbox cannot see, a
+    # prompt-injected agent cannot exfiltrate.
     home = ws / "home"
-    cred = Path.home() / ".claude/.credentials.json"
-    if cred.is_file():
-        (home / ".claude").mkdir(parents=True, exist_ok=True)
-        (home / ".claude/.credentials.json").touch()
-        args += ["--ro-bind", str(cred), str(home / ".claude/.credentials.json")]
+    if str(getattr(cfg, "claude_token_file", "") or "").strip():
+        log("    auth: long-lived token via env; ~/.claude/.credentials.json NOT bound")
     else:
-        log("    no ~/.claude/.credentials.json — the agent may fail to authenticate")
+        cred = Path.home() / ".claude/.credentials.json"
+        if cred.is_file():
+            (home / ".claude").mkdir(parents=True, exist_ok=True)
+            (home / ".claude/.credentials.json").touch()
+            args += ["--ro-bind", str(cred), str(home / ".claude/.credentials.json")]
+        else:
+            log("    no ~/.claude/.credentials.json — the agent may fail to authenticate")
 
     # House-standard skills are instructions, not secrets, and the output
     # contract depends on html-artifact-output. Binding the WHOLE directory
@@ -487,7 +542,7 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
             # "agent exited 1: " is not a diagnosis. Name the likely cause and
             # make it non-retryable: burning three retries over 2.5h against a
             # credential that only a human can renew helps nobody.
-            expiry = _credential_problem()
+            expiry = _credential_problem(cfg)
             if expiry and not err:
                 raise ExecutionError(
                     f"agent exited {proc.returncode} with no output — {expiry}",
@@ -516,11 +571,14 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
                     f"request, or re-run it by hand with --retry.",
                     retryable=False, usage=agent_usage)
             if not err and not out_hint:
+                fix = ("the long-lived token may be revoked or expired — re-mint "
+                       "with `claude setup-token` into ATTICUS_CLAUDE_TOKEN_FILE"
+                       if str(getattr(cfg, "claude_token_file", "") or "").strip()
+                       else "run `claude` interactively on this host")
                 raise ExecutionError(
                     f"agent exited {proc.returncode} and wrote nothing to either "
-                    f"stdout or stderr. Most often this is authentication: run "
-                    f"`claude` interactively on this host and check "
-                    f"`atticus doctor`.", retryable=True, usage=agent_usage)
+                    f"stdout or stderr. Most often this is authentication: {fix}, "
+                    f"and check `atticus doctor`.", retryable=True, usage=agent_usage)
             raise ExecutionError(
                 f"agent exited {proc.returncode}: {err or out_hint}",
                 retryable=True, usage=agent_usage)
