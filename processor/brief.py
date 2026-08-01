@@ -243,13 +243,12 @@ def run(cfg, *, today: date | None = None, dry_run: bool = False,
         log(task)
         return {"made": False, "reason": "dry run", "slug": slug, "task": task}
 
-    # Same real-money guard the audio stage respects. The agent itself is
-    # subscription-billed, but a month that has blown its API budget is a month
-    # with a problem, and spending more of it unattended is the wrong instinct.
-    state = usage.budget_state(cfg.vault, cfg)
-    if state.get("exhausted"):
-        log(f"  ✗ monthly API budget exhausted (${state.get('spent', 0):.2f}) — skipping")
-        return {"made": False, "reason": "monthly API budget exhausted", "slug": slug}
+    # No money gate on the briefing itself. The agent is subscription-billed, so
+    # writing a briefing costs no dollars — the ONLY real-money part is the
+    # optional audio, and that is gated separately below against the TTS budget.
+    # This used to block the whole briefing on the combined money budget, which
+    # meant an audio-heavy month silently stopped the morning briefing over spend
+    # the briefing had not incurred.
 
     # Stage into a scratch directory, not into reports/. A half-written briefing
     # in the vault is published by the next site build, and a partial AI briefing
@@ -289,6 +288,14 @@ def run(cfg, *, today: date | None = None, dry_run: bool = False,
     # recording pipeline: the written briefing is the deliverable and a TTS
     # outage must not cost it.
     audio = {}
+    if want_audio:
+        tts = usage.budget_state(cfg.vault, cfg, "tts")
+        if tts["exhausted"]:
+            log(f"    ! audio skipped — the ${tts['budget_usd']:.2f} TTS budget "
+                f"for {tts['month']} is spent (${tts['spent_usd']:.4f}). The "
+                f"briefing is published without an episode.")
+            audio = {"made": False, "reason": "TTS budget exhausted"}
+            want_audio = False
     if want_audio:
         try:
             audio = pod.generate(staging, cfg, log=log)

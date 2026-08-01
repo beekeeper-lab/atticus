@@ -126,21 +126,75 @@ def load(vault: Path, month: str | None = None) -> list[dict]:
     return out
 
 
-def api_spend(vault: Path, month: str | None = None) -> float:
-    """Real money this month. Subscription usage is excluded BY DESIGN."""
-    return round(sum(e.get("usd", 0.0) for e in load(vault, month or month_key())
-                     if e.get("billing") == API), 6)
+# ---------------------------------------------------------------------------
+#  budgets, one per paid service
+# ---------------------------------------------------------------------------
+# Two REAL-MONEY budgets, deliberately separate, because they bound different
+# risks and exhaustion should have different consequences.
+#
+# They used to be one combined ATTICUS_API_BUDGET_USD, and that was a bug rather
+# than a simplification: TTS spent against the same pot the transcribe gate
+# checks, so one audio-heavy month would exhaust it and STOP TRANSCRIPTION — the
+# core of the pipeline halted by an optional companion feature. Audio must never
+# be able to do that.
+#
+#   transcription   the pipeline cannot run without it, so exhaustion is a HARD
+#                   stop and needs a human. Pennies in practice (~$0.003 per
+#                   recording), so the cap exists to catch a runaway loop, not to
+#                   ration normal use.
+#   tts             optional, on demand, and the expensive one per unit. Exhaustion
+#                   skips ONLY the audio: the transcript, the agent run and the
+#                   published report all still happen, they just do not get an
+#                   episode attached.
+#
+# The wake-word adjudicator bills to OpenAI like transcription does, is derived
+# from a transcript, and costs ~$0.0001 a call — so it counts against the
+# transcription budget rather than earning a third one.
+TRANSCRIPTION_KINDS = ("transcription", "adjudicator")
+TTS_KINDS = ("tts",)
+
+# category -> (cfg attribute, kinds it covers, env var name for messages)
+BUDGETS = {
+    "transcription": ("transcription_budget_usd", TRANSCRIPTION_KINDS,
+                      "ATTICUS_TRANSCRIPTION_BUDGET_USD"),
+    "tts": ("tts_budget_usd", TTS_KINDS, "ATTICUS_TTS_BUDGET_USD"),
+}
 
 
-def budget_state(vault: Path, cfg) -> dict:
-    """Where the month stands against the api budget.
+def spend(vault: Path, kinds=None, month: str | None = None) -> float:
+    """Real money this month, optionally for one category of paid call.
 
-    A budget of 0 or less disables the cap — reported as unlimited rather than
-    as an instantly-exhausted budget, which would stop the pipeline dead.
+    Subscription usage is excluded BY DESIGN — `claude -p` bills no dollars, and
+    counting imputed tokens as money is the mistake this whole split exists to
+    prevent.
     """
-    budget = float(getattr(cfg, "api_budget_usd", 0) or 0)
-    spent = api_spend(vault)
+    return round(sum(e.get("usd", 0.0) for e in load(vault, month or month_key())
+                     if e.get("billing") == API
+                     and (kinds is None or e.get("kind") in kinds)), 6)
+
+
+def api_spend(vault: Path, month: str | None = None) -> float:
+    """ALL real money this month, across every category. Reporting only —
+    nothing enforces against this, because the budgets are per-service."""
+    return spend(vault, None, month)
+
+
+def budget_state(vault: Path, cfg, category: str = "transcription") -> dict:
+    """Where the month stands against one service's budget.
+
+    A budget of 0 or less disables the cap — reported as unlimited rather than as
+    an instantly-exhausted budget, which would stop the pipeline dead.
+    """
+    try:
+        attr, kinds, env = BUDGETS[category]
+    except KeyError:
+        raise ValueError(f"unknown budget category {category!r}; "
+                         f"expected one of {sorted(BUDGETS)}")
+    budget = float(getattr(cfg, attr, 0) or 0)
+    spent = spend(vault, kinds)
     return {
+        "category": category,
+        "env": env,
         "month": month_key(),
         "budget_usd": budget,
         "spent_usd": spent,
@@ -150,7 +204,7 @@ def budget_state(vault: Path, cfg) -> dict:
     }
 
 
-def newly_crossed(vault: Path, cfg) -> list[float]:
+def newly_crossed(vault: Path, cfg, category: str = "transcription") -> list[float]:
     """Alert thresholds this month's api spend has passed and not yet announced.
 
     "Not yet announced" is recorded in the LEDGER, not in a notify stamp file.
@@ -163,20 +217,33 @@ def newly_crossed(vault: Path, cfg) -> list[float]:
     Returns ascending thresholds so a single pass that jumps two of them
     announces both, in order, rather than silently skipping one.
     """
-    thresholds = sorted(float(t) for t in getattr(cfg, "budget_alert_usd", []) or [])
-    if not thresholds:
+    pcts = sorted(float(t) for t in getattr(cfg, "budget_alert_pct", []) or [])
+    if not pcts:
         return []
-    spent = api_spend(vault)
+    state = budget_state(vault, cfg, category)
+    if not state["enabled"]:
+        return []
+    # PERCENTAGES, not dollar amounts. A fixed list like 2.00,3.00,4.00 was tied
+    # to one combined budget; with a $2 budget and a $10 one the same list is
+    # simultaneously too coarse for one and unreachable for the other, and it
+    # silently stops meaning anything the moment a budget is changed.
+    thresholds = [round(state["budget_usd"] * pct / 100.0, 6) for pct in pcts]
     already = {round(float(e.get("threshold_usd") or 0), 4)
                for e in load(vault, month_key())
-               if e.get("kind") == "budget-alert"}
+               if e.get("kind") == "budget-alert"
+               and e.get("category", "transcription") == category}
     return [t for t in thresholds
-            if spent >= t and round(t, 4) not in already]
+            if state["spent_usd"] >= t and round(t, 4) not in already]
 
 
-def mark_alerted(vault: Path, threshold: float, spent: float, log=None):
-    """Record that a threshold has been announced, so it is announced once."""
-    record(vault, kind="budget-alert", billing=META,
+def mark_alerted(vault: Path, threshold: float, spent: float, log=None,
+                 category: str = "transcription"):
+    """Record that a threshold has been announced, so it is announced once.
+
+    Scoped by category, or crossing 50% of the transcription budget would mark
+    the tts budget's 50% as already announced.
+    """
+    record(vault, kind="budget-alert", billing=META, category=category,
            threshold_usd=round(float(threshold), 4),
            spent_usd=round(float(spent), 6), log=log)
 

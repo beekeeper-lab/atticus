@@ -68,22 +68,50 @@ class Config:
         # from. Two different numbers in the two files is exactly the drift the
         # derived test fixture now catches.
         self.backlog_alarm_minutes = int(g("ATTICUS_BACKLOG_ALARM_MINUTES", "60"))
-        # Hard monthly ceiling on REAL money — OpenAI transcription and the wake
-        # adjudicator. When the calendar month's api spend reaches this, the
-        # pipeline stops transcribing rather than continuing to charge. The
-        # agent's own usage is NOT counted here: it runs on the operator's Claude
-        # subscription and bills nothing per token, so folding it in would stop
-        # the pipeline over money nobody spent. 0 disables the cap.
-        self.api_budget_usd = float(g("ATTICUS_API_BUDGET_USD", "4.00") or 0)
-        # Warn on the way up, not only on arrival. A budget whose first signal is
-        # "transcription has stopped" gives no chance to react; these fire once
-        # each per calendar month as the month's api spend passes them. Absolute
-        # dollars rather than percentages, so the numbers mean the same thing
-        # after the budget is raised. Blank disables the warnings (the cap itself
-        # still applies).
-        self.budget_alert_usd = [float(t) for t in
-                                 (g("ATTICUS_BUDGET_ALERT_USD", "2.00,3.00,4.00")
+        # ---- real-money budgets, one per paid service ----------------------
+        #
+        # ONE budget per service, because exhaustion means different things.
+        # These were a single combined ATTICUS_API_BUDGET_USD and that was a bug:
+        # TTS spent against the pot the transcribe gate checks, so an audio-heavy
+        # month would halt the core pipeline over an optional feature.
+        #
+        # The agent's own usage is in NEITHER: `claude -p` runs on the operator's
+        # subscription and bills nothing per token. Its per-recording bound is
+        # ATTICUS_MAX_BUDGET_USD, which is imputed, not money. 0 disables a cap.
+
+        # Transcription (plus the wake adjudicator, which bills the same key and
+        # is derived from a transcript). The pipeline cannot run without this, so
+        # exhaustion is a HARD stop that needs a human. It is also pennies —
+        # ~$0.003 a recording, most of them ten seconds — so this cap is here to
+        # catch a runaway loop, not to ration normal use. It should never be hit.
+        self.transcription_budget_usd = float(
+            g("ATTICUS_TRANSCRIPTION_BUDGET_USD", "2.00") or 0)
+
+        # Text-to-speech. Optional, on demand, and the expensive one per unit
+        # (~$0.05-0.10 an episode). Exhaustion skips ONLY the audio: the
+        # transcript, the agent run and the published report all still happen —
+        # the report simply does not get an episode attached. Nothing fails.
+        self.tts_budget_usd = float(g("ATTICUS_TTS_BUDGET_USD", "10.00") or 0)
+
+        # Warn on the way up, not only on arrival. PERCENTAGES of each budget, so
+        # one setting serves a $2 cap and a $10 cap and keeps meaning the same
+        # thing after either is changed — the old absolute list (2,3,4 dollars)
+        # was tied to one combined budget and silently stopped meaning anything
+        # once there were two. Blank disables warnings; the caps still apply.
+        self.budget_alert_pct = [float(t) for t in
+                                 (g("ATTICUS_BUDGET_ALERT_PCT", "50,80,100")
                                   or "").replace(" ", "").split(",") if t]
+
+        # Superseded. Named explicitly so a config that still sets it gets told,
+        # rather than silently running on defaults it did not choose.
+        self._legacy_api_budget = (g("ATTICUS_API_BUDGET_USD", "") or "").strip()
+        if self._legacy_api_budget:
+            print("[WARNING] ATTICUS_API_BUDGET_USD is set but no longer used. It "
+                  "was one pot for transcription AND text-to-speech, which let "
+                  "audio spend stop transcription. Replace it with "
+                  "ATTICUS_TRANSCRIPTION_BUDGET_USD (default 2.00) and "
+                  "ATTICUS_TTS_BUDGET_USD (default 10.00); those are the values "
+                  "in force now, NOT the one you set.", flush=True)
 
         # Results. A finished voice command is the whole point of the system, so
         # it gets a push carrying a link to the page it produced. Separate knob
@@ -148,7 +176,11 @@ class Config:
         # gets its own switch rather than riding on the podcast setting: about
         # $0.09 an episode on Gemini, so roughly $2.80 a month at daily cadence,
         # which is a real fraction of ATTICUS_API_BUDGET_USD.
-        self.brief_audio = (g("ATTICUS_BRIEF_AUDIO", "true") or "").strip().lower() \
+        # OFF by default. Audio is generated when ASKED for, not by default —
+        # a spoken request says "and make me a podcast" and the agent writes a
+        # script. The briefing has no speaker to ask, so defaulting it on created
+        # recurring daily spend nobody requested. Opt in deliberately.
+        self.brief_audio = (g("ATTICUS_BRIEF_AUDIO", "false") or "").strip().lower() \
             in ("1", "true", "yes", "on")
 
         # Audio overview ("podcast"). Opt-in: the agent only writes

@@ -94,7 +94,11 @@ def test_an_exhausted_monthly_budget_skips_audio_without_failing(rec, cfg,
     _script(rec, cfg)
     monkeypatch.setattr(pod, "generate", lambda *a, **k: pytest.fail("must not spend"))
     monkeypatch.setattr(usage, "budget_state",
-                        lambda v, c: {"exhausted": True, "spent": 4.20})
+                        lambda v, c, cat="tts": {"exhausted": True,
+                                                 "spent_usd": 4.20,
+                                                 "budget_usd": 10.0,
+                                                 "month": "2026-08",
+                                                 "env": "ATTICUS_TTS_BUDGET_USD"})
     log = _Log()
     pl.stage_podcast(rec, cfg, log)
     assert rec.status == EXECUTED
