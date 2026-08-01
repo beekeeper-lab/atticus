@@ -47,6 +47,32 @@ guess dressed as a finding is worse than nothing.
 5. **Write.** Follow the `html-artifact-output` skill for structure and style.
    Use the research-report template.
 
+## Write early, then improve it
+
+**You are running under a hard spend ceiling and you will not be warned before it
+stops you.** When it fires, the run ends instantly and anything not yet written to
+a file is lost. Measured 2026-08-01: a run spent 60 turns and produced no file at
+all, because it researched exhaustively and intended to write at the end.
+
+So:
+
+1. Do enough searching to answer the question **at all** — usually three or four
+   sources.
+2. **Write the complete HTML file now.** Rough, but whole: every section present,
+   the recommendation stated, sources listed.
+3. Then improve it in place — more sources, fill the gaps, sharpen the
+   recommendation. Rewrite the file after each meaningful addition.
+
+A finished-but-shallow report beats a killed run every time. If the ceiling stops
+you at step 3, the reader still has something useful and it says what it does not
+cover.
+
+**Scope a sprawling request rather than answering all of it.** "Which models, which
+should I switch to, which should I download, and is my hardware enough" is four
+questions. Answer the one that subsumes the others, note explicitly which parts you
+did not cover, and stop. Trying to cover everything is what exhausts the ceiling
+before anything is written.
+
 ## Output
 
 One self-contained HTML file in the output directory. Name it for the topic —
