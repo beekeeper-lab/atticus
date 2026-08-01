@@ -38,6 +38,7 @@ answer an arbitrary question. That is a separate decision with a worse risk prof
 and it gets its own issue rather than being smuggled in here. Skills that only need
 to *do* things work today; skills that need to *look things up* wait for it.
 """
+import html
 import json
 import re
 from pathlib import Path
@@ -147,15 +148,29 @@ def validate(req: dict) -> dict:
     return h
 
 
-def gate(cfg, risk: str) -> str:
-    """"auto" | "confirm" | "off" for this risk class.
+def gate(cfg, risk: str, verb: str = "") -> str:
+    """"auto" | "confirm" | "off" for this action.
 
-    Read from ATTICUS_OUTBOX_<RISK>, so the three classes are configured
-    independently and the strictest default applies to the one that cannot be
-    undone. Defaults: internal auto, tracked confirm, outward confirm.
+    A per-VERB override wins over the risk class, because the classes alone are too
+    coarse to express what an operator actually wants. Observed while building the
+    Outlook handlers: setting ATTICUS_OUTBOX_TRACKED=auto so GitHub issues can flow
+    unattended ALSO opens `outlook.event`, i.e. calendar invites to other people.
+    Those do not belong in one bucket, and without an override the only way to open
+    the verb you want is to open several you do not — which is an incentive to
+    over-grant.
+
+    So the classes stay as sane defaults and the override handles the exception:
+
+        ATTICUS_OUTBOX_VERB_GITHUB_ISSUE=auto
+
+    ATTICUS_OUTBOX=off still wins over everything, since its whole purpose is a
+    global stop.
     """
     if (getattr(cfg, "outbox", "on") or "on").strip().lower() == "off":
         return "off"
+    per_verb = getattr(cfg, "outbox_verbs", None) or {}
+    if verb and verb.lower() in per_verb:
+        return str(per_verb[verb.lower()]).strip().lower()
     return {
         INTERNAL: getattr(cfg, "outbox_internal", "auto"),
         TRACKED: getattr(cfg, "outbox_tracked", "confirm"),
@@ -171,6 +186,17 @@ def describe(req: dict) -> str:
         return str(h["describe"](req))[:300]
     except Exception:                               # noqa: BLE001
         return str(req.get("verb"))
+
+
+def _primary_html(outdir: Path) -> Path | None:
+    """The report the receipt belongs in — the same choice the site build makes."""
+    htmls = sorted(outdir.glob("*.html"))
+    if not htmls:
+        return None
+    for h in htmls:
+        if h.name == "index.html":
+            return h
+    return max(htmls, key=lambda p: p.stat().st_size)
 
 
 def process(outdir: Path, cfg, *, log=print, stem: str = "") -> dict:
@@ -209,7 +235,7 @@ def process(outdir: Path, cfg, *, log=print, stem: str = "") -> dict:
             continue
 
         rec["risk"] = h["risk"]
-        decision = gate(cfg, h["risk"])
+        decision = gate(cfg, h["risk"], str(req.get("verb") or ""))
         if decision != "auto":
             # "confirm" and "off" both mean *not now*. Nobody is present to
             # approve during an unattended pass, so this records the intent and
@@ -217,8 +243,10 @@ def process(outdir: Path, cfg, *, log=print, stem: str = "") -> dict:
             rec.update(status="held", reason=(
                 "ATTICUS_OUTBOX=off — intent recorded, nothing performed"
                 if decision == "off" else
-                f"{h['risk']} actions need confirmation "
-                f"(ATTICUS_OUTBOX_{h['risk'].upper()}=confirm)"))
+                f"{h['risk']} actions need confirmation. Open this class with "
+                f"ATTICUS_OUTBOX_{h['risk'].upper()}=auto, or just this verb with "
+                f"ATTICUS_OUTBOX_VERB_"
+                f"{str(req.get('verb') or '').upper().replace('.', '_')}=auto"))
             log(f"    ⧗ held: {rec['summary']} — {rec['reason']}")
             receipts.append(rec)
             refused += 1
@@ -245,14 +273,96 @@ def process(outdir: Path, cfg, *, log=print, stem: str = "") -> dict:
         receipts.append(rec)
         done += 1
 
+    # Put the outcome in the REPORT, not only in a sidecar file. The agent could
+    # not know it — process() runs after it exits — so without this the operator
+    # reads a document that says "pending" about something that already happened.
+    injected = False
+    try:
+        report = _primary_html(outdir)
+        if report is not None:
+            injected = inject_receipt(report, receipt_html(receipts))
+    except OSError as e:
+        log(f"    ! could not add the receipt to the report: {e}")
+
     summary = {"requests": len(reqs), "done": done, "refused": refused,
-               "failed": failed, "receipts": receipts}
+               "failed": failed, "injected": injected, "receipts": receipts}
     try:
         (outdir / "outbox-receipt.json").write_text(
             json.dumps({"stem": stem, **summary}, indent=2) + "\n")
     except OSError as e:
         log(f"    ! could not write the outbox receipt: {e}")
     return summary
+
+
+# The receipt block injected into the report, comment-fenced so a re-run replaces
+# it rather than stacking. Same mechanism as the audio player (podcast.py), and for
+# the same reason: comments survive the vault's sanitiser, which only rewrites
+# active constructs, and a class name cannot tell "has a receipt" from "has a
+# CURRENT receipt".
+BLOCK_OPEN = "<!--atticus-outbox-->"
+BLOCK_CLOSE = "<!--/atticus-outbox-->"
+_BLOCK = re.compile(re.escape(BLOCK_OPEN) + r".*?" + re.escape(BLOCK_CLOSE), re.DOTALL)
+_BODY_OPEN = re.compile(r"(?i)<body[^>]*>")
+
+_STATUS_LABEL = {"done": "Done", "held": "Waiting for you",
+                 "refused": "Refused", "failed": "Failed"}
+
+
+def receipt_html(receipts: list[dict]) -> str:
+    """What actually happened, for the report the operator reads.
+
+    This exists because `process()` runs AFTER the agent exits, so the agent
+    physically cannot put a filed ticket's id or a sent message's outcome in the
+    HTML it wrote. Without this the skills had to tell the agent to write "pending"
+    — and the report then said pending forever, including long after the action
+    succeeded. Found while building the Azure DevOps handler.
+    """
+    if not receipts:
+        return ""
+    rows = []
+    for r in receipts:
+        st = r.get("status", "refused")
+        label = _STATUS_LABEL.get(st, st)
+        bits = [f'<strong>{html.escape(label)}</strong> &middot; '
+                f'{html.escape(str(r.get("summary") or r.get("verb") or ""))}']
+        if r.get("url"):
+            u = html.escape(str(r["url"]), quote=True)
+            bits.append(f'<a href="{u}">{u}</a>')
+        elif r.get("id"):
+            bits.append(f'<code>{html.escape(str(r["id"]))}</code>')
+        if r.get("reason"):
+            bits.append(f'<span class="ao-why">{html.escape(str(r["reason"]))}</span>')
+        rows.append(f'<li class="ao-{html.escape(st)}">' + " &mdash; ".join(bits) + "</li>")
+    return (
+        BLOCK_OPEN + "\n"
+        "<style>.atticus-outbox{margin:0 0 1.5rem;padding:.9rem 1rem;border-radius:8px;"
+        "border:1px solid rgba(127,127,127,.35);background:rgba(127,127,127,.08);"
+        "font:14px/1.55 system-ui,-apple-system,\"Segoe UI\",Roboto,Arial,sans-serif}"
+        ".atticus-outbox .lab{display:block;margin-bottom:.5rem;opacity:.75;"
+        "text-transform:uppercase;letter-spacing:.05em;font-size:11px;font-weight:600}"
+        ".atticus-outbox ul{margin:0;padding-left:1.1rem}"
+        ".atticus-outbox li{margin:.25rem 0}"
+        ".atticus-outbox .ao-why{opacity:.75}"
+        ".atticus-outbox .ao-held .ao-why,.atticus-outbox .ao-refused .ao-why,"
+        ".atticus-outbox .ao-failed .ao-why{opacity:.9}</style>\n"
+        '<div class="atticus-outbox"><span class="lab">Actions</span><ul>'
+        + "".join(rows) + "</ul></div>\n" + BLOCK_CLOSE + "\n")
+
+
+def inject_receipt(html_path: Path, block: str) -> bool:
+    """Splice the receipt near the top of the report. Idempotent, and replaces."""
+    text = html_path.read_text(errors="replace")
+    existing = _BLOCK.search(text)
+    if existing:
+        if existing.group(0).strip() == block.strip():
+            return False
+        text = text[:existing.start()] + block + text[existing.end():]
+        html_path.write_text(text)
+        return True
+    m = _BODY_OPEN.search(text)
+    text = (text[:m.end()] + "\n" + block + text[m.end():]) if m else block + text
+    html_path.write_text(text)
+    return True
 
 
 # The block a skill pastes into its own SKILL.md. One source of truth for the

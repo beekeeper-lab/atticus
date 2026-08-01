@@ -219,6 +219,21 @@ class Config:
         self.outbox_tracked = (g("ATTICUS_OUTBOX_TRACKED", "confirm") or "").strip().lower()
         self.outbox_outward = (g("ATTICUS_OUTBOX_OUTWARD", "confirm") or "").strip().lower()
 
+        # Per-VERB overrides, which win over the risk class. The classes alone are
+        # too coarse: ATTICUS_OUTBOX_TRACKED=auto, set so GitHub issues can flow,
+        # also opens outlook.event — calendar invites to other people. Without an
+        # override the only way to open the verb you want is to open several you do
+        # not, which is an incentive to over-grant.
+        #
+        #   ATTICUS_OUTBOX_VERB_GITHUB_ISSUE=auto
+        #   ATTICUS_OUTBOX_VERB_SIGNAL_SEND=confirm
+        self.outbox_verbs = {
+            k[len("ATTICUS_OUTBOX_VERB_"):].lower().replace("_", ".", 1):
+                (v or "").strip().lower()
+            for k, v in {**f, **os.environ}.items()
+            if k.startswith("ATTICUS_OUTBOX_VERB_") and (v or "").strip()
+        }
+
         # Bound the fan-out. One misheard sentence must not be able to send thirty
         # messages, and a legitimate request rarely needs more than a couple of
         # actions. 0 removes the cap.

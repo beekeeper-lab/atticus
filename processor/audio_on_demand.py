@@ -45,6 +45,13 @@ exactly.
 
 - You are **summarising an existing document for the ear**. Do no research, open
   no URLs, and add no facts that are not in the text below.
+- **Four to eight minutes: 700 to 1,300 words of spoken script, and that is a
+  bound, not a target.** Past roughly 1,500 you are re-narrating the document
+  rather than summarising it, which is worse to listen to AND costs proportionally
+  more. A long report does not license a long episode — a report with more sections
+  usually means more to leave out. Measured 2026-08-01: an unbounded run produced a
+  3,400-word script and a 10-minute episode from a report whose neighbours
+  summarised in 6.
 - Do not correct the report or argue with it. If it hedged a claim, hedge it too.
 - Write **one file**: `output/podcast-script.md`. Nothing else.
 - Do not run git.

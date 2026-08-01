@@ -225,3 +225,125 @@ def test_the_contract_text_states_the_rules_a_skill_must_follow():
     for must in ("output/outbox/", "NNN-verb.json", "One action per file",
                  "held for confirmation", "unknown verb"):
         assert must in c, must
+
+
+# ── the per-verb override ──────────────────────────────────────────────────
+# The three classes alone are too coarse. Observed while building the Outlook
+# handlers: ATTICUS_OUTBOX_TRACKED=auto, which an operator would set so GitHub
+# issues can flow, ALSO opens outlook.event — calendar invites to other people.
+# Without an override the only way to open the verb you want is to open several you
+# do not, which is an incentive to over-grant.
+
+def test_a_verb_can_be_opened_without_opening_its_class(out, cfg):
+    calls = _spy("github.issue", risk=outbox.TRACKED, schema=("to",))
+    cfg.outbox_verbs = {"github.issue": "auto"}
+    _req(out, "001-github.issue.json", verb="github.issue", to="x")
+    res = outbox.process(out, cfg, log=lambda m: None)
+    assert len(calls) == 1 and res["done"] == 1
+    assert outbox.gate(cfg, outbox.TRACKED, "outlook.event") == "confirm", \
+        "opening one verb must not open its whole class"
+
+
+def test_a_verb_can_be_closed_while_its_class_is_open(out, cfg):
+    """The other direction matters just as much: open tracked broadly, keep one
+    dangerous member shut."""
+    calls = _spy("outlook.event", risk=outbox.TRACKED, schema=("to",))
+    cfg.outbox_tracked = "auto"
+    cfg.outbox_verbs = {"outlook.event": "confirm"}
+    _req(out, "001-outlook.event.json", verb="outlook.event", to="x")
+    res = outbox.process(out, cfg, log=lambda m: None)
+    assert not calls and res["receipts"][0]["status"] == "held"
+
+
+def test_outbox_off_still_wins_over_a_per_verb_override(out, cfg):
+    """Its whole purpose is a global stop, so nothing may override it."""
+    calls = _spy(risk=outbox.INTERNAL)
+    cfg.outbox = "off"
+    cfg.outbox_verbs = {"test.do": "auto"}
+    _req(out, "001-test.do.json", verb="test.do", to="x")
+    outbox.process(out, cfg, log=lambda m: None)
+    assert not calls
+
+
+def test_the_held_message_names_both_ways_to_open_it(out, cfg):
+    """An operator reading this should not have to guess which knob to turn, and
+    should be told about the narrow one — not just the class-wide one."""
+    _spy("signal.send", risk=outbox.OUTWARD, schema=("to",))
+    _req(out, "001-signal.send.json", verb="signal.send", to="x")
+    res = outbox.process(out, cfg, log=lambda m: None)
+    reason = res["receipts"][0]["reason"]
+    assert "ATTICUS_OUTBOX_OUTWARD=auto" in reason
+    assert "ATTICUS_OUTBOX_VERB_SIGNAL_SEND=auto" in reason
+
+
+# ── the receipt in the report ──────────────────────────────────────────────
+# process() runs AFTER the agent exits, so the agent cannot know what happened.
+# Without this the skills had to write "pending" and the report said pending
+# forever, including long after the action succeeded.
+
+def _report(out, body="<html><body><h1>R</h1><p>keep me</p></body></html>"):
+    (out / "report.html").write_text(body)
+    return out / "report.html"
+
+
+def test_the_outcome_is_injected_into_the_report(out, cfg):
+    _spy(risk=outbox.INTERNAL)
+    page = _report(out)
+    _req(out, "001-test.do.json", verb="test.do", to="milk")
+    res = outbox.process(out, cfg, log=lambda m: None)
+    assert res["injected"] is True
+    text = page.read_text()
+    assert "atticus-outbox" in text
+    assert "do the thing to milk" in text
+    assert "keep me" in text, "the report itself must survive"
+    assert text.index("atticus-outbox") < text.index("<h1>")
+
+
+def test_a_held_action_says_so_in_the_report(out, cfg):
+    """The operator must be able to tell "waiting for you" from "done" by reading
+    the document, not by opening a JSON sidecar."""
+    _spy(risk=outbox.OUTWARD)
+    page = _report(out)
+    _req(out, "001-test.do.json", verb="test.do", to="Robbie")
+    outbox.process(out, cfg, log=lambda m: None)
+    assert "Waiting for you" in page.read_text()
+
+
+def test_a_url_from_a_handler_becomes_a_link(out, cfg):
+    @outbox.handler("t.u", risk=outbox.INTERNAL, schema=(),
+                    describe=lambda r: "filed a ticket")
+    def _h(req, cfg, log=print):
+        return {"id": "1234", "url": "https://dev.azure.test/x/_workitems/edit/1234"}
+    page = _report(out)
+    _req(out, "001-t.u.json", verb="t.u")
+    outbox.process(out, cfg, log=lambda m: None)
+    assert 'href="https://dev.azure.test/x/_workitems/edit/1234"' in page.read_text()
+
+
+def test_re_running_replaces_the_receipt_rather_than_stacking(out, cfg):
+    _spy(risk=outbox.INTERNAL)
+    page = _report(out)
+    _req(out, "001-test.do.json", verb="test.do", to="milk")
+    outbox.process(out, cfg, log=lambda m: None)
+    outbox.process(out, cfg, log=lambda m: None)
+    assert page.read_text().count('<div class="atticus-outbox">') == 1
+
+
+def test_no_report_is_not_an_error(out, cfg):
+    """A record can legitimately produce no HTML."""
+    _spy(risk=outbox.INTERNAL)
+    _req(out, "001-test.do.json", verb="test.do", to="x")
+    res = outbox.process(out, cfg, log=lambda m: None)
+    assert res["done"] == 1 and res["injected"] is False
+
+
+def test_a_handler_reason_is_escaped_not_injected(out, cfg):
+    """A reason can carry an API error body. It lands in HTML, so it is escaped."""
+    _spy(risk=outbox.INTERNAL,
+         boom=outbox.OutboxError('<script>alert("x")</script>'))
+    page = _report(out)
+    _req(out, "001-test.do.json", verb="test.do", to="x")
+    outbox.process(out, cfg, log=lambda m: None)
+    text = page.read_text()
+    assert "<script>alert" not in text
+    assert "&lt;script&gt;" in text

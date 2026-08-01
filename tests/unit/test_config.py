@@ -28,6 +28,12 @@ _ELSEWHERE = {
     "ATTICUS_OUTPUT_DIR",
     # A prefix used in a startswith() filter in gen-config-docs.py, not a var.
     "PLAUD_EMBEDDED",
+    # Same shape: the per-verb outbox override is a FAMILY of names
+    # (ATTICUS_OUTBOX_VERB_GITHUB_ISSUE, …), so config.py matches the prefix rather
+    # than naming each one. The family is documented in ops/.env.example as
+    # commented examples, which is the only honest way to document a set whose
+    # members depend on which handlers exist.
+    "ATTICUS_OUTBOX_VERB_",
 }
 _KNOWN_INERT = {
     # Commented-out placeholders for the contingent W8 iOS work.
