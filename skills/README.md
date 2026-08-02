@@ -38,8 +38,41 @@ description: |
   Use when the transcript asks to find, buy, price, or compare products...
   Do NOT use for general research (use deep-research) or for adding
   something to a list (use capture-task).
+verbs: [price.watch]                    # outbox verbs this skill may emit
+requires: [ATTICUS_PRICE_API_KEY]       # config that must be set, or it is hidden
+risk: tracked                           # the highest risk among its verbs
+outputs: [html]
+cost: medium                            # agent turns, not dollars: low | medium | high
 ---
 ```
+
+### The metadata block, and why it is enforced (#89)
+
+Everything below `description` is machine-read, and two things consume it.
+
+**`requires:` decides whether the skill exists at all on this host.** Each entry
+names an environment variable; if the corresponding setting is empty, the skill
+is **not copied into the agent's workspace** and the agent never learns it
+exists. That is deliberate: every credential ships blank, so on a fresh install
+an offered-but-unconfigured skill means the agent routes to it, composes a
+request, and writes a confident report about an action the handler then refuses.
+"I have no way to do that" is a better answer than a pending action that never
+had a chance. The mapping is mechanical — `ATTICUS_SLACK_BOT_TOKEN` →
+`cfg.slack_bot_token` — and a `requires:` naming a setting that does not exist
+fails the test suite rather than hiding the skill forever.
+
+**`verbs:` must agree with the handlers, in both directions.** The suite asserts
+every declared verb is registered and every registered verb is declared exactly
+once. It also asserts the `description` does not *prohibit* a verb the skill
+declares — which is not a documentation nit:
+
+> On 2026-08-02 `github.close` shipped with the verb implemented, the body
+> documenting it, and the description still saying "Do NOT use it to … close
+> anything". A spoken request reached the skill and the agent refused, citing
+> its own instructions. **Routing reads the description; a capability the
+> description denies does not exist.**
+
+A skill that produces only a document declares `verbs: []`.
 
 Then write for the actual situation: **the person dictated a request and walked
 away.** Nobody can answer a clarifying question, the transcript may contain

@@ -11,6 +11,10 @@ description: |
   Do NOT use for shopping or price comparison (use price-scout), for turning
   an idea into a spec (use idea-to-spec), or for anything that just needs a
   short factual answer.
+verbs: []                 # produces a document, no outbox action
+risk: internal
+outputs: [html]
+cost: high
 ---
 
 # deep-research

@@ -34,6 +34,8 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
+import skillmeta
+
 PREAMBLE = """\
 # Spoken instruction
 
@@ -476,12 +478,26 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
         out.mkdir()
 
         # Make skills visible to the agent without exposing the repo.
+        #
+        # NOT all of them: a skill whose `requires:` names an unset credential
+        # is left out entirely (issue #89). Copying it in would let the agent
+        # route to a capability that cannot work, compose a request, and write
+        # a confident report about an action the handler then refuses — which
+        # is the normal state of a fresh install, where every credential is
+        # blank by design. Absent is a better answer than refused-after-the-fact
+        # because the agent can say "I have no way to do that" in its report.
         if cfg.skills_dir.is_dir():
             (ws / ".claude").mkdir()
-            # COPY, not symlink. A symlink points at the repo, which does not
-            # exist inside the agent's mount namespace, so the skills would
-            # silently vanish under the sandbox.
-            shutil.copytree(cfg.skills_dir, ws / ".claude/skills")
+            dest = ws / ".claude/skills"
+            dest.mkdir()
+            keep, skipped = skillmeta.offerable(cfg.skills_dir, cfg)
+            for d in keep:
+                # COPY, not symlink. A symlink points at the repo, which does
+                # not exist inside the agent's mount namespace, so the skills
+                # would silently vanish under the sandbox.
+                shutil.copytree(d, dest / d.name)
+            for name, gaps in skipped:
+                log(f"    skill not offered: {name} needs {', '.join(gaps)}")
 
         (ws / "TASK.md").write_text(task_md)
 

@@ -19,6 +19,11 @@ description: |
   review, reopen or delete anything, to edit an issue's title or body, or to
   touch a repository that is not on the operator's configured allowlist. For
   research that happens to mention GitHub, use deep-research.
+verbs: [github.issue, github.comment, github.close]
+requires: [ATTICUS_GITHUB_REPOS]
+risk: tracked
+outputs: [html]
+cost: low
 ---
 
 # github

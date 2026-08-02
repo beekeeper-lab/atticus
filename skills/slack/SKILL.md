@@ -11,6 +11,11 @@ description: |
   so "what did I miss in #ddi-platform" is not something this can answer. Do
   NOT use it to message one person (that is Signal, or mail), and do NOT post
   a report's contents into a channel when a link to the report will do.
+verbs: [slack.post]
+requires: [ATTICUS_SLACK_BOT_TOKEN, ATTICUS_SLACK_CHANNELS]
+risk: outward
+outputs: [html]
+cost: low
 ---
 
 # slack

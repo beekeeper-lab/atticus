@@ -17,6 +17,10 @@ description: |
   seven"): only one-shot reminders exist, and inventing a repeat would silently
   deliver once. Do NOT use it to schedule work for Atticus itself to do later —
   nothing here re-runs the agent, it only pushes text at a person.
+verbs: [reminders.set]
+risk: internal
+outputs: [html]
+cost: low
 ---
 
 # reminders
