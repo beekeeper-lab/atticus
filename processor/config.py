@@ -84,6 +84,26 @@ class Config:
         # A recurring condition (dead Plaud session) is rediscovered every
         # tick. One alarm per window per condition, or you learn to ignore it.
         self.alarm_throttle_hours = float(g("ATTICUS_ALARM_THROTTLE_HOURS", "6"))
+
+        # ---- notification severity routing (issue #91) ----------------------
+        # Two multi-day outages in one week were DELIVERY failures, not
+        # detection failures: ingest dead 2d6h (#77) and the site path-watcher
+        # dead 1.5 days. Both alarmed correctly into ntfy and drowned. A
+        # calendar alert breaks through iOS Focus (#66, confirmed by the
+        # operator), so `critical` earns that channel. "off" keeps ntfy only.
+        self.notify_escalate = (g("ATTICUS_NOTIFY_ESCALATE", "on") or "on").strip().lower()
+        # Escalate on PERSISTENCE, not one bad pass — a single failure is
+        # usually transient, and a calendar event for it would train the
+        # operator to ignore the strong channel too.
+        self.escalate_after_failures = int(g("ATTICUS_ESCALATE_AFTER_FAILURES", "3") or 1)
+        # A separate, LONGER throttle for the calendar channel. The ntfy
+        # throttle is 6h; a 15-minute timer failing all night would otherwise
+        # book 96 events. 0 disables the bound.
+        self.escalate_throttle_hours = float(g("ATTICUS_ESCALATE_THROTTLE_HOURS", "12") or 0)
+        # Local window in which routine and alert messages are PARKED rather
+        # than sent, e.g. "22:00-07:00". They are never dropped: the 07:00
+        # brief reports them. Critical ignores this entirely. Blank disables.
+        self.quiet_hours = (g("ATTICUS_QUIET_HOURS", "") or "").strip()
         # T-74: the split's benefit — the processor can be down and work waits —
         # is also its failure mode, because a dead processor looks exactly like
         # an idle one. Nothing errors; recordings just pile up. This was

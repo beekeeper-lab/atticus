@@ -27,7 +27,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "processor"))
 
 from config import Config          # noqa: E402
-from notify import notify, throttled  # noqa: E402
+import notify as nf                   # noqa: E402
+from notify import throttled          # noqa: E402
 from vault import load_records     # noqa: E402
 
 
@@ -121,6 +122,36 @@ def timer_is_scheduled(timer: str) -> bool:
     mono = out.split("NextElapseUSecMonotonic=")[1].split("\n")[0].strip() if \
         "NextElapseUSecMonotonic=" in out else ""
     return bool(mono) and mono not in ("infinity", "n/a", "0")
+
+
+def _bump_streak(fingerprint: str) -> int:
+    """Consecutive passes reporting this exact set of problems.
+
+    Fingerprinted rather than global: "the vault is behind" recovering while
+    "ingest is dead" persists must not reset the count for the one that is
+    still broken. Stored beside the alarm stamps in the cache dir — losing it
+    on a reboot is correct, since a reboot may well be the fix.
+    """
+    p = nf.STATE / f"streak-hb-{fingerprint}"
+    try:
+        n = int(p.read_text().strip() or 0)
+    except (OSError, ValueError):
+        n = 0
+    n += 1
+    try:
+        nf.STATE.mkdir(parents=True, exist_ok=True)
+        p.write_text(str(n))
+    except OSError:
+        pass
+    return n
+
+
+def _clear_streaks():
+    try:
+        for f in nf.STATE.glob("streak-hb-*"):
+            f.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def main():
@@ -387,6 +418,11 @@ def main():
             notes.append("vault level with remote")
     check("vault-in-sync", check_sync)
 
+    if not problems:
+        # Everything recovered: forget the streaks so the next genuine outage
+        # escalates from a clean count rather than inheriting an old one.
+        _clear_streaks()
+
     for n in notes:
         print(f"  ok   {n}")
     for p in problems:
@@ -403,12 +439,22 @@ def main():
             "\n".join(sorted(p.split(" since ")[0].split(" (budget")[0]
                              for p in problems)).encode()
         ).hexdigest()[:12]
+        # A repeat of the SAME fingerprint means nothing recovered since the
+        # last pass. That is the persistence signal escalation is gated on
+        # (#91): the heartbeat runs hourly, so a third consecutive identical
+        # report is roughly three hours of a broken system, which has earned
+        # the channel the operator cannot miss. #77 is the case in point — this
+        # exact alarm fired correctly for 2d6h into ntfy and drowned.
+        streak = _bump_streak(fingerprint)
         # log=print so the watcher's OWN failure is not silent, and check the
         # return: a heartbeat that cannot deliver its alarm is the worst case.
-        delivered = notify(
+        result = nf.alarm(
             cfg, "Atticus heartbeat found problems:\n\n" + "\n".join(problems),
-            title="Atticus heartbeat", tags="rotating_light", priority="high",
-            key=f"heartbeat-{fingerprint}", log=print)
+            severity=nf.CRITICAL, title="Atticus heartbeat", tags="rotating_light",
+            key=f"heartbeat-{fingerprint}", streak=streak, log=print)
+        delivered = result["ntfy"] or result["calendar"] or result["deferred"]
+        if result["calendar"]:
+            print("  ok   escalated to a calendar alert")
         if not delivered:
             if not getattr(cfg, "notify_url", None):
                 print("  BAD  alarm NOT delivered — ATTICUS_NOTIFY_URL is unset")

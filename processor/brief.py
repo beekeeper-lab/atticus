@@ -34,7 +34,7 @@ import execute as ex          # noqa: E402
 import podcast as pod        # noqa: E402
 import usage                  # noqa: E402
 from config import Config     # noqa: E402
-from notify import ResultTarget, notify   # noqa: E402
+from notify import ResultTarget, notify, take_deferred   # noqa: E402
 from vault import OWNED_BRIEF, Git   # noqa: E402
 
 SLUG = "ai-brief"
@@ -350,6 +350,20 @@ def _notify(cfg, today: date, items: list[dict], slug: str, log=print) -> bool:
         log("    ! no ATTICUS_RESULT_NOTIFY_URL — the briefing alerts nobody")
         return False
     body = summarise(items)
+    # Quiet hours park routine and alert notifications rather than dropping
+    # them (#91), and this is where they come back. The morning push is the
+    # right place: it is the one message the operator reliably reads, and it
+    # already exists. Draining here also means the ledger cannot grow forever.
+    parked = take_deferred(cfg)
+    if parked:
+        lines = [f"· {p.get('title', 'Atticus')}: "
+                 f"{' '.join(str(p.get('text', '')).split())[:90]}"
+                 for p in parked[:5]]
+        if len(parked) > 5:
+            lines.append(f"· …and {len(parked) - 5} more")
+        body += (f"\n\nWhile you were asleep ({len(parked)}):\n"
+                 + "\n".join(lines))
+        log(f"    included {len(parked)} deferred notification(s)")
     if cfg.site_base_url:
         body += f"\n\n{cfg.site_base_url}/docs/{slug}/index.html"
     return bool(notify(ResultTarget(cfg), body, log=log,

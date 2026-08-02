@@ -36,7 +36,8 @@ import transcribe as stt                                     # noqa: E402
 import usage                                                 # noqa: E402
 import wake                                                  # noqa: E402
 from notify import (                                          # noqa: E402
-    ResultTarget, clear as _notify_clear, notify as _notify,
+    ROUTINE as _ROUTINE, ResultTarget, alarm as _alarm,
+    clear as _notify_clear, notify as _notify,
 )
 from vault import (                                          # noqa: E402
     EXECUTED, EXECUTING, FAILED, OWNED_PROCESSOR, PUBLISHED, RAW, RETRY_WAIT,
@@ -145,8 +146,10 @@ def notify_result(cfg, rec, log):
         title, tags, priority = "Atticus filed a note", "memo", "low"
         body = f"{said or rec.stem}\n\nNot executed — {rec.data.get('gate_reason', 'gated')}"
 
-    if _notify(ResultTarget(cfg), body, log=log.warn, title=title,
-               tags=tags, priority=priority):
+    # ROUTINE (#91): a finished report is good news. Inside quiet hours it is
+    # parked for the morning brief rather than buzzing at 3am — never dropped.
+    if _alarm(ResultTarget(cfg), body, severity=_ROUTINE, log=log.warn,
+              title=title, tags=tags, priority=priority)["ntfy"]:
         log.info("  → notified" + (" with link" if executed and link else ""))
 
 
