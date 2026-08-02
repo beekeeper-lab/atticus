@@ -42,6 +42,7 @@ from notify import (                                          # noqa: E402
 )
 from vault import (                                          # noqa: E402
     EXECUTED, EXECUTING, FAILED, OWNED_PROCESSOR, PUBLISHED, RAW, RETRY_WAIT,
+    TERMINAL,
     ROUTED, TRANSCRIBED, Git, VaultSyncError, load_records, utcnow, write_atomic,
 )
 
@@ -653,7 +654,9 @@ def cmd_status(cfg, log):
               RETRY_WAIT, FAILED):
         if counts.get(s):
             print(f"  {s:<12} {counts[s]}")
-    pending = [r for r in recs if r.status not in (PUBLISHED, FAILED)]
+    # TERMINAL covers published, cancelled and superseded (#82): an
+    # operator who said stop must not see the work resume next tick.
+    pending = [r for r in recs if r.status not in (*TERMINAL, FAILED)]
     for r in pending:
         when = r.data.get("next_attempt_at")
         extra = f"  retry at {when}" if when else ""
@@ -748,7 +751,7 @@ def main():
         records = load_records(cfg.vault, on_bad=on_bad)
 
     todo = [r for r in records
-            if r.status not in (PUBLISHED, FAILED) and r.due()]
+            if r.status not in (*TERMINAL, FAILED) and r.due()]
     waiting = [r for r in records if r.status == RETRY_WAIT and not r.due()]
     if waiting:
         log.info(f"{len(waiting)} record(s) waiting to retry; soonest "

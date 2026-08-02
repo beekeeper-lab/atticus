@@ -259,6 +259,14 @@ class Config:
         # actions. 0 removes the cap.
         self.outbox_max_actions = int(g("ATTICUS_OUTBOX_MAX_ACTIONS", "5") or 0)
 
+        # ---- lifecycle verbs (issue #82) ------------------------------------
+        # How far back "that thing" can reach. Bounded on purpose: a wider
+        # window makes ambiguity certain and lets a stray phrase reach a
+        # recording from last month. Seven days covers "this morning",
+        # "yesterday" and "the one from the weekend", which is what people
+        # actually say about work in flight.
+        self.lifecycle_within_days = int(g("ATTICUS_LIFECYCLE_WITHIN_DAYS", "7") or 7)
+
         # ---- the approval queue (issue #83) ---------------------------------
         # Where a DECISION comes back from. Deliberately a second ntfy topic
         # and not an endpoint on this host: approving must not be reachable

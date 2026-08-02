@@ -68,6 +68,7 @@ copies.
 | `ATTICUS_GIT_AUTHOR_NAME` | `Atticus Processor` | Git identity for automated commits. Distinguish the hosts so the vault history shows which side of the pipeline made each commit. ingest    → "Atticus Ingest" processor → "Atticus Processor" When b… |
 | `ATTICUS_GLOBAL_SKILLS` | `html-artifact-output,dataviz` | Which of the operator's GLOBAL (~/.claude/skills) skills the agent may see. Binding the whole directory handed it an inventory of unrelated infrastructure — M365 addresses, ntfy topics, provider co… |
 | `ATTICUS_HOST` | *(empty)* | Overrides the hostname used to name this host's dedupe ledger (.state/seen-<host>.jsonl) and to identify it in alarms. Blank = the real hostname, which is almost always what you want. Set it only i… |
+| `ATTICUS_LIFECYCLE_WITHIN_DAYS` | `7` | How far back a spoken "cancel that" / "what happened to..." can reach, in days (issue #82). Bounded deliberately: a wider window makes ambiguity certain, and the pipeline refuses rather than guessi… |
 | `ATTICUS_LOCAL_TZ` | *(empty)* | ── reminders (issue #52) ───────────────────────────────────────────── "Atticus, remind me at four to call the bank." A reminder is a DELIVERY AT A TIME, which is a different thing from a todo: a t… |
 | `ATTICUS_LOG_LEVEL` | `INFO` | DEBUG \| INFO \| WARNING \| ERROR |
 | `ATTICUS_MAX_BUDGET_USD` | `2.00` | Per-recording ceiling on the AGENT run. BLANK = disabled, which is the default and the right answer for most deployments. Read this before setting it. It is IMPUTED, NOT MONEY. `claude -p` authenti… |
@@ -144,4 +145,4 @@ copies.
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*133 settings.*
+*134 settings.*
