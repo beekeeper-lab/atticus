@@ -31,6 +31,11 @@ def process_main():
 
 
 # ---------------------------------------------------------------------------
+
+class _TokenModeChecked(Exception):
+    """Control flow, not an error: the token-mode branch has already reported."""
+
+
 #  doctor
 # ---------------------------------------------------------------------------
 
@@ -111,6 +116,27 @@ def doctor_main():
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent / "processor"))
         from execute import credential_expiry
+        # Token mode (ATTICUS_CLAUDE_TOKEN_FILE, #68) retires the 8-hour cycle
+        # entirely: the agent authenticates from a long-lived setup-token and
+        # the operator's own credential is never bound into the sandbox. What
+        # is worth checking then is that the token FILE is present and sane;
+        # its ~1-year expiry is not readable from the opaque token, so the
+        # signal when it dies is the run-failure path, which names the re-mint.
+        token_file = str(getattr(cfg, "claude_token_file", "") or "").strip()
+        if token_file:
+            tp = Path(token_file).expanduser()
+            try:
+                tok = tp.read_text().strip()
+            except OSError:
+                d.b(f"ATTICUS_CLAUDE_TOKEN_FILE is set but {tp} is unreadable — "
+                    f"every agent run will refuse. Re-mint with "
+                    f"`claude setup-token` into that file (0600).")
+                tok = ""
+            if tok and "\n" not in tok:
+                d.ok("agent auth: long-lived token (claude setup-token)")
+            elif tok:
+                d.b(f"{tp} is not a single-line token — every agent run will refuse")
+            raise _TokenModeChecked
         expired, when = credential_expiry()
         if when is None:
             d.w("cannot read the Claude Code credential expiry — the agent may "
@@ -123,6 +149,8 @@ def doctor_main():
             hrs = (when - datetime.now(UTC)).total_seconds() / 3600
             msg = f"Claude Code credential valid for {hrs:.1f}h"
             d.ok(msg) if hrs > 1 else d.w(msg + " — renew it soon")
+    except _TokenModeChecked:
+        pass                       # token mode already reported above
     except Exception as e:                          # noqa: BLE001
         # Never let a diagnostic crash the diagnostics — but say what happened,
         # rather than swallowing it. A bare ImportError catch here hid a NameError
