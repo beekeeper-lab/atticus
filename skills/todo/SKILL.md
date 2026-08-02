@@ -11,6 +11,10 @@ description: |
   NOT use it for a calendar event with a time and a duration, and do NOT use it
   to file work for other people to see — a GitHub issue or an ADO work item is
   a different verb with a different gate.
+verbs: [todo.add]
+risk: internal
+outputs: [html]
+cost: low
 ---
 
 # todo

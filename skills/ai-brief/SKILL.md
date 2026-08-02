@@ -8,6 +8,10 @@ description: |
   carries the list of items already covered on previous days. Do NOT use this
   for a one-off research question about AI (use deep-research) and do NOT use
   it to summarise a single article.
+verbs: []                 # produces a document, no outbox action
+risk: internal
+outputs: [html]
+cost: medium
 ---
 
 # ai-brief

@@ -10,6 +10,10 @@ description: |
   the script after the agent exits, because the agent has no credentials.
   Do NOT use it when no HTML report was written, and do NOT use it just
   because a report happens to be long.
+verbs: []                 # produces a document, no outbox action
+risk: internal
+outputs: [html, mp3]
+cost: high
 ---
 
 # podcast-companion

@@ -12,6 +12,11 @@ description: |
   a notification. Do NOT use it to broadcast, to message someone whose name is
   not on the allowlist, or as a way to report your own results: your HTML
   report is how the operator finds out what you did.
+verbs: [signal.send]
+requires: [ATTICUS_SIGNAL_RECIPIENTS]
+risk: outward
+outputs: [html]
+cost: low
 ---
 
 # signal

@@ -11,6 +11,10 @@ description: |
   below). If the request only asks a question about existing mail, a schedule or
   a person, use this skill anyway but only to explain, in the report, that the
   answer is unavailable and why — never invent one.
+verbs: [outlook.draft, outlook.event]
+risk: tracked
+outputs: [html]
+cost: low
 ---
 
 # outlook

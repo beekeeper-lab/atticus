@@ -11,6 +11,11 @@ description: |
   action after you exit, because you hold no credentials. Do NOT use it for
   GitHub issues, for a personal reminder or todo that nobody else needs to see,
   or to look anything up in Azure DevOps — you cannot read from ADO at all.
+verbs: [ado.workitem, ado.comment]
+requires: [ATTICUS_ADO_PAT, ATTICUS_ADO_ORG, ATTICUS_ADO_PROJECT]
+risk: tracked
+outputs: [html]
+cost: low
 ---
 
 # azure-devops
