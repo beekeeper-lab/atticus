@@ -31,6 +31,21 @@ RAW, TRANSCRIBED, ROUTED, EXECUTING, EXECUTED, PUBLISHED, FAILED, RETRY_WAIT = (
     "failed", "retry_wait"
 )
 
+# Terminal states the OPERATOR causes, not the pipeline (issue #82).
+#
+#   CANCELLED   "stop that" — the work is abandoned. Reachable from any stage
+#               before publish, and from EXECUTING by killing the run.
+#   SUPERSEDED  "that one is wrong / replaced" — applied to work that already
+#               PUBLISHED. The artifact stays, because it is committed and may
+#               already have been read; the status is how the vault marks it as
+#               no longer the answer. Unpublishing is not a thing this system
+#               can honestly offer.
+CANCELLED, SUPERSEDED = "cancelled", "superseded"
+
+# Statuses that mean "do not pick this up again". The scan already skips
+# PUBLISHED and FAILED; these join them, and nothing may advance out of one.
+TERMINAL = (PUBLISHED, CANCELLED, SUPERSEDED)
+
 # EXECUTING is committed before the agent starts. Status used to stay ROUTED for
 # the whole run, so a crash re-ran an agent that may already have had side
 # effects — and each retry re-spent the budget. A record found in EXECUTING at
@@ -45,6 +60,11 @@ RAW, TRANSCRIBED, ROUTED, EXECUTING, EXECUTED, PUBLISHED, FAILED, RETRY_WAIT = (
 _PROGRESS = {
     RAW: 0, FAILED: 1, RETRY_WAIT: 1, TRANSCRIBED: 2, ROUTED: 3,
     EXECUTING: 4, EXECUTED: 5, PUBLISHED: 6,
+    # Above everything, deliberately. If two hosts disagree because one of them
+    # cancelled a record, the cancellation must win — the operator said stop,
+    # and a rebase that resurrected the run would be the worst possible reading
+    # of "the further-advanced side wins".
+    CANCELLED: 7, SUPERSEDED: 7,
 }
 
 # Backoff between attempts. `retryable` used to be recorded on the error and

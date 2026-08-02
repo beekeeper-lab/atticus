@@ -16,6 +16,7 @@ in production rather than here, so add the import in the same commit as the modu
 # has passing tests (they import it directly) and is refused as an unknown verb in
 # production — so this list is load-bearing, not bookkeeping.
 from . import ado  # noqa: F401        ado.workitem, ado.comment
+from . import atticus  # noqa: F401    atticus.status/cancel/retry — the pipeline itself
 from . import github  # noqa: F401     github.issue, github.comment
 from . import outlook  # noqa: F401    outlook.draft, outlook.event
 from . import reminders  # noqa: F401  reminders.set — needs no credential at all
