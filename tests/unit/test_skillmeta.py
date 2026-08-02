@@ -85,17 +85,21 @@ def test_declared_verbs_are_registered_by_a_handler(skill):
             f"the agent would write an intent file that is refused as unknown")
 
 
-def test_every_registered_verb_is_declared_by_exactly_one_skill():
+def test_every_registered_verb_is_declared_by_at_least_one_skill():
     """The other direction, which is the one that bit us: a verb can exist,
-    work, and be unreachable because no skill tells the agent about it."""
+    work, and be unreachable because no skill tells the agent about it.
+
+    At least one, not exactly one. Sharing is legitimate and real — `meeting`
+    files the operator's action items with `todo.add`, the same verb the `todo`
+    skill owns. What must never happen is a verb no skill mentions, because
+    then nothing routes to it however well it works.
+    """
     declared: dict[str, list[str]] = {}
     for d in SKILLS:
         for verb in _meta(d).get("verbs") or []:
             declared.setdefault(verb, []).append(d.name)
     for verb in outbox.known_verbs():
-        owners = declared.get(verb, [])
-        assert owners, f"{verb} is registered but no skill declares it"
-        assert len(owners) == 1, f"{verb} is declared by {owners}"
+        assert declared.get(verb), f"{verb} is registered but no skill declares it"
 
 
 @pytest.mark.parametrize("skill", SKILLS, ids=lambda p: p.name)

@@ -374,3 +374,47 @@ def strip_wake_phrase(text: str, cfg) -> str:
     if best_i == -1:
         return text
     return text[best_i + best_len:].lstrip(" ,.:;-—").strip() or text
+
+# ---------------------------------------------------------------------------
+#  meeting mode (issue #86, ADR-008)
+# ---------------------------------------------------------------------------
+
+# Spoken openings that mean "this recording is a document, not a command".
+# EXPLICIT ONLY. Duration is deliberately not a trigger: a long recording today
+# is a truncated command (ADR-004), and silently switching behaviour on length
+# would turn a mis-fired command into a transcribed meeting nobody asked for —
+# with other people's voices in it.
+_MEETING_TRIGGERS = (
+    "meeting mode",
+    "take notes on this meeting",
+    "take notes for this meeting",
+    "take meeting notes",
+    "minute this meeting",
+    "transcribe this meeting",
+)
+
+def is_meeting(text: str, cfg=None) -> bool:
+    """Did the operator OPEN this recording by asking for meeting mode?
+
+    The trigger must be the first thing said after the wake phrase — not merely
+    present near the start. "Atticus, research meeting mode for me" is a
+    research request that happens to name the feature, and treating it as a
+    switch would transcribe forty minutes of whatever followed. So this matches
+    a prefix, never a substring.
+
+    Gated by ATTICUS_MEETING_MODE as well, because ADR-008 makes turning this on
+    an explicit act: it is the only feature here whose input is other people.
+    """
+    if cfg is not None and (getattr(cfg, "meeting_mode", "off") or "off"
+                            ).strip().lower() in ("0", "off", "false", "no"):
+        return False
+    head = str(text or "").lower()
+    # Drop the wake phrase and any leading filler, so what remains starts with
+    # the operator's actual first instruction.
+    wake = (getattr(cfg, "wake_phrase", "") or "atticus").strip().lower()
+    head = head.replace(",", " ").replace(".", " ").replace("!", " ")
+    words = head.split()
+    while words and (words[0] in _FILLERS or words[0] == wake):
+        words.pop(0)
+    head = " ".join(words)
+    return any(head.startswith(trigger) for trigger in _MEETING_TRIGGERS)

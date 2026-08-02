@@ -78,6 +78,9 @@ copies.
 | `ATTICUS_MAX_INGEST_SECONDS` | `7200` | Pathological length — ingest will not even download it. Plaud reports duration in the listing, so this check is free. 0 disables it. |
 | `ATTICUS_MAX_OUTPUT_BYTES` | `52428800` | Total bytes across all collected files. 50 MB — generous for an HTML report, far below anything that would bloat the vault's history irreversibly. |
 | `ATTICUS_MAX_OUTPUT_FILES` | `50` | Ceiling on what a single utterance may commit. The vault is git, where deletion is deliberately hard, so unbounded agent output is permanent. The whole collection is refused rather than committing … |
+| `ATTICUS_MEETING_KEEP_AUDIO` | `false` | ADR-008 section 2. False means meeting audio is DELETED the moment the transcript is durable, and never committed. Ordinary retention will not do: ops/retention.py removes audio from the working tr… |
+| `ATTICUS_MEETING_MAX_ACTIONS` | `20` | A real meeting yields more action items than a spoken command ever does, and silently dropping the sixth is the quiet failure this project treats as the worst kind. Applies only to meeting-mode rec… |
+| `ATTICUS_MEETING_MODE` | `off` | ── meeting mode (issue #86, ADR-008) ──────────────────────────────── OFF, and turning it on is an explicit act rather than a preference. This is the only feature here whose input is OTHER PEOPLE: … |
 | `ATTICUS_MIN_WORDS` | `3` | Refuse to execute transcripts shorter than this. |
 | `ATTICUS_NOTIFICATION_DETAIL` | `full` | How much of what you said appears in a push notification. title   - just "Atticus finished" and the link. Nothing spoken. summary - the first 60 characters. full    - up to 180 characters (default)… |
 | `ATTICUS_NOTIFY_ESCALATE` | `on` | ── how loudly, and when (issue #91) ───────────────────────────────────── Two multi-day outages in one week were DELIVERY failures, not detection failures: ingest dead for 2d6h (#77) and the site p… |
@@ -146,4 +149,4 @@ copies.
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*135 settings.*
+*138 settings.*
