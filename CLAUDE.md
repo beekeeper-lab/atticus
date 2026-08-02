@@ -21,6 +21,14 @@ published HTML reports, each announced by a push notification carrying a link to
 a private searchable site. Measured round trip ~30 minutes, of which ~13 is the
 pipeline and the rest is device sync and poll intervals.
 
+**As of 2026-08-02 the system also acts and is controllable.** Eleven skills;
+todo, reminders, GitHub (file/comment/close), Slack, and Outlook drafts and
+events all proven from real or synthesised speech. Voice lifecycle control
+(`atticus.status` / `cancel` / `retry`), named projects with versioned
+artifacts, an approval queue for held actions, and severity-routed
+notifications. 927 tests. Meeting mode is built but **inert**, waiting on
+[ADR-008](docs/decisions/ADR-008-recording-other-people.md).
+
 **Cloud → vault → agent output works end to end on real recordings.** Both
 timers run on Forge. The pipeline has transcribed real audio, held the
 wake-phrase gate on overheard speech, and published a 74 KB research report.
@@ -124,6 +132,37 @@ Two deploy keys, one per host, both with write access.
   mount namespace), and picks a matching skill from its description. Adding a
   capability = adding a skill directory. There is no routing table and there
   should not be one.
+- **The frontmatter is the contract, and the description IS the routing.** Each
+  skill declares `verbs`, `requires`, `risk`, `outputs`, `cost`. A skill whose
+  `requires` names an empty setting is **not copied into the workspace**, so the
+  agent never learns it exists — better than routing to it and refusing after
+  the fact, which is the state of every credential on a fresh install. Tests
+  assert declared verbs match registered handlers in both directions, and that a
+  description does not *prohibit* a verb its own skill declares. That last one is
+  not pedantry: `github.close` shipped implemented and documented while the
+  description still said "do NOT use it to close anything", and the agent
+  correctly refused. **A capability the description denies does not exist.**
+- **The agent declares intent; the pipeline performs it.** Nothing credentialed
+  runs inside the sandbox. Verbs carry a risk class (`internal` / `tracked` /
+  `outward`), `confirm` puts an action in an approval queue, and **approval
+  arrives by push, never through the vault browser** — that UI is on loopback,
+  which the sandbox shares, so an approve button there could be pressed by a
+  prompt-injected agent ([ADR-009](docs/decisions/ADR-009-approval-arrives-out-of-band.md)).
+- **Referents are resolved pipeline-side, never by the agent.** Contacts,
+  GitHub issues, past recordings, project names — the agent writes the words it
+  heard and the pipeline looks them up afterwards, **refusing when they match
+  none or several**. Four uses of the same pattern now
+  ([ADR-006](docs/decisions/ADR-006-contact-resolution.md),
+  [ADR-011](docs/decisions/ADR-011-projects-are-bounded-pre-fetch.md)). Guessing
+  is the failure mode worth designing against, because nobody is present to
+  disambiguate.
+- **Severity picks the notification channel.** ntfy cannot break through iOS
+  Focus — that is their bug and not tunable — so `critical` also books a
+  calendar alert, which can. Escalation waits for persistence and has its own
+  longer throttle; quiet hours park routine messages for the 07:00 brief rather
+  than dropping them. Two multi-day outages in one week were **delivery**
+  failures, not detection failures
+  ([ADR-010](docs/decisions/ADR-010-severity-decides-the-channel.md)).
 - **The agent cannot touch git**, and this is now enforced, not asserted. It
   runs under `bwrap` in a mount namespace with its own `HOME`: no `~/.ssh`, no
   `~/.config/ai/env`, no vault. Stripping `GIT_SSH_COMMAND` from its environment
