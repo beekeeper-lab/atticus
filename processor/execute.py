@@ -602,7 +602,7 @@ def run(task_md: str, dest_outdir: Path, cfg, *, log=print) -> dict:
                 raise ExecutionError(
                     f"agent exited {proc.returncode} and wrote nothing to either "
                     f"stdout or stderr. Most often this is authentication: {fix}, "
-                    f"and check `atticus doctor`.", retryable=True, usage=agent_usage)
+                    f"and check `python3 atticus_cli.py` (the doctor).", retryable=True, usage=agent_usage)
             raise ExecutionError(
                 f"agent exited {proc.returncode}: {err or out_hint}",
                 retryable=True, usage=agent_usage)

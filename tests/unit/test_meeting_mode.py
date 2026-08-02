@@ -167,13 +167,16 @@ def test_the_skill_may_only_file_todos():
     assert meta["risk"] == "internal"
 
 
-def test_the_adr_is_proposed_not_accepted():
-    """The feature ships inert. If this ever reads Accepted, the operator has
-    made the decision and the setting may go on."""
+def test_the_adr_records_that_announcing_is_unenforced():
+    """ADR-008 was Accepted on 2026-08-02 with §1 rewritten: announcing is the
+    recorder's responsibility and this software will not pretend to enforce it,
+    because a pin has no way to tell a room anything. The audio rule survived
+    the decision unchanged and is the part with engineering consequence."""
     from pathlib import Path
     adr = (Path(__file__).resolve().parents[2]
            / "docs/decisions/ADR-008-recording-other-people.md").read_text()
-    assert "**Status:** **Proposed" in adr
+    assert "**Status:** Accepted" in adr
+    assert "is not enforced" in adr
     assert "never committed" in adr or "never enters the retention system" in adr
 
 

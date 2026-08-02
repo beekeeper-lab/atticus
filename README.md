@@ -9,6 +9,11 @@
 Thirty minutes later there is a 72 KB HTML report in a private git repo, indexed
 on a private website, and a link to it on your phone. Nobody touched a keyboard.
 
+> **Setting it up?** → **[docs/START-HERE.md](docs/START-HERE.md)** takes you
+> from buying a device to a working pipeline, in order, with every credential
+> and setting explained. This README is what the system *is*; that one is how
+> to *run* it.
+
 ---
 
 ## What this actually is
@@ -305,7 +310,15 @@ cd ~/atticus && cp ops/.env.example ops/.env && chmod 600 ops/.env
 ./ops/install.sh processor   # transcribe/route/execute
 ./ops/install.sh ingest      # cloud → vault  (needs a seeded fetcher session)
 ./ops/install.sh all         # both on one host
+
+python3 atticus_cli.py       # the doctor: checks every precondition
 ```
+
+That is the short version, and it skips the parts that will actually stop you —
+the deploy key, the Plaud browser session, the agent's own authentication, and
+which of the forty-odd settings genuinely matter.
+**[docs/START-HERE.md](docs/START-HERE.md) is the full path**, from buying a
+device onward.
 
 Roles are **capabilities, not hostnames** — run them on one machine or two. The
 installer preflights python, `requests`, the `claude` CLI, `~/.config/ai/env`,

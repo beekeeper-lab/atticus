@@ -162,7 +162,7 @@ class Record:
         attempt kept its error file forever. Observed 2026-07-30:
         ...T184315Z_ac02959a455c failed at 19:00, was interrupted at 19:10 (which
         wrote the error file), then PUBLISHED a 41 KB report at 19:15 — and left a
-        failures/ entry behind that made `atticus doctor` and the failures/ count
+        failures/ entry behind that made the heartbeat and the failures/ count
         overreport permanently.
 
         The error file is a live signal, not an archive: the record's own metadata

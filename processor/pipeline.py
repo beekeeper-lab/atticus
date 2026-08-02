@@ -695,7 +695,7 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
             # default that is easy to read the wrong way round.
             rec.advance(PUBLISHED, executed=True)
             # A record that failed and then succeeded kept its failures/ entry
-            # forever, so `atticus doctor` and the failures/ count overreported
+            # forever, so the doctor and the failures/ count overreported
             # permanently. Clearing it here — at the one transition that means
             # "this worked" — is the only place it is unambiguously correct.
             if rec.clear_error(cfg.vault):
