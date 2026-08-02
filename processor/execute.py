@@ -436,7 +436,7 @@ def wrap_sandbox(cmd: list, ws: Path, out: Path, cfg, *, log=print) -> list:
 
 
 
-def build_task(transcript: str) -> str:
+def build_task(transcript: str, project_context: str = "") -> str:
     """The task prompt. Note there is NO outdir parameter any more.
 
     It used to be handed the VAULT output directory, so the preamble told the
@@ -454,7 +454,15 @@ def build_task(transcript: str) -> str:
     first. Without that, speech (or a mishearing) reproducing the end marker
     could close the fence early and have the remainder read as preamble.
     """
-    return PREAMBLE.format(transcript=_defuse_fence(transcript.strip()))
+    body = PREAMBLE.format(transcript=_defuse_fence(transcript.strip()))
+    if project_context:
+        # BEFORE the preamble, not after. The output contract and the
+        # act-only-on-the-first-request rule must be the last framing the model
+        # reads before the transcript; context placed after them would be the
+        # most recent instruction-shaped text in the prompt, which is exactly
+        # the position this project reserves for the operator's own words.
+        body = project_context.rstrip() + "\n\n" + body
+    return body
 
 
 _FENCE = re.compile(r"-{3,}\s*(BEGIN|END)\s+UNTRUSTED\s+TRANSCRIPT\s*-{3,}",

@@ -98,6 +98,7 @@ copies.
 | `ATTICUS_OUTLOOK_TIMEOUT` | `30` |  |
 | `ATTICUS_OUTLOOK_TIMEZONE` | *(empty)* |  |
 | `ATTICUS_PODCAST_MAX_USD` | `0.50` | Per-episode ceiling on REAL money, tested against an estimate BEFORE the first request. TTS bills to the same key and the same monthly budget as transcription, so ATTICUS_API_BUDGET_USD also applie… |
+| `ATTICUS_PROJECT_CONTEXT_CHARS` | `2000` | How much of a project's brief.md is prepended to the agent's prompt when a recording names that project (issue #84). Bounded like every other thing that enters a prompt. The block is fenced as REFE… |
 | `ATTICUS_PUSH_RETRIES` | `3` | Both hosts push to the same repo. Bounded retry on rebase conflict before quarantining and notifying. See SPEC §4.3. |
 | `ATTICUS_QUIET_HOURS` | *(empty)* | Local window in which ROUTINE and ALERT notifications are parked instead of sent — "22:00-07:00", crossing midnight is fine. They are never dropped: the 07:00 briefing opens with what arrived overn… |
 | `ATTICUS_REMINDER_CALENDAR` | `on` | Also drop a short event on the operator's OWN calendar when a reminder is set (issue #66): the operator's verdict on ntfy alone was "too soft among all the other notifications", and a calendar aler… |
@@ -145,4 +146,4 @@ copies.
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*134 settings.*
+*135 settings.*

@@ -33,6 +33,7 @@ import handlers            # noqa: E402,F401  (registers outbox handlers)
 import approval_drain                                       # noqa: E402
 import outbox                                                # noqa: E402
 import podcast as pod                                        # noqa: E402
+import projects                                              # noqa: E402
 import transcribe as stt                                     # noqa: E402
 import usage                                                 # noqa: E402
 import wake                                                  # noqa: E402
@@ -360,9 +361,27 @@ def stage_route(rec, cfg, log):
     if clip:
         log.warn(f"    command bounded: {clip['transcript_chars']} chars of "
                  f"transcript → {clip['command_chars']} chars of prompt")
-    task = ex.build_task(instruction)
+    # Does this recording belong to a named project (#84)? Resolved from the
+    # FULL transcript rather than the bounded instruction, because "add this to
+    # the consulting project" often names the project in the trailing half that
+    # extract_command() clips away.
+    ctx, proj = "", None
+    try:
+        proj = projects.resolve_from_text(cfg.vault, text)
+    except projects.ProjectError as e:
+        # Two projects named in one sentence. Refusing to assume is right, and
+        # the run still happens — it simply gets no context.
+        log.warn(f"    project: {e}")
+    if proj:
+        ctx = projects.context_block(
+            proj, cap=int(getattr(cfg, "project_context_chars", 2000) or 2000))
+        log.info(f"    project: {proj['name']} "
+                 f"({len(ctx)} chars of context, {len(proj['artifacts'])} artifact(s))")
+
+    task = ex.build_task(instruction, project_context=ctx)
     write_atomic(rec.task_path(cfg.vault), task)
     rec.advance(ROUTED, **clip,
+                project=(proj["slug"] if proj else None),
                 task_path=str(rec.task_path(cfg.vault).relative_to(cfg.vault)))
     return True
 
@@ -506,6 +525,29 @@ def _execution_is_live(rec, cfg, log) -> bool:
     return True
 
 
+def _primary_output(rec, cfg):
+    """The deliverable a project should hold: the same choice the site build
+    makes — index.html if present, else the largest HTML file."""
+    outdir = rec.outdir(cfg.vault)
+    htmls = sorted(outdir.glob("*.html")) if outdir.is_dir() else []
+    if not htmls:
+        return None
+    for h in htmls:
+        if h.name == "index.html":
+            return h
+    return max(htmls, key=lambda p: p.stat().st_size)
+
+
+def _doc_title(path) -> str:
+    import re as _re
+    try:
+        head = path.read_text(errors="replace")[:4000]
+    except OSError:
+        return ""
+    m = _re.search(r"(?is)<title[^>]*>(.*?)</title>", head)
+    return _re.sub(r"\s+", " ", m.group(1)).strip() if m else ""
+
+
 def process(rec, cfg, git, log, dry_run=False) -> bool:
     """Drive one record as far as it will go. True if it ends published."""
     log.info(f"▶ {rec.stem}  [{rec.status}]")
@@ -575,6 +617,30 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
                                               if k != "receipts"}
                 except Exception as e:              # noqa: BLE001
                     log.warn(f"    ! outbox failed: {type(e).__name__}: {e}")
+            # Link the deliverable into its project as the next version (#88).
+            # AFTER the outbox, so a `revises:` the agent declared is visible,
+            # and before publish so the copy lands in the same commit. A
+            # recording stays immutable — the project is where versions
+            # accumulate, because "revise that report" is a statement about an
+            # artifact, not about a thing that was said at a time.
+            if not dry_run and rec.data.get("project"):
+                try:
+                    doc = _primary_output(rec, cfg)
+                    if doc:
+                        linked = projects.link_artifact(
+                            cfg.vault, rec.data["project"], source=doc,
+                            title=_doc_title(doc) or rec.stem, stem=rec.stem,
+                            revises=str(rec.data.get("revises") or ""))
+                        rec.data["project_artifact"] = linked
+                        log.info(f"    project: linked as {linked['artifact']} "
+                                 f"v{linked['version']}")
+                except projects.ProjectError as e:
+                    log.warn(f"    ! project link refused: {e}")
+                except Exception as e:              # noqa: BLE001
+                    # Never costs the record: the deliverable is already in
+                    # processed/ and that is the durable copy.
+                    log.warn(f"    ! project link failed: {type(e).__name__}: {e}")
+
             stage_podcast(rec, cfg, log, dry_run)
             # Explicit, rather than letting absence imply it. The gated path
             # writes executed=False, so "no key" used to mean "executed" — a
