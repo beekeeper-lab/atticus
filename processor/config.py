@@ -259,6 +259,14 @@ class Config:
         # actions. 0 removes the cap.
         self.outbox_max_actions = int(g("ATTICUS_OUTBOX_MAX_ACTIONS", "5") or 0)
 
+        # ---- named projects (issue #84) -------------------------------------
+        # How much of a project's brief.md reaches the agent's prompt. Bounded
+        # like everything else that enters a prompt: long enough for real
+        # context, short enough that it cannot crowd out the instruction or the
+        # output contract. The block is fenced as reference material, because
+        # it mixes operator prose with agent-written artifact titles.
+        self.project_context_chars = int(g("ATTICUS_PROJECT_CONTEXT_CHARS", "2000") or 2000)
+
         # ---- lifecycle verbs (issue #82) ------------------------------------
         # How far back "that thing" can reach. Bounded on purpose: a wider
         # window makes ambiguity certain and lets a stray phrase reach a
