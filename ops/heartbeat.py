@@ -245,6 +245,34 @@ def main():
                 problems.append(f"{t} has NO next elapse — it will never fire again")
     check("timers-scheduled", check_scheduled)
 
+    # 1b. Are the PATH watchers alive?
+    #
+    # Timers were watched; path units were not, and one died unnoticed for a day
+    # and a half. atticus-vault-site.path rebuilds the site the moment the vault
+    # changes, which is what makes a result notification's link work when it is
+    # tapped rather than up to five minutes later. The pipeline commits several
+    # times per recording, that tripped systemd's default 5-starts-per-10s
+    # limit, the service failed with start-limit-hit and took the path unit into
+    # `failed` with it — permanently, and silently, because the 5-minute timer
+    # kept rebuilding and the site looked healthy. The operator found it by
+    # tapping a fresh notification and getting a 404 (2026-08-01).
+    #
+    # The service now sets StartLimitIntervalSec=0 so that cause is gone, but a
+    # dead watcher must never again be something only a 404 can reveal.
+    def check_watchers():
+        for p in ("atticus-vault-site.path",):
+            if not unit_exists(p):
+                continue
+            if unit_is_running(p):
+                notes.append(f"{p} watching")
+            else:
+                problems.append(
+                    f"{p} is NOT active — the site only rebuilds on its timer, so "
+                    f"a result notification's link 404s until the next tick. "
+                    f"Revive: systemctl --user reset-failed {p} && "
+                    f"systemctl --user start {p}")
+    check("path-watchers", check_watchers)
+
     # 2. Has anything run recently — AND did the last run succeed?
     def check_recent():
         # Per-unit quiet budgets. retention is on a DAILY timer, so the 6h
