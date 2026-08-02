@@ -97,6 +97,26 @@ exfiltratable, but revocable without touching the operator's own sessions,
 and the refresh token never enters the namespace. Prefer the token mode; a
 per-run short-lived token or auth broker (#68) remains the durable fix.
 
+*The approval control is deliberately out of reach of the sandbox.* When a verb
+is set to `confirm`, the action waits in a queue and the operator decides **from
+a push notification** — not from the vault browser. That is not a UI preference:
+the browser's write API answers on loopback, the sandbox shares the host network
+namespace, and the API's write token is embedded in every published page (#69),
+so an approve button there could be pressed by an agent acting on injected
+instructions. Decisions arrive on a second ntfy topic the agent cannot discover
+(no `ATTICUS_*` URL survives the environment allowlist), every pending item
+carries a nonce against replay, and the browser shows the queue read-only. The
+topic itself is a bearer capability — the same trust model as the alarm topic.
+See [ADR-009](docs/decisions/ADR-009-approval-arrives-out-of-band.md).
+
+*Project context widens what enters the prompt, on purpose and with bounds.* A
+recording that names a project has that project's `brief.md` prepended to the
+task, capped, operator-authored, and fenced exactly as the transcript is —
+because the artifact titles beside it were written by earlier agent runs, and an
+earlier run may have fetched a hostile page. This is #63's *pre-fetch* option in
+its most bounded form, not a read path; the agent still cannot ask for anything.
+See [ADR-011](docs/decisions/ADR-011-projects-are-bounded-pre-fetch.md).
+
 Earlier versions asserted this and did not deliver it: the vault deploy key was
 readable and the agent has a shell, so "the agent never touches git" was
 decorative. That history is in `docs/history/forge-2026-07-29.md`.

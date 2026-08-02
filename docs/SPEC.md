@@ -27,6 +27,27 @@
 > credential boundary. Sections §2.3 (transcription model) and §4.3 (concurrent
 > push) are still cited by live code comments and remain current.
 
+> **Substantially extended on 2026-08-02**, and this document does not
+> describe the extension. The pipeline it specifies — ingest, transcribe, gate,
+> route, execute, publish — is unchanged and still accurate. What it does not
+> know about is everything built on top of that spine, which is now most of what
+> the system does day to day:
+>
+> | added | where it is specified |
+> |---|---|
+> | the outbox: how a sandboxed agent causes external actions | `processor/outbox.py`, issue #42 |
+> | risk classes and the approval queue | [ADR-009](decisions/ADR-009-approval-arrives-out-of-band.md) |
+> | severity-routed notifications, quiet hours | [ADR-010](decisions/ADR-010-severity-decides-the-channel.md) |
+> | named projects, artifact versions, referent resolution | [ADR-011](decisions/ADR-011-projects-are-bounded-pre-fetch.md) |
+> | todos in the vault | [ADR-007](decisions/ADR-007-todos-live-in-the-vault.md) |
+> | contact resolution | [ADR-006](decisions/ADR-006-contact-resolution.md) |
+> | recording other people (meeting mode) | [ADR-008](decisions/ADR-008-recording-other-people.md) — **Proposed** |
+> | the implementation plan those came from | [`specs/2026-08-02-control-and-continuity.md`](specs/2026-08-02-control-and-continuity.md) |
+>
+> The metadata schema in §3.3 is also behind: live records now carry `project`,
+> `meeting`, `outbox`, `executing_by` and per-stage timestamps, and two terminal
+> statuses (`cancelled`, `superseded`) exist that this document does not list.
+
 ## 1. Intent
 
 Speak a task into a wearable recorder. Have an autonomous agent execute it and

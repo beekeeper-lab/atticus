@@ -90,7 +90,9 @@ self-contained HTML file. Name it for the topic.
 | `deep-research` | ✅ built |
 | `podcast-companion` | ✅ built — companion only, never routed to directly |
 | `ai-brief` | ✅ built — driven by a timer, not by speech |
-| `github` | ✅ built — files an issue or a comment through the outbox (#50). Issue create/comment only: no push, merge, workflow or settings, and no reads |
+| `github` | ✅ built — files an issue, comments, or CLOSES one through the outbox (#50). No push, merge, workflow or settings, and no reads |
+| `atticus` | ✅ built — status, cancel and retry for earlier recordings (#82). The only skill that acts on the pipeline itself |
+| `meeting` | ⏸ built but **inert** — needs `ATTICUS_MEETING_MODE=on`, which needs [ADR-008](../docs/decisions/ADR-008-recording-other-people.md) accepted. Not offered to the agent while off |
 | `reminders` | ✅ built — a push at a time, via ntfy and a one-minute timer (#52). Needs NO external service and no credential; one-shot only, and a REMINDER (delivery at a time) is deliberately distinct from a `todo` (no deadline behaviour) |
 | `price-scout` | planned — SPEC W9 |
 | `idea-to-spec` | planned — SPEC W9 |

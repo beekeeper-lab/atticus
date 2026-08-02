@@ -94,6 +94,17 @@ record of what it did, with a link. Keeping the output shape constant is what
 makes the website a universal index of everything the system has ever done,
 regardless of what the underlying action was.
 
+**6. The agent declares intent; the pipeline holds the credentials.** A
+sandboxed agent cannot reach Slack, GitHub or a calendar, so it writes an
+*intent file* into its output directory and the pipeline performs it after the
+agent has exited. Each verb carries a risk class, and anything not automatic
+waits in an approval queue you answer **from a push notification** — never from
+the vault browser, because the browser is reachable from inside the sandbox and
+the approval control must not be. Lookups work the same way round: the agent
+writes the words it heard ("the consulting project", "the issue about Slack")
+and the pipeline resolves them afterwards, refusing when they match none or
+several.
+
 ## Status — v1
 
 **Working end to end on real recordings.** Fifteen processed; five executed into
@@ -106,7 +117,24 @@ published reports.
 | Wake-phrase gate | ✅ holding; most recordings correctly not executed |
 | Agent execution | ✅ produces self-contained HTML reports |
 | Publish + notify | ✅ private searchable site, push notification with a link |
+| Acting on the world | ✅ todo, reminders, GitHub, Slack, Outlook drafts and events — through the outbox, with risk classes and an approval queue |
+| Controlling the work | ✅ status, cancel and retry by voice; named projects with versioned artifacts |
 | Device → cloud | ⚠️ **needs the vendor app foregrounded** — the one unsolved link |
+
+**What it can do, spoken.** Every one of these has been exercised end to end
+from real or synthesised speech:
+
+| you say | what happens |
+|---|---|
+| *"research X…"* | a self-contained HTML report, published, link pushed |
+| *"add X to my list"* | a todo in the vault, checked off from your phone |
+| *"remind me at four to X"* | an ntfy push **and** a calendar alert that breaks through Focus |
+| *"file an issue about X"* | a real GitHub issue, labelled and attributed |
+| *"close the issue about X"* | the pipeline finds it by title and closes it |
+| *"post to #channel that X"* | a Slack message, from an allowlisted channel list |
+| *"draft an email to X"* | an Outlook draft — never sent |
+| *"for the consulting project, X"* | the project's brief is loaded as context; the result is filed as a versioned artifact |
+| *"cancel that"* / *"what happened to X"* | the run is stopped, or its status pushed to you |
 
 Measured on a real run: **13 minutes** of pipeline time (ingest → transcribe →
 9 minutes of agent → publish), inside a **~30 minute** door-to-door round trip.
@@ -140,18 +168,30 @@ The rest is device sync and poll intervals.
 
 ## Roadmap
 
-### Skills — the main line of work
+### Skills — mostly built; the remaining ones need credentials, not code
 
-Adding a capability is adding a directory, so this is where the leverage is:
+Adding a capability is still adding a directory, and eleven now exist. What is
+left is configuration and a couple of decisions:
 
-- **Signal** — *"Atticus, send <name> a message saying…"* via `signal-cli`
-- **Outlook / email** — read, summarise, draft, send
-- **Azure DevOps** — *"file a ticket on the DDI project that does X"*, then
-  produce an HTML record of the ticket it filed
-- **Calendar, notes, home automation** — anything with an API and a CLI
+- **Signal** — built, unconfigured. Needs `signal-cli` linked and a spoken-name
+  → number allowlist. Deliberately last: it messages people, immediately and
+  irreversibly.
+- **Azure DevOps** — built, unconfigured. Needs a PAT and org/project.
+- **Meeting mode** — built and **inert**, waiting on a consent decision.
+  Recording other people is the one thing here that is not the operator's alone
+  to choose; see [ADR-008](docs/decisions/ADR-008-recording-other-people.md).
+- **Reading anything back** — summarising a mailbox, answering a question about
+  prior work — is not a missing skill but an unresolved architectural question:
+  [#63](https://github.com/beekeeper-lab/atticus/issues/63). Named projects
+  answered the safe half of it
+  ([ADR-011](docs/decisions/ADR-011-projects-are-bounded-pre-fetch.md)).
 
-Each follows the same contract: do the thing, then write an HTML record of what
-was done, with links. The pipeline never changes.
+A skill that names a credential it does not have is **not offered to the agent
+at all**, so an unconfigured capability cannot produce a confident report about
+an action that never had a chance.
+
+Each still follows the same contract: do the thing, then write an HTML record of
+what was done, with links. The pipeline never changes.
 
 ### Cutting the vendor cloud out of the loop — investigated and closed
 
