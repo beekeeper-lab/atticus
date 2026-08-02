@@ -65,12 +65,15 @@ def quiet(_msg):
 
 
 # ── registration ───────────────────────────────────────────────────────────
-def test_both_verbs_are_registered_and_no_others():
-    """A verb only exists if handlers/__init__ imports the module. It didn't, once."""
-    ours = [v for v in outbox.known_verbs() if v.startswith("github.")]
-    assert ours == ["github.comment", "github.issue"], (
-        "github.issue and github.comment, and nothing else — push, merge and "
-        "workflow dispatch are deliberately absent (#50)")
+def test_the_three_verbs_are_registered_and_no_others():
+    """A verb only exists if handlers/__init__ imports the module. It didn't, once.
+
+    close joined issue and comment on 2026-08-02. push, merge, workflow dispatch,
+    reopen and delete remain deliberately absent (#50) — each is its own risk
+    decision, and delete is not coming at all.
+    """
+    ours = sorted(v for v in outbox.known_verbs() if v.startswith("github."))
+    assert ours == ["github.close", "github.comment", "github.issue"]
 
 
 def test_filing_is_tracked_not_outward():
@@ -343,3 +346,163 @@ def test_the_skill_tells_the_agent_it_cannot_read_from_github():
                  "NNN-verb.json", "allowlist"):
         assert must in text, must
     assert "Do NOT use" in text, "the negative half of the description is what routes"
+
+
+# ── github.close ────────────────────────────────────────────────────────────
+# Added after a spoken request — "find the issue you created for the Slack
+# integration and close it" — that the agent correctly refused, because it could
+# neither close an issue nor look one up. Both halves are here: closing, and
+# PIPELINE-SIDE resolution of words to a number (ADR-006's pattern, per contacts).
+
+class FakeSeq:
+    """subprocess.run answering a SEQUENCE: the issue list, then the close."""
+
+    def __init__(self, issues, close_rc=0, close_err=""):
+        self.issues = issues
+        self.close_rc, self.close_err = close_rc, close_err
+        self.calls = []
+
+    def __call__(self, cmd, **kw):
+        self.calls.append(cmd)
+        if "list" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(self.issues), "")
+        return subprocess.CompletedProcess(
+            cmd, self.close_rc, "" if self.close_rc == 0 else "",
+            self.close_err)
+
+
+def _close(cfg, **req):
+    return ghh.close_issue({"verb": "github.close", **req}, cfg, log=lambda m: None)
+
+
+def test_close_by_number_never_lists(gcfg, gh):
+    out = _close(gcfg, issue="#57")
+    assert out["number"] == 57 and out["reason"] == "completed"
+    assert len(gh.calls) == 1, "a number needs no lookup"
+    cmd = gh.calls[0]
+    assert cmd[:3] == ["gh", "issue", "close"] and "57" in cmd
+    assert flag(cmd, "--repo") == REPOS[0]
+    assert flag(cmd, "--reason") == "completed"
+
+
+def test_close_resolves_words_to_one_open_issue(gcfg, monkeypatch):
+    f = FakeSeq([{"number": 76, "title": "Test issue: verify the Slack integration end-to-end"},
+                 {"number": 12, "title": "Something unrelated"}])
+    monkeypatch.setattr(ghh.subprocess, "run", f)
+    out = _close(gcfg, match="Slack integration")
+    assert out["number"] == 76
+    assert "Slack" in out["resolved_by"]
+    listing, closing = f.calls
+    assert "list" in listing and flag(listing, "--state") == "open", \
+        "only OPEN issues may be matched — a replay must not re-close settled work"
+    assert flag(listing, "--repo") == REPOS[0], "the search is scoped to the allowlist"
+    assert "76" in closing
+
+
+def test_close_matches_on_all_words_when_the_phrase_is_not_literal(gcfg, monkeypatch):
+    f = FakeSeq([{"number": 76, "title": "Test issue: verify the Slack integration end-to-end"}])
+    monkeypatch.setattr(ghh.subprocess, "run", f)
+    assert _close(gcfg, match="slack integration test")["number"] == 76
+
+
+def test_an_ambiguous_match_refuses_and_names_the_candidates(gcfg, monkeypatch):
+    f = FakeSeq([{"number": 1, "title": "Slack integration flakes"},
+                 {"number": 2, "title": "Slack integration docs"}])
+    monkeypatch.setattr(ghh.subprocess, "run", f)
+    with pytest.raises(outbox.OutboxError) as e:
+        _close(gcfg, match="Slack integration")
+    assert "#1" in str(e.value) and "#2" in str(e.value)
+    assert len(f.calls) == 1, "nothing may be closed while it is ambiguous"
+
+
+def test_no_match_refuses_rather_than_closing_something_else(gcfg, monkeypatch):
+    f = FakeSeq([{"number": 9, "title": "Totally different"}])
+    monkeypatch.setattr(ghh.subprocess, "run", f)
+    with pytest.raises(outbox.OutboxError, match="no OPEN issue"):
+        _close(gcfg, match="Slack integration")
+    assert len(f.calls) == 1
+
+
+@pytest.mark.parametrize("req,expect", [
+    ({}, "needs `issue`"),
+    ({"match": "ab"}, "too short"),
+    ({"issue": "the slack one"}, "NUMBER"),
+])
+def test_unusable_arguments_refuse_before_gh_runs(gcfg, gh, req, expect):
+    with pytest.raises(outbox.OutboxError, match=expect):
+        _close(gcfg, **req)
+    assert gh.calls == []
+
+
+def test_a_repo_off_the_allowlist_is_refused_before_gh_runs(gcfg, gh):
+    with pytest.raises(outbox.OutboxError, match="not a permitted repository"):
+        _close(gcfg, issue="1", repo="evil-org/atticus")
+    assert gh.calls == [], "the allowlist is checked before anything reaches gh"
+
+
+@pytest.mark.parametrize("spoken,sent", [
+    ("", "completed"), ("done", "completed"), ("completed", "completed"),
+    ("not planned", "not planned"), ("wontfix", "not planned"),
+    ("Declined", "not planned"),
+])
+def test_reason_maps_spoken_words_to_githubs_two_values(gcfg, gh, spoken, sent):
+    """'We're not doing that' must not land as *completed* — that tells everyone
+    watching the repo the work got done."""
+    assert _close(gcfg, issue="5", reason=spoken)["reason"] == sent
+    assert flag(gh.calls[-1], "--reason") == sent
+
+
+def test_an_unknown_reason_refuses(gcfg, gh):
+    with pytest.raises(outbox.OutboxError, match="completed"):
+        _close(gcfg, issue="5", reason="because I said so")
+    assert gh.calls == []
+
+
+def test_a_close_comment_carries_the_provenance_footer(gcfg, gh):
+    out = _close(gcfg, issue="5", comment="Handled on the drive home.")
+    body = flag(gh.calls[-1], "--comment")
+    assert "Handled on the drive home." in body
+    assert "Filed by [Atticus]" in body, "a machine closing an issue must say so"
+    assert out["commented"] is True
+
+
+def test_no_comment_means_no_comment_flag(gcfg, gh):
+    assert _close(gcfg, issue="5")["commented"] is False
+    assert "--comment" not in gh.calls[-1]
+
+
+def test_gh_failure_becomes_a_readable_outbox_error(gcfg, monkeypatch):
+    f = FakeSeq([], close_rc=1, close_err="HTTP 403: Resource not accessible")
+    monkeypatch.setattr(ghh.subprocess, "run", f)
+    with pytest.raises(outbox.OutboxError, match="403"):
+        _close(gcfg, issue="5")
+
+
+def test_the_verb_is_registered_tracked_and_described(gcfg):
+    h = outbox.handler_for("github.close")
+    assert h is not None and h["risk"] == outbox.TRACKED
+    assert "#57" in outbox.describe({"verb": "github.close", "issue": "57"})
+    assert "Slack" in outbox.describe({"verb": "github.close", "match": "Slack"})
+
+
+def test_the_skill_documents_the_verb_the_handler_registers():
+    md = (REPO / "skills/github/SKILL.md").read_text()
+    assert "github.close" in md
+    assert "not planned" in md, "the reason field must be documented or it is unused"
+    assert "no reopen" in md.lower()
+
+
+def test_the_skill_DESCRIPTION_advertises_closing():
+    """The frontmatter, not the body, is what routing reads.
+
+    Observed 2026-08-02: the body documented github.close and the description
+    still said "Do NOT use it to ... reopen or close anything". A spoken "close
+    the issue called voice test target" reached the skill and the agent refused,
+    citing its own instructions — correctly. A capability the description denies
+    does not exist, however well the body documents it.
+    """
+    md = (REPO / "skills/github/SKILL.md").read_text()
+    front = md.split("---")[1].lower()
+    assert "close" in front, "the description must advertise closing"
+    assert "reopen or close anything" not in front, \
+        "the old prohibition survived a capability being added"

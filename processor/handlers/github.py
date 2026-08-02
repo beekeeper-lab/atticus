@@ -12,16 +12,23 @@ The thing on the other end of it is a pipeline that executes text derived from
 ambient audio.
 
 So this module does **not** shell out to `gh` generically, and there is no verb
-that takes a `gh` command line. Two verbs exist, each building a fixed argv:
+that takes a `gh` command line. Three verbs exist, each building a fixed argv:
 
     github.issue     gh issue create  --repo <allowlisted> --title … --body …
     github.comment   gh issue comment <n> --repo <allowlisted> --body …
+    github.close     gh issue close   <n> --repo <allowlisted> --reason …
 
 Adding `github.pr`, `github.merge` or `github.run` here is not an incremental
 change; it is a different risk decision and belongs in its own issue with its own
-credential. Reads are absent for a different reason: an outbox cannot answer a
-question, because the answer would have to arrive *during* the agent's run. See the
-module docstring of `processor/outbox.py`.
+credential. `gh issue delete` will not be added at all: closing keeps the thread
+and is one click to undo, deleting destroys it.
+
+Reads are absent as an AGENT capability for a different reason: an outbox cannot
+answer a question, because the answer would have to arrive *during* the agent's
+run. See the module docstring of `processor/outbox.py`. `github.close` does read
+the issue list, but pipeline-side and only to resolve its own argument — the same
+distinction ADR-006 drew for contacts, and the reason the agent may say "close
+the issue about X" without ever being able to *ask* what issues exist.
 
 ## The repository allowlist is the control
 
@@ -50,6 +57,7 @@ Two supporting details matter and are easy to lose:
     from the operator, not the agent, but an entry like `--json` would otherwise be
     handed to `gh` in argv position where it reads as a flag.
 """
+import json
 import re
 import subprocess
 
@@ -190,6 +198,129 @@ def create_issue(req: dict, cfg, log=print) -> dict:
     for label in (getattr(cfg, "github_labels", None) or []):
         args += ["--label", str(label)]
     return {"repo": repo, **_url_and_number(_gh(cfg, args, log=log))}
+
+
+def _resolve_issue(req: dict, cfg, repo: str, *, log=print) -> tuple[int, str]:
+    """Which issue. A number if given; otherwise resolved from text, HERE.
+
+    The agent cannot look an issue up — it has no reads (see `outbox`) — so a
+    number-only verb would not serve the request that motivated this one:
+    *"find the issue you created for the Slack integration and close it"*,
+    spoken 2026-08-01, which the agent correctly refused because it could
+    neither close nor find.
+
+    Resolving pipeline-side is the pattern ADR-006 already set for contacts: a
+    lookup the AGENT cannot do is fine for a HANDLER, which runs where the
+    credential already is. The safety rules are the ones used everywhere else
+    in this module:
+
+      * the search is scoped to the allowlisted `repo` — the spoken words
+        select an issue *within* a blast radius the operator wrote down, they
+        never widen it;
+      * OPEN issues only, so a replay cannot re-close settled work and a match
+        cannot reach into history;
+      * exactly one match or a REFUSAL naming the candidates. Closing the wrong
+        issue on a mishearing is the failure worth designing against, and
+        nobody is present to disambiguate.
+    """
+    raw = str(req.get("issue") or "").strip()
+    if raw:
+        m = _ISSUE_NO.match(raw)
+        if not m:
+            raise OutboxError(
+                f"github.close needs an issue NUMBER in `issue`, got {raw!r} — "
+                f"put words in `match` instead and they will be resolved against "
+                f"open issues in {repo}")
+        return int(m.group(1)), "given as a number"
+
+    want = " ".join(str(req.get("match") or "").split())
+    if not want:
+        raise OutboxError("github.close needs `issue` (a number) or `match` (text "
+                          "to find one open issue by title)")
+    if len(want) < 4:
+        # Two or three characters match half a tracker.
+        raise OutboxError(f"`match` is too short to identify an issue: {want!r}")
+
+    out = _gh(cfg, ["issue", "list", "--repo", repo, "--state", "open",
+                    "--limit", "100", "--json", "number,title"], log=log)
+    try:
+        issues = json.loads(out or "[]")
+    except ValueError:
+        raise OutboxError("could not read the issue list from gh")
+
+    low = want.lower()
+    hits = [i for i in issues
+            if low in str(i.get("title") or "").lower()]
+    if not hits:
+        # Fall back to all-words-present, so "slack integration test" still finds
+        # "Test issue: verify the Slack integration end-to-end".
+        words = [w for w in re.split(r"\W+", low) if len(w) > 2]
+        hits = [i for i in issues
+                if words and all(w in str(i.get("title") or "").lower()
+                                 for w in words)]
+    if not hits:
+        raise OutboxError(
+            f"no OPEN issue in {repo} matches {want!r} — it may already be "
+            f"closed, or worded differently. Say the issue number.")
+    if len(hits) > 1:
+        listed = "; ".join(f"#{i['number']} {i['title']}" for i in hits[:5])
+        raise OutboxError(
+            f"{want!r} matches {len(hits)} open issues, so nothing was closed: "
+            f"{listed}. Say the issue number.")
+    return int(hits[0]["number"]), f"matched {hits[0]['title']!r}"
+
+
+@outbox.handler(
+    "github.close", risk=outbox.TRACKED, schema=(),
+    describe=lambda r: (f"close {r.get('repo') or 'the default repo'} issue "
+                        + (f"#{str(r.get('issue')).lstrip('#')}"
+                           if str(r.get("issue") or "").strip()
+                           else f"matching {str(r.get('match') or '?')!r}")))
+def close_issue(req: dict, cfg, log=print) -> dict:
+    """Close one open issue. `issue` (a number) or `match` (text); both optional
+    fields, but one is required — enforced in `_resolve_issue`.
+
+    TRACKED like the other two. Closing is visible to everyone watching the repo,
+    but it is reversible in one click and it cannot destroy anything: the thread,
+    its history and its comments all survive. That is the whole reason this is a
+    close verb and not a delete verb — `gh issue delete` is irreversible, needs a
+    scarier permission, and will not be added here.
+
+    REOPENING IS DELIBERATELY ABSENT. Closing something that should have stayed
+    open is a visible, one-click mistake; re-opening settled work by mishearing is
+    noise in other people's notifications with no natural moment of review. If it
+    is ever wanted it is its own verb with its own gate, not a `state` parameter
+    on this one.
+
+    `reason` accepts GitHub's own two values so "close it, we're not doing that"
+    lands as *not planned* rather than silently as *completed* — the distinction
+    is the entire point of the field in the tracker.
+    """
+    repo = _repo(req, cfg)
+    number, how = _resolve_issue(req, cfg, repo, log=log)
+
+    reason = " ".join(str(req.get("reason") or "").split()).lower()
+    if reason in ("", "completed", "complete", "done", "fixed"):
+        gh_reason = "completed"
+    elif reason in ("not planned", "not-planned", "notplanned", "wontfix",
+                    "won't fix", "declined", "abandoned"):
+        gh_reason = "not planned"
+    else:
+        raise OutboxError(
+            f"reason must be 'completed' or 'not planned', got {reason!r}")
+
+    args = ["issue", "close", str(number), "--repo", repo, "--reason", gh_reason]
+    comment = str(req.get("comment") or "").strip()
+    if comment:
+        # Provenance matters more here than on a new issue: a close with no
+        # explanation, arriving from a machine, is the kind of thing that makes
+        # someone distrust the tracker.
+        args += ["--comment", _body(comment)]
+    _gh(cfg, args, log=log)
+    log(f"    github: closed #{number} ({gh_reason}; {how})")
+    return {"repo": repo, "number": number, "reason": gh_reason,
+            "resolved_by": how, "commented": bool(comment),
+            "url": f"https://github.com/{repo}/issues/{number}"}
 
 
 @outbox.handler(
