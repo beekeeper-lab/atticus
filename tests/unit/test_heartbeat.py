@@ -39,16 +39,28 @@ class FakeSystemctl:
     `statuses` maps a unit to its ExecMainStatus (default "0" = success).
     """
 
-    def __init__(self, statuses=None, loaded=True, scheduled=True):
+    def __init__(self, statuses=None, loaded=True, scheduled=True,
+                 active=True):
         self.statuses = statuses or {}
         self.loaded = loaded
         self.scheduled = scheduled
+        # ActiveState for PATH units only. Deliberately not for services: the
+        # heartbeat also calls unit_is_running() on a service to tell "timer
+        # parked at infinity" from "timer has no next elapse because its own
+        # service is mid-run", and answering `active` there would turn the
+        # parked-timer alarm into a benign note — silently disarming the check
+        # this file was written around. Services keep the pre-existing answer
+        # (empty → not running).
+        self.active = active
 
     def __call__(self, cmd, **kw):
         out = ""
         if cmd and cmd[0] == "systemctl":
             unit = cmd[3]
-            if "LoadState" in cmd:
+            if "ActiveState" in cmd:
+                if unit.endswith(".path"):
+                    out = f"ActiveState={'active' if self.active else 'failed'}\n"
+            elif "LoadState" in cmd:
                 out = ("loaded" if self.loaded else "not-found") + "\n"
             elif "ExecMainExitTimestamp" in cmd:
                 st = self.statuses.get(unit, "0")
@@ -266,3 +278,38 @@ def test_a_unit_sampled_mid_run_is_not_reported_broken(monkeypatch, tmp_path, ca
     assert rc == 0, out
     assert "will never fire again" not in out
     assert "no record of ever completing" not in out
+
+
+def test_a_dead_path_watcher_alarms(monkeypatch, tmp_path, capsys):
+    """atticus-vault-site.path sat in `failed` for a day and a half unnoticed.
+
+    It rebuilds the site the moment the vault changes, which is what makes a
+    result notification's link work when it is tapped. With it dead the site
+    still rebuilt on its 5-minute timer, so everything LOOKED healthy — the only
+    symptom was a 404 on a fresh notification, found by the operator on
+    2026-08-01. Timers were watched here; path units were not.
+    """
+    vault = _empty_vault(tmp_path)
+    monkeypatch.setenv("ATTICUS_VAULT_PATH", str(vault))
+    monkeypatch.setattr(hb.subprocess, "run",
+                        FakeSystemctl(loaded=True, active=False))
+    monkeypatch.setattr(sys, "argv", ["heartbeat.py", "--dry-run"])
+
+    rc = hb.main()
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "atticus-vault-site.path is NOT active" in out
+    assert "reset-failed" in out, "the alarm must carry the fix, not just the fact"
+
+
+def test_a_live_path_watcher_is_quiet(monkeypatch, tmp_path, capsys):
+    vault = _empty_vault(tmp_path)
+    monkeypatch.setenv("ATTICUS_VAULT_PATH", str(vault))
+    monkeypatch.setattr(hb.subprocess, "run", FakeSystemctl(loaded=True))
+    monkeypatch.setattr(sys, "argv", ["heartbeat.py", "--dry-run"])
+
+    rc = hb.main()
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "NOT active" not in out
+    assert "atticus-vault-site.path watching" in out
