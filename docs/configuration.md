@@ -47,6 +47,8 @@ copies.
 | `ATTICUS_CONTACTS_PHONETIC` | `on` |  |
 | `ATTICUS_CONTACTS_SOURCES` | `m365:people,m365:contacts` | Contact resolution (processor/contacts.py, ADR-006). Pipeline-side infrastructure the handlers call to turn "Robbie" into an address — NOT an agent-facing lookup, which would be a read (issue #63).… |
 | `ATTICUS_CONTACTS_TIMEOUT` | `20` |  |
+| `ATTICUS_ESCALATE_AFTER_FAILURES` | `3` | Escalate on PERSISTENCE, not one bad pass. A single failed poll is usually transient, and a calendar event for it teaches you to ignore the strong channel too. Counted in consecutive failures of th… |
+| `ATTICUS_ESCALATE_THROTTLE_HOURS` | `12` | A separate, LONGER throttle for the calendar channel. The ntfy throttle above is 6h; a 15-minute timer failing all night would otherwise book 96 calendar events. 0 removes the bound. Cleared on rec… |
 | `ATTICUS_EXEC_TIMEOUT` | `1800` |  |
 | `ATTICUS_FETCHER` | `ingest/plaud_web.py` | THE TRANSPORT IS A PLUGGABLE EXECUTABLE. ingest/poller.py shells out to this and requires only that it implement: <fetcher> whoami --json <fetcher> list --days N --json   → {"recordings":[{id,creat… |
 | `ATTICUS_FETCHER_TIMEOUT` | `300` |  |
@@ -75,6 +77,7 @@ copies.
 | `ATTICUS_MAX_OUTPUT_FILES` | `50` | Ceiling on what a single utterance may commit. The vault is git, where deletion is deliberately hard, so unbounded agent output is permanent. The whole collection is refused rather than committing … |
 | `ATTICUS_MIN_WORDS` | `3` | Refuse to execute transcripts shorter than this. |
 | `ATTICUS_NOTIFICATION_DETAIL` | `full` | How much of what you said appears in a push notification. title   - just "Atticus finished" and the link. Nothing spoken. summary - the first 60 characters. full    - up to 180 characters (default)… |
+| `ATTICUS_NOTIFY_ESCALATE` | `on` | ── how loudly, and when (issue #91) ───────────────────────────────────── Two multi-day outages in one week were DELIVERY failures, not detection failures: ingest dead for 2d6h (#77) and the site p… |
 | `ATTICUS_NOTIFY_NOTES` | `false` | Push for GATED notes too. Off by default: a wearable overhears a lot and notes are the common case. Turn on to catch the failure that matters — a misheard wake word silently filing a real command a… |
 | `ATTICUS_NOTIFY_URL` | *(empty)* | Failure notifications (SPEC T-70). ntfy topic URL, or any endpoint accepting a POST body. Blank disables them. SET THIS. It is the only thing standing between you and a silently dead pipeline. The … |
 | `ATTICUS_OUTBOX` | `on` | ── the outbox: how the agent causes external actions (issue #42) ───── The agent holds NO credentials — that is the main control in this system. So a skill that needs to send, file or create someth… |
@@ -93,6 +96,7 @@ copies.
 | `ATTICUS_OUTLOOK_TIMEZONE` | *(empty)* |  |
 | `ATTICUS_PODCAST_MAX_USD` | `0.50` | Per-episode ceiling on REAL money, tested against an estimate BEFORE the first request. TTS bills to the same key and the same monthly budget as transcription, so ATTICUS_API_BUDGET_USD also applie… |
 | `ATTICUS_PUSH_RETRIES` | `3` | Both hosts push to the same repo. Bounded retry on rebase conflict before quarantining and notifying. See SPEC §4.3. |
+| `ATTICUS_QUIET_HOURS` | *(empty)* | Local window in which ROUTINE and ALERT notifications are parked instead of sent — "22:00-07:00", crossing midnight is fine. They are never dropped: the 07:00 briefing opens with what arrived overn… |
 | `ATTICUS_REMINDER_CALENDAR` | `on` | Also drop a short event on the operator's OWN calendar when a reminder is set (issue #66): the operator's verdict on ntfy alone was "too soft among all the other notifications", and a calendar aler… |
 | `ATTICUS_REMINDER_EVENT_MINUTES` | `15` | Length of that event: a block to act on, not a meeting. |
 | `ATTICUS_REMINDER_MAX_DAYS` | `365` | Refuse a due date further out than this. It catches a misparsed year, which would otherwise be stored as a reminder that simply never fires, leaving a line in a JSONL file as the only evidence. 0 r… |
@@ -138,4 +142,4 @@ copies.
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*127 settings.*
+*131 settings.*

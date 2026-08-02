@@ -42,6 +42,7 @@ sys.path.insert(0, str(REPO / "processor"))
 
 from config import Config          # noqa: E402
 from lock import AlreadyRunning, single_instance   # noqa: E402
+import notify as nf                                # noqa: E402
 from notify import clear as alarm_clear, notify   # noqa: E402
 from redact import redact                         # noqa: E402
 from vault import (                                          # noqa: E402
@@ -192,6 +193,32 @@ def append_seen(vault: Path, rec_id: str, stem: str):
 
 # ---------------------------------------------------------------------------
 
+def _failure_streak(kind: str, bump: bool = True) -> int:
+    """How many consecutive passes have failed this way.
+
+    Escalation to the strong channel is gated on persistence (#91), and a
+    15-minute timer has no memory between runs, so the count lives in a small
+    file beside the alarm stamps. Cleared by `_clear_streak` on any good pass.
+    """
+    p = nf.STATE / f"streak-{kind}"
+    try:
+        n = int(p.read_text().strip() or 0)
+    except (OSError, ValueError):
+        n = 0
+    if bump:
+        n += 1
+        try:
+            nf.STATE.mkdir(parents=True, exist_ok=True)
+            p.write_text(str(n))
+        except OSError:
+            pass
+    return n
+
+
+def _clear_streak(kind: str):
+    (nf.STATE / f"streak-{kind}").unlink(missing_ok=True)
+
+
 def _alarm_dead_session(cfg, err, log):
     """The one failure that must never be quiet.
 
@@ -199,20 +226,54 @@ def _alarm_dead_session(cfg, err, log):
     both are "0 new recordings" forever. Recordings keep piling up in Plaud
     Cloud meanwhile, so the cost of not noticing is unbounded.
 
-    Throttled, because the timer rediscovers this every tick.
+    CRITICAL severity: throttled on ntfy as before, and escalated to a calendar
+    alert once it has persisted (#91). #77 is why — this class of failure ran
+    for 2 days 6 hours while alarming into a channel the operator could not
+    hear.
     """
-    sent = notify(
+    streak = _failure_streak("plaud-auth")
+    res = nf.alarm(
         cfg,
         f"Atticus ingest: the Plaud session on {host_id()} is dead — no "
-        f"recordings are being pulled.\n\n{err}\n\n"
+        f"recordings are being pulled ({streak} consecutive passes).\n\n{err}\n\n"
         f"Re-seed it:  plaud_web.py login",
-        log=log, key="plaud-auth", title="Atticus ingest — session dead",
-    )
+        severity=nf.CRITICAL, key="plaud-auth", streak=streak,
+        title="Atticus ingest — session dead", log=log)
     if not cfg.notify_url:
         log("  ! ATTICUS_NOTIFY_URL is unset — this failure alarms nowhere. "
             "Set it; a dead session is otherwise silent.")
-    elif sent:
-        log("  ! alarm sent")
+    elif res["ntfy"] or res["calendar"]:
+        log(f"  ! alarm sent (ntfy={res['ntfy']} calendar={res['calendar']})")
+
+
+def _alarm_upstream_changed(cfg, err, log):
+    """The failure that WAS silent, and cost 2 days 6 hours (#77).
+
+    `plaud_web.py list` returning "upstream changed" is exactly as fatal as a
+    dead session: no recordings are pulled, and audio accumulates in a cloud
+    account. It printed to stderr and returned EXIT_PARTIAL with no alarm at
+    all — so from 2026-07-29 15:15 to 2026-08-01 21:35 the timer failed every
+    15 minutes, roughly 215 times, and nothing said so. It surfaced only
+    because a spoken command never arrived while somebody was watching.
+
+    Nothing was lost that time; the ledger and the poll window covered it. A
+    recording made in the first six hours of the outage would have fallen out
+    of PLAUD_POLL_DAYS permanently.
+    """
+    streak = _failure_streak("plaud-upstream")
+    res = nf.alarm(
+        cfg,
+        f"Atticus ingest: Plaud's API is answering in a shape the fetcher does "
+        f"not understand, so NO recordings are being pulled "
+        f"({streak} consecutive passes).\n\n{err}\n\n"
+        f"Usually an auth change. Try `plaud_web.py list --days 1` by hand; if "
+        f"it fails the same way, the fetcher needs recon (T-06).",
+        severity=nf.CRITICAL, key="plaud-upstream", streak=streak,
+        title="Atticus ingest — upstream changed", log=log)
+    if not cfg.notify_url:
+        log("  ! ATTICUS_NOTIFY_URL is unset — this failure alarms nowhere.")
+    elif res["ntfy"] or res["calendar"]:
+        log(f"  ! alarm sent (ntfy={res['ntfy']} calendar={res['calendar']})")
 
 
 def _sweep_dirty(git, log, cfg):
@@ -469,14 +530,23 @@ def main():
             _alarm_dead_session(cfg, e, log)
             return EXIT_AUTH
         if e.code == F_CHANGED:
+            # #77: this branch used to print and return with NO alarm, which is
+            # how a 2d6h outage stayed silent. It is as fatal as a dead session.
             print(f"UPSTREAM CHANGED — re-run recon: {e}", file=sys.stderr)
+            _alarm_upstream_changed(cfg, e, log)
             return EXIT_PARTIAL
         print(f"fetcher error: {e}", file=sys.stderr)
         return EXIT_PARTIAL
 
     # The session answered, so any standing auth alarm is stale. Clearing it
     # means the *next* failure alarms at once instead of waiting out the window.
+    # The failure STREAKS clear with it (#91): a condition that broke, recovered
+    # and broke again must start counting from one, or a flapping session never
+    # reaches the escalation threshold and never earns the strong channel.
     alarm_clear("plaud-auth")
+    alarm_clear("plaud-upstream")
+    _clear_streak("plaud-auth")
+    _clear_streak("plaud-upstream")
 
     seen = load_seen(vault)
     fresh = [r for r in recs if r["id"] not in seen]
