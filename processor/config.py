@@ -259,6 +259,25 @@ class Config:
         # actions. 0 removes the cap.
         self.outbox_max_actions = int(g("ATTICUS_OUTBOX_MAX_ACTIONS", "5") or 0)
 
+        # ---- the approval queue (issue #83) ---------------------------------
+        # Where a DECISION comes back from. Deliberately a second ntfy topic
+        # and not an endpoint on this host: approving must not be reachable
+        # from the sandbox, which shares the host network namespace and could
+        # otherwise scrape the vault-API token out of a published page and
+        # approve its own held actions. The agent's env allowlist excludes
+        # every ATTICUS_* URL, so it cannot even discover this topic.
+        #
+        # BLANK KEEPS THE OLD BEHAVIOUR: `confirm` means held forever, nothing
+        # is queued, and no approval push is sent. That is the right default —
+        # a queue nobody configured must not start accepting decisions from a
+        # topic nobody chose.
+        self.approval_topic_url = (g("ATTICUS_APPROVAL_TOPIC_URL", "") or "").strip()
+        self.approvals_enabled = bool(self.approval_topic_url)
+        # How long a held action waits. Approving a three-day-old "post to
+        # Slack" is rarely right, and an expired item is reported rather than
+        # dropped — the operator believes it is still waiting.
+        self.approval_ttl_hours = float(g("ATTICUS_APPROVAL_TTL_HOURS", "24") or 24)
+
         # ---- GitHub, through `gh` (issue #50) --------------------------------
         #
         # WHICH REPOSITORIES A SPOKEN SENTENCE MAY FILE INTO. This list is the

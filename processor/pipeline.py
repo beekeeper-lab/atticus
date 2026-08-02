@@ -30,6 +30,7 @@ from lock import AlreadyRunning, single_instance             # noqa: E402
 import execute as ex                                         # noqa: E402
 import audio_on_demand                                       # noqa: E402
 import handlers            # noqa: E402,F401  (registers outbox handlers)
+import approval_drain                                       # noqa: E402
 import outbox                                                # noqa: E402
 import podcast as pod                                        # noqa: E402
 import transcribe as stt                                     # noqa: E402
@@ -790,6 +791,20 @@ def main():
             raise
         except Exception as e:                      # noqa: BLE001
             log.warn(f"audio request queue failed: {type(e).__name__}: {e}")
+
+    # Approvals run on EVERY pass, before the "nothing to do" exit (#83). A
+    # decision tapped on a phone while the queue was empty must still be
+    # collected and performed — the common case is precisely that no new
+    # recording has arrived since the action was held.
+    if not args.dry_run and getattr(cfg, "approvals_enabled", False):
+        try:
+            res = approval_drain.run(cfg, log=log.info)
+            if any(res.values()):
+                log.info(f"approvals: {res['decided']} decided, "
+                         f"{res['performed']} performed, {res['expired']} expired"
+                         + (f", {res['failed']} failed" if res.get("failed") else ""))
+        except Exception as e:                      # noqa: BLE001
+            log.warn(f"approval drain failed: {type(e).__name__}: {e}")
 
     if not todo:
         log.info("nothing to do")
