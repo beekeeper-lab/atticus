@@ -337,6 +337,38 @@ def alarm(cfg, text: str, *, severity: str = ALERT, key: str | None = None,
     return out
 
 
+def notify_with_actions(cfg, text: str, *, title: str, tags: str,
+                        priority: str, actions: str = "", log=None) -> bool:
+    """A push carrying ntfy action buttons — the approval ask (#83).
+
+    Separate from `notify()` rather than another keyword on it, because the
+    `Actions` header is the one thing here that is genuinely ntfy-specific.
+    Every other header degrades harmlessly on a generic endpoint; an action
+    button is a contract with one service, and hiding that inside the generic
+    sender would make `notify()` quietly less portable than it claims to be.
+    """
+    say = log or (lambda m: None)
+    url = getattr(cfg, "notify_url", None)
+    if not url:
+        return False
+    if not str(url).lower().startswith(("http://", "https://")):
+        say(f"refusing to notify: {str(url)[:32]!r} is not http(s)")
+        return False
+    headers = {"Title": _ascii(title), "Priority": priority, "Tags": _ascii(tags)}
+    if actions:
+        headers["Actions"] = _ascii(actions)
+    try:
+        import urllib.request
+        req = urllib.request.Request(  # noqa: S310 — scheme checked above
+            url, data=text.encode(), method="POST", headers=headers)
+        with urllib.request.urlopen(req, timeout=10):  # noqa: S310
+            pass
+    except Exception as e:                                       # noqa: BLE001
+        say(f"notification failed: {type(e).__name__}: {e}")
+        return False
+    return True
+
+
 def calendar_escalate(cfg, *, subject: str, body: str, log=None) -> dict:
     """Indirection so tests can replace the channel without a Graph mock, and
     so notify.py does not import the handler graph at module scope."""

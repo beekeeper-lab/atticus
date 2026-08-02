@@ -242,16 +242,52 @@ def process(outdir: Path, cfg, *, log=print, stem: str = "") -> dict:
         rec["risk"] = h["risk"]
         decision = gate(cfg, h["risk"], str(req.get("verb") or ""))
         if decision != "auto":
-            # "confirm" and "off" both mean *not now*. Nobody is present to
-            # approve during an unattended pass, so this records the intent and
-            # stops. It is not a failure and must not read as one.
-            rec.update(status="held", reason=(
-                "ATTICUS_OUTBOX=off — intent recorded, nothing performed"
-                if decision == "off" else
-                f"{h['risk']} actions need confirmation. Open this class with "
-                f"ATTICUS_OUTBOX_{h['risk'].upper()}=auto, or just this verb with "
-                f"ATTICUS_OUTBOX_VERB_"
-                f"{str(req.get('verb') or '').upper().replace('.', '_')}=auto"))
+            # "confirm" and "off" both mean *not now*, and they now diverge in
+            # what happens next.
+            #
+            # OFF stays exactly as it was: intent recorded, nothing performed,
+            # no queue. Off must mean off — turning it into a queue would make
+            # the global stop into a global "later", which is not what anyone
+            # reaching for it wants.
+            #
+            # CONFIRM enqueues for approval (#83). It used to mean *held
+            # forever*: nothing could ever approve it, so the middle setting was
+            # `off` with better paperwork, and the only way to make a verb work
+            # was to open it to `auto`. That pushed every enabled verb to auto —
+            # an incentive to over-grant, which per-verb gates existed to stop.
+            queued = None
+            if decision == "confirm" and getattr(cfg, "approvals_enabled", False):
+                # Imported HERE, not at module scope: approval_drain imports
+                # this module to reach validate() and the handler table, and a
+                # cycle that happens to work today is a cycle that breaks the
+                # first time somebody reorders an import.
+                import approval_drain
+                import approvals
+                try:
+                    queued = approvals.enqueue(
+                        cfg.vault, req, risk=h["risk"], summary=rec["summary"],
+                        stem=stem, outdir=outdir,
+                        ttl_hours=float(getattr(cfg, "approval_ttl_hours", 24)))
+                except Exception as e:                           # noqa: BLE001
+                    # A queue that cannot be written must not lose the action's
+                    # receipt — the operator still needs to know it was asked for.
+                    log(f"    ! could not queue for approval: {type(e).__name__}: {e}")
+
+            if queued and not queued.get("duplicate"):
+                approval_drain.announce(cfg, queued, log=log)
+            if queued:
+                rec.update(status="held", approval_id=queued["id"],
+                           expires_at=queued.get("expires_at"),
+                           reason=(f"awaiting approval — decide from the push, or "
+                                   f"`atticus approvals --approve {queued['id']}`"))
+            else:
+                rec.update(status="held", reason=(
+                    "ATTICUS_OUTBOX=off — intent recorded, nothing performed"
+                    if decision == "off" else
+                    f"{h['risk']} actions need confirmation. Open this class with "
+                    f"ATTICUS_OUTBOX_{h['risk'].upper()}=auto, or just this verb with "
+                    f"ATTICUS_OUTBOX_VERB_"
+                    f"{str(req.get('verb') or '').upper().replace('.', '_')}=auto"))
             log(f"    ⧗ held: {rec['summary']} — {rec['reason']}")
             receipts.append(rec)
             refused += 1

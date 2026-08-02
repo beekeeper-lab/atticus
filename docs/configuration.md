@@ -24,6 +24,8 @@ copies.
 | `ATTICUS_ALARM_THROTTLE_HOURS` | `6` | One alarm per condition per this many hours. The ingest timer rediscovers a dead session every 15 minutes; alarming each time is how you learn to ignore the alarm. |
 | `ATTICUS_ALLOWED_TOOLS` | `WebSearch,WebFetch,Read,Write,Edit,Glob,Grep,Bash` | Tools the agent may use, comma-separated. WebSearch/WebFetch are granted deliberately. Denying them bought NO security: the sandbox leaves the network namespace intact because research needs it, an… |
 | `ATTICUS_API_BUDGET_USD` | *(empty)* | SUPERSEDED — leave blank. Setting it does nothing except print a warning at startup. It was one pot for transcription AND text-to-speech, which is exactly the bug the two budgets above fix: audio s… |
+| `ATTICUS_APPROVAL_TOPIC_URL` | *(empty)* | ── the approval queue (issue #83) ─────────────────────────────────── Where a DECISION comes back from. A SECOND ntfy topic, not an endpoint on this host, and that is the security design rather tha… |
+| `ATTICUS_APPROVAL_TTL_HOURS` | `24` | How long a held action waits before it expires. Approving a three-day-old "post to Slack" is rarely right. Expired items are REPORTED, never dropped: the operator believes they are still waiting. |
 | `ATTICUS_AUDIO_RETENTION_DAYS` | `30` | Expire raw audio after this many days. 0 = keep forever. Transcripts and agent output are NEVER expired — only the audio. The vault contains recordings of other people who did not consent to perman… |
 | `ATTICUS_BACKLOG_ALARM_MINUTES` | `60` | Warn if a recording sits in inbox/ unprocessed longer than this. The queue's benefit — the processor may be offline, work waits — is also its failure mode: a dead processor looks exactly like an id… |
 | `ATTICUS_BRIEF_AUDIO` | `false` | Voice the briefing too? OFF by default, deliberately. Everywhere else audio is generated only when ASKED for — a spoken request says "and make me a podcast". The briefing has nobody to ask, so defa… |
@@ -142,4 +144,4 @@ copies.
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*131 settings.*
+*133 settings.*
