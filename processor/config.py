@@ -259,6 +259,27 @@ class Config:
         # actions. 0 removes the cap.
         self.outbox_max_actions = int(g("ATTICUS_OUTBOX_MAX_ACTIONS", "5") or 0)
 
+        # ---- meeting mode (issue #86, ADR-008) ------------------------------
+        # OFF, and turning it on is an explicit act rather than a preference.
+        # This is the only feature here whose input is OTHER PEOPLE — a meeting
+        # contains voices that never agreed to be transcribed by an AI, filed
+        # in a git repository, or summarised by an autonomous agent. ADR-008 is
+        # Proposed until the operator decides they have the standing to record
+        # the meetings they would use it for, and will announce it every time.
+        self.meeting_mode = (g("ATTICUS_MEETING_MODE", "off") or "off").strip().lower()
+        # ADR-008 §2. False means meeting audio is DELETED the moment the
+        # transcript is durable, never committed. Retention would not do:
+        # ops/retention.py removes audio from the working tree and git history
+        # keeps it, which is filing rather than expiry. Setting this true
+        # deliberately breaks the condition the feature was built under.
+        self.meeting_keep_audio = (g("ATTICUS_MEETING_KEEP_AUDIO", "false")
+                                   or "false").strip().lower()
+        # A real meeting yields more action items than the ordinary fan-out cap
+        # allows, and silently dropping the sixth is exactly the quiet failure
+        # this project treats as the worst kind. Applies ONLY to meeting-mode
+        # recordings; every other recording keeps ATTICUS_OUTBOX_MAX_ACTIONS.
+        self.meeting_max_actions = int(g("ATTICUS_MEETING_MAX_ACTIONS", "20") or 20)
+
         # ---- named projects (issue #84) -------------------------------------
         # How much of a project's brief.md reaches the agent's prompt. Bounded
         # like everything else that enters a prompt: long enough for real

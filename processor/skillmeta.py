@@ -102,6 +102,13 @@ def missing_requirements(meta: dict, cfg) -> list[str]:
         val = getattr(cfg, attr, None)
         if val is None or val == "" or val == [] or val == {}:
             missing.append(env)
+        # A SWITCH set to off counts as unset. Meeting mode ships "off"
+        # (ADR-008), and a non-empty string that means "no" would otherwise
+        # read as configured and offer the agent a capability the operator
+        # deliberately declined.
+        elif isinstance(val, str) and val.strip().lower() in (
+                "off", "false", "no", "0"):
+            missing.append(env)
     return missing
 
 

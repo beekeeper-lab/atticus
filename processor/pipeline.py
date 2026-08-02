@@ -231,6 +231,10 @@ def _alarm_one_budget(cfg, log, category):
         log.warn(f"  ! budget threshold check failed: {type(e).__name__}: {e}")
 
 
+def _truthy(v) -> bool:
+    return str(v).strip().lower() in ("1", "on", "true", "yes")
+
+
 def stage_transcribe(rec, cfg, log):
     log.info(f"  transcribe: {rec.audio.name}")
 
@@ -279,6 +283,23 @@ def stage_transcribe(rec, cfg, log):
         with stt.bounded_audio(rec.audio, cfg, rec.data.get("duration_seconds"),
                                log=log.info) as (upload, trunc):
             text = stt.transcribe(upload, cfg)
+
+        # MEETING MODE (#86, ADR-008). The trigger can only be found by
+        # transcribing, and chunking has to be decided before transcribing —
+        # so the cheap bounded pass runs first and, if it opened with "meeting
+        # mode", the whole recording is transcribed properly. The first 180s
+        # are paid for twice, which is about $0.018: cheaper than any scheme
+        # that avoids it, and far cheaper than getting it wrong.
+        if (stt.is_meeting(text, cfg) and duration
+                and duration > getattr(cfg, "max_command_seconds", 180)):
+            log.info(f"    meeting mode: re-transcribing all "
+                     f"{duration:.0f}s (ADR-008)")
+            text, trunc = stt.transcribe_long(rec.audio, cfg, duration,
+                                              log=log.info)
+            rec.data["meeting"] = True
+        elif stt.is_meeting(text, cfg):
+            # Short enough that the bounded pass already covered it.
+            rec.data["meeting"] = True
     # Real money, so record it before anything else can fail. `transcribed` is
     # what we actually sent to the API — the truncated length, not the
     # recording's full length, which is the whole point of truncating.
@@ -293,6 +314,31 @@ def stage_transcribe(rec, cfg, log):
     _alarm_budget_thresholds(cfg, log)
 
     write_atomic(rec.transcript_path(cfg.vault), text + "\n")
+
+    # ADR-008 §2: MEETING AUDIO IS NEVER COMMITTED. Deleted here, the moment the
+    # transcript is durable — not expired after 30 days like the operator's own
+    # audio, because `ops/retention.py` removes audio from the WORKING TREE and
+    # git history keeps it forever. That story is already weaker than it sounds
+    # for the operator's own voice; for a third party who never agreed to any of
+    # this it would be indefensible: a permanent, searchable recording of
+    # someone else's speech in a repository they cannot see and cannot ask to be
+    # removed from without a history rewrite the README forbids.
+    #
+    # So meeting audio never enters the retention system at all. The transcript
+    # stays — that is the deliberate line, and the reason the feature exists.
+    if rec.data.get("meeting") and not _truthy(getattr(cfg, "meeting_keep_audio", False)):
+        try:
+            size = rec.audio.stat().st_size
+            rec.audio.unlink()
+            rec.data["meeting_audio_deleted"] = True
+            log.info(f"    meeting: deleted {size:,} bytes of audio before commit "
+                     f"(ADR-008 — the transcript is the record)")
+        except OSError as e:
+            # Loud, because the whole condition of the feature is that this
+            # works. A meeting whose audio survived must be visible, not quiet.
+            log.warn(f"    ! MEETING AUDIO NOT DELETED: {type(e).__name__}: {e}")
+            rec.data["meeting_audio_deleted"] = False
+
     words = len(text.split())
     log.info(f"    {words} words: {text[:90]}{'…' if len(text) > 90 else ''}")
     rec.advance(TRANSCRIBED, word_count=words, **trunc,
@@ -610,8 +656,10 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
             # costing it.
             if not dry_run:
                 try:
-                    ob = outbox.process(rec.outdir(cfg.vault), cfg,
-                                        log=log.info, stem=rec.stem)
+                    ob = outbox.process(
+                        rec.outdir(cfg.vault), cfg, log=log.info, stem=rec.stem,
+                        max_actions=(int(getattr(cfg, "meeting_max_actions", 20))
+                                     if rec.data.get("meeting") else None))
                     if ob["requests"]:
                         rec.data["outbox"] = {k: v for k, v in ob.items()
                                               if k != "receipts"}

@@ -199,7 +199,8 @@ def _primary_html(outdir: Path) -> Path | None:
     return max(htmls, key=lambda p: p.stat().st_size)
 
 
-def process(outdir: Path, cfg, *, log=print, stem: str = "") -> dict:
+def process(outdir: Path, cfg, *, log=print, stem: str = "",
+            max_actions: int | None = None) -> dict:
     """Perform every request in an outbox. Never raises.
 
     Returns a summary and writes `outbox-receipt.json` beside the deliverable, so
@@ -215,7 +216,12 @@ def process(outdir: Path, cfg, *, log=print, stem: str = "") -> dict:
         # idempotency keys from it (todo.add) rely on that.
         req["_stem"] = stem
 
-    cap = int(getattr(cfg, "outbox_max_actions", 5) or 0)
+    # The fan-out bound. Overridable per record because a meeting genuinely
+    # produces more action items than a spoken command ever does (#86), and the
+    # alternative — silently dropping the sixth — is the quiet failure this
+    # project treats as the worst kind.
+    cap = int(max_actions if max_actions is not None
+              else (getattr(cfg, "outbox_max_actions", 5) or 0))
     receipts = []
     done = refused = failed = 0
 
