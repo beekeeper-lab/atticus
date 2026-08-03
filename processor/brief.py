@@ -39,7 +39,9 @@ from vault import OWNED_BRIEF, Git   # noqa: E402
 
 SLUG = "ai-brief"
 LEDGER = ".state/brief-covered.jsonl"
-TAG = "AI brief"
+# Lowercase on purpose: the vault browser's typed tags are folded to lowercase
+# by clean_tag, so a cased tag here renders as a second chip beside its typed twin.
+TAG = "ai brief"
 
 # How much history the agent is shown. Long enough that a story recurring after a
 # week is recognised as an update; short enough that the prompt does not become
