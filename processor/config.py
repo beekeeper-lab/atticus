@@ -469,7 +469,7 @@ class Config:
         self.contacts_git_max_commits = int(g("ATTICUS_CONTACTS_GIT_MAX_COMMITS", "2000"))
         self.contacts_cache_path = g("ATTICUS_CONTACTS_CACHE_PATH", "")
 
-        # Daily AI briefing. Extra tags to file it under, beyond "AI brief"
+        # Daily AI briefing. Extra tags to file it under, beyond "ai brief"
         # which brief.py always applies. Comma-separated; empty is fine.
         self.brief_tags = [t.strip() for t in
                            (g("ATTICUS_BRIEF_TAGS", "") or "").split(",")
