@@ -135,6 +135,11 @@ def perform(cfg, item: dict, *, log=print) -> dict:
     req = dict(item.get("request") or {})
     req["_file"] = f"approval:{item['id']}"
     req["_stem"] = item.get("stem") or ""
+    # enqueue() recorded the deliverable's directory; put it back the same way as
+    # _file and _stem. Without this a verb that writes beside the report — the
+    # approval may be tapped hours later, in a different pass — would resolve its
+    # output relative to nothing and refuse.
+    req["_outdir"] = item.get("outdir") or ""
     try:
         h = outbox.validate(req)
     except outbox.OutboxError as e:

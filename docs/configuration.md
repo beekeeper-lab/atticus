@@ -68,6 +68,10 @@ copies.
 | `ATTICUS_GIT_AUTHOR_NAME` | `Atticus Processor` | Git identity for automated commits. Distinguish the hosts so the vault history shows which side of the pipeline made each commit. ingest    → "Atticus Ingest" processor → "Atticus Processor" When b… |
 | `ATTICUS_GLOBAL_SKILLS` | `html-artifact-output,dataviz` | Which of the operator's GLOBAL (~/.claude/skills) skills the agent may see. Binding the whole directory handed it an inventory of unrelated infrastructure — M365 addresses, ntfy topics, provider co… |
 | `ATTICUS_HOST` | *(empty)* | Overrides the hostname used to name this host's dedupe ledger (.state/seen-<host>.jsonl) and to identify it in alarms. Blank = the real hostname, which is almost always what you want. Set it only i… |
+| `ATTICUS_IMAGES` | `off` | ── illustrations ──────────────────────────────────────────────────── OFF, like meeting mode and for a related reason: image.generate is the only verb that SPENDS MONEY, on a provider ATTICUS_MAX_B… |
+| `ATTICUS_IMAGE_GENERATOR` | `gemini-3-pro-image-preview` | One provider for the life of a project — the image skill's own style consistency rule. `openai-*` uses OPENAI_API_KEY, anything else GEMINI_API_KEY; both are read from ~/.config/ai/env, never from … |
+| `ATTICUS_IMAGE_MAX_PER_RECORD` | `4` | Images one recording may produce, enforced by the handler REGARDLESS of the approval gate. ATTICUS_OUTBOX_TRACKED=auto is a reasonable thing to set so GitHub issues flow unattended, and it must not… |
+| `ATTICUS_IMAGE_TIMEOUT` | `300` | Per-image wall clock, seconds. One provider call plus the skill's 429 backoff. |
 | `ATTICUS_LIFECYCLE_WITHIN_DAYS` | `7` | How far back a spoken "cancel that" / "what happened to..." can reach, in days (issue #82). Bounded deliberately: a wider window makes ambiguity certain, and the pipeline refuses rather than guessi… |
 | `ATTICUS_LOCAL_TZ` | *(empty)* | ── reminders (issue #52) ───────────────────────────────────────────── "Atticus, remind me at four to call the bank." A reminder is a DELIVERY AT A TIME, which is a different thing from a todo: a t… |
 | `ATTICUS_LOG_LEVEL` | `INFO` | DEBUG \| INFO \| WARNING \| ERROR |
@@ -138,6 +142,7 @@ copies.
 | `ATTICUS_TTS_URL` | `https://api.openai.com/v1/audio/speech` | OpenAI path, retained as a fallback (ATTICUS_TTS_PROVIDER=openai). |
 | `ATTICUS_TTS_VOICE_A` | `onyx` | Two clearly distinct voices, or the format fails: with similar hosts the listener cannot tell who is asking from who is answering. OpenAI voices: alloy, ash, ballad, coral, echo, fable, onyx, nova,… |
 | `ATTICUS_TTS_VOICE_B` | `nova` |  |
+| `ATTICUS_UV_BIN` | `uv` | `uv` runs the image skill with google-genai and openai. Set an absolute path if it is not on the processor unit's PATH. |
 | `ATTICUS_VAULT_PATH` | `<repo>/.scratch-vault` | Absolute path to the atticus-vault checkout on THIS host. Each host has its own clone; the paths need not match. |
 | `ATTICUS_WAKE_ADJUDICATOR` | `on` | Probabilistic wake-word recovery. When the strict gate fails, ask a small model whether the first word could be a MISHEARING of the wake phrase. Phonetics only, one word in, one token out, and it f… |
 | `ATTICUS_WAKE_ADJUDICATOR_MODEL` | `gpt-4o-mini` |  |
@@ -149,4 +154,4 @@ copies.
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*138 settings.*
+*143 settings.*

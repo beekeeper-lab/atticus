@@ -215,6 +215,11 @@ def process(outdir: Path, cfg, *, log=print, stem: str = "",
         # request cannot claim to be another recording — handlers that derive
         # idempotency keys from it (todo.add) rely on that.
         req["_stem"] = stem
+        # Where that recording's deliverable lives. Same rule: pipeline-supplied,
+        # so a request cannot name a directory of its own. image.generate writes
+        # a file the report already references, and it must land beside that
+        # report rather than anywhere the request asks for.
+        req["_outdir"] = str(outdir)
 
     # The fan-out bound. Overridable per record because a meeting genuinely
     # produces more action items than a spoken command ever does (#86), and the

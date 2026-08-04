@@ -307,3 +307,62 @@ def test_expired_items_produce_one_grouped_alert(acfg, sent, monkeypatch, tmp_pa
     res = drain.run(acfg, log=lambda *_: None)
     assert res["expired"] == 3
     assert len([p for p in sent["pushes"] if "expired" in p["text"]]) == 1
+
+
+# ── the drain must persist what it performed ────────────────────────────────
+
+def test_a_performed_approval_is_committed_in_the_same_pass(acfg, monkeypatch):
+    """The gap this closes: `approval_drain.run()` writes the ledger and may
+    write the vault (image.generate puts a PNG beside its report), and the very
+    next branch in main() is `if not todo: return 0`. An approval is usually
+    tapped when no new recording has arrived — which is exactly the pass that
+    would otherwise commit nothing and leave the deliverable unpushed."""
+    import pipeline
+    commits = []
+
+    class FakeGit:
+        def commit_push(self, msg):
+            commits.append(msg)
+            return True
+
+    monkeypatch.setattr(pipeline.approval_drain, "run",
+                        lambda cfg, log=print: {"decided": 1, "performed": 1,
+                                                "expired": 0, "failed": 0})
+    pipeline.drain_approvals(acfg, FakeGit(), _Log())
+    assert commits and "1 performed" in commits[0]
+
+
+def test_a_quiet_drain_does_not_make_an_empty_commit(acfg, monkeypatch):
+    import pipeline
+    commits = []
+
+    class FakeGit:
+        def commit_push(self, msg):
+            commits.append(msg)
+            return True
+
+    monkeypatch.setattr(pipeline.approval_drain, "run",
+                        lambda cfg, log=print: {"decided": 0, "performed": 0,
+                                                "expired": 0, "failed": 0})
+    pipeline.drain_approvals(acfg, FakeGit(), _Log())
+    assert commits == []
+
+
+def test_a_drain_that_raises_does_not_cost_the_pass_its_records(acfg, monkeypatch):
+    import pipeline
+
+    class FakeGit:
+        def commit_push(self, msg):
+            return True
+
+    def boom(cfg, log=print):
+        raise RuntimeError("ntfy unreachable")
+
+    monkeypatch.setattr(pipeline.approval_drain, "run", boom)
+    res = pipeline.drain_approvals(acfg, FakeGit(), _Log())
+    assert res["performed"] == 0
+
+
+class _Log:
+    def info(self, m): pass
+    def warn(self, m): pass

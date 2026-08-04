@@ -748,6 +748,46 @@ def process(rec, cfg, git, log, dry_run=False) -> bool:
     return False
 
 
+def drain_approvals(cfg, git, log) -> dict:
+    """Collect decisions, perform what was approved, and COMMIT the result.
+
+    The commit is the part worth naming. `approval_drain.run()` writes the
+    approvals ledger, and a performed action may write the vault itself —
+    `image.generate` puts a PNG beside the report it illustrates, and that file
+    is the deliverable, not a side effect.
+
+    Nothing else in the pass will necessarily commit it. The caller's very next
+    branch is `if not todo: return 0`, and the comment above the call says why
+    that is the *common* case: an approval is usually tapped when no new
+    recording has arrived. Without a commit here the work sits in the working
+    tree, unpushed and unpublished, until some later pass with an unrelated
+    reason to commit sweeps it up — and in the meantime the other host's
+    `pull --rebase` has a dirty tree to contend with.
+
+    Never raises: an approval that cannot be drained must not cost the pass the
+    records it was going to process.
+    """
+    try:
+        res = approval_drain.run(cfg, log=log.info)
+    except Exception as e:                          # noqa: BLE001
+        log.warn(f"approval drain failed: {type(e).__name__}: {e}")
+        return {"decided": 0, "performed": 0, "expired": 0, "failed": 0}
+    if any(res.values()):
+        log.info(f"approvals: {res['decided']} decided, "
+                 f"{res['performed']} performed, {res['expired']} expired"
+                 + (f", {res['failed']} failed" if res.get("failed") else ""))
+        try:
+            git.commit_push(f"approvals: {res['performed']} performed, "
+                            f"{res['decided']} decided")
+        except VaultSyncError:
+            # Same contract as every other commit in this file: a vault that
+            # cannot be reached is fatal to the pass, not silently swallowed.
+            raise
+        except Exception as e:                      # noqa: BLE001
+            log.warn(f"could not commit approvals: {type(e).__name__}: {e}")
+    return res
+
+
 # ---------------------------------------------------------------------------
 
 def cmd_status(cfg, log):
@@ -914,14 +954,7 @@ def main():
     # collected and performed — the common case is precisely that no new
     # recording has arrived since the action was held.
     if not args.dry_run and getattr(cfg, "approvals_enabled", False):
-        try:
-            res = approval_drain.run(cfg, log=log.info)
-            if any(res.values()):
-                log.info(f"approvals: {res['decided']} decided, "
-                         f"{res['performed']} performed, {res['expired']} expired"
-                         + (f", {res['failed']} failed" if res.get("failed") else ""))
-        except Exception as e:                      # noqa: BLE001
-            log.warn(f"approval drain failed: {type(e).__name__}: {e}")
+        drain_approvals(cfg, git, log)
 
     if not todo:
         log.info("nothing to do")
