@@ -270,6 +270,64 @@ def test_a_run_that_produces_no_file_fails_even_on_exit_zero(icfg, outdir,
         image.generate(req(outdir), icfg)
 
 
+def test_a_generated_image_lands_in_the_usage_ledger_as_real_money(icfg, outdir,
+                                                                   monkeypatch):
+    """The cost page totals `api` billing across the vault. A spend recorded only
+    in this record's outbox receipt is a spend nobody reconciles."""
+    import usage
+    if not image.SCRIPT.is_file():
+        pytest.skip("skill not installed")
+
+    def fake_run(*a, **k):
+        (outdir / "images/cover.png").write_bytes(b"\x89PNG" + b"0" * 64)
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(image.subprocess, "run", fake_run)
+    icfg._gemini_key = "AIzatest"
+    out = image.generate(req(outdir), icfg)
+    assert out["cost_usd"] == image.IMAGE_COST_USD
+
+    rows = usage.load(icfg.vault)
+    mine = [r for r in rows if r.get("kind") == "image"]
+    assert len(mine) == 1, rows
+    assert mine[0]["billing"] == usage.API
+    assert mine[0]["usd"] == image.IMAGE_COST_USD
+    assert mine[0]["stem"] == "rec"
+    assert mine[0]["file"] == "images/cover.png"
+
+
+def test_a_refused_image_is_never_recorded_as_a_charge(icfg, outdir, monkeypatch):
+    """A generation that produced no file is not a bill."""
+    import usage
+    if not image.SCRIPT.is_file():
+        pytest.skip("skill not installed")
+    monkeypatch.setattr(image.subprocess, "run",
+                        lambda *a, **k: types.SimpleNamespace(
+                            returncode=0, stdout="ERROR: safety filter", stderr=""))
+    icfg._gemini_key = "AIzatest"
+    with pytest.raises(outbox.OutboxError):
+        image.generate(req(outdir), icfg)
+    assert [r for r in usage.load(icfg.vault) if r.get("kind") == "image"] == []
+
+
+def test_a_broken_ledger_does_not_cost_the_image(icfg, outdir, monkeypatch):
+    """Accounting must never fail the thing the operator already paid for."""
+    if not image.SCRIPT.is_file():
+        pytest.skip("skill not installed")
+
+    def fake_run(*a, **k):
+        (outdir / "images/cover.png").write_bytes(b"\x89PNG" + b"0" * 64)
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    import usage
+    monkeypatch.setattr(image.subprocess, "run", fake_run)
+    monkeypatch.setattr(usage, "record",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("disk full")))
+    icfg._gemini_key = "AIzatest"
+    out = image.generate(req(outdir), icfg)
+    assert out["file"] == "images/cover.png"
+
+
 def test_the_plan_file_is_cleaned_up_even_when_generation_fails(icfg, outdir,
                                                                 monkeypatch):
     if not image.SCRIPT.is_file():

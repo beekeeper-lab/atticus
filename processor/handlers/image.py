@@ -255,5 +255,20 @@ def generate(req: dict, cfg, log=print) -> dict:
                           + (f": {' / '.join(tail)}" if tail else ""))
 
     size = target.stat().st_size
+    # Real money, so it belongs in the usage ledger beside transcription and TTS
+    # — not only in this record's outbox receipt. The cost page totals `api`
+    # billing across the vault, and a spend it cannot see is a spend nobody
+    # reconciles. Recorded AFTER the file exists: a refused or failed generation
+    # is not a charge.
+    try:
+        import usage
+        usage.record(cfg.vault, kind="image", billing=usage.API,
+                     stem=str(req.get("_stem") or ""),
+                     model=str(getattr(cfg, "image_generator", "") or ""),
+                     usd=IMAGE_COST_USD, log=log,
+                     file=rel, bytes=size, estimated=True)
+    except Exception as e:                                       # noqa: BLE001
+        # Accounting must never cost the operator the image they just paid for.
+        log(f"    ! could not record image usage: {type(e).__name__}: {e}")
     log(f"    ✓ {rel} ({size} bytes)")
     return {"file": rel, "bytes": size, "cost_usd": IMAGE_COST_USD}
