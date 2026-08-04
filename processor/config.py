@@ -609,9 +609,16 @@ class Config:
         # convenient research while leaving exfiltration entirely available.
         # Real egress control is a network-namespace + allowlist proxy, and it
         # should be built for its own sake, not simulated by a tool list.
+        # Agent/Task let a run spawn a SUBAGENT. Added for the illustrate
+        # skill's draft-review-revise loop: a prompt critiqued in a separate
+        # context comes back better than one the same context talks itself
+        # into, and an image is the one output where a weak prompt costs real
+        # money to discover. Both names are listed because the CLI renamed the
+        # tool; --allowedTools is a filter, so whichever this build does not
+        # have simply never matches.
         self.allowed_tools = [t.strip() for t in
                               (g("ATTICUS_ALLOWED_TOOLS",
-                                 "WebSearch,WebFetch,Read,Write,Edit,Glob,Grep,Bash")
+                                 "WebSearch,WebFetch,Read,Write,Edit,Glob,Grep,Bash,Agent,Task")
                                or "").split(",") if t.strip()]
         # Hard spend ceiling per recording. Wall-clock alone is a poor proxy: a
         # research fan-out can spend a lot in a few minutes, and one sentence
