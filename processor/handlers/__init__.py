@@ -18,6 +18,7 @@ in production rather than here, so add the import in the same commit as the modu
 from . import ado  # noqa: F401        ado.workitem, ado.comment
 from . import atticus  # noqa: F401    atticus.status/cancel/retry — the pipeline itself
 from . import github  # noqa: F401     github.issue, github.comment
+from . import image  # noqa: F401      image.generate — spends money, so gated twice
 from . import outlook  # noqa: F401    outlook.draft, outlook.event
 from . import reminders  # noqa: F401  reminders.set — needs no credential at all
 from . import signal  # noqa: F401     signal.send

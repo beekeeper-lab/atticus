@@ -259,6 +259,29 @@ class Config:
         # actions. 0 removes the cap.
         self.outbox_max_actions = int(g("ATTICUS_OUTBOX_MAX_ACTIONS", "5") or 0)
 
+        # ---- illustrations -------------------------------------------------
+        # OFF, like meeting mode and for a related reason: this is the only verb
+        # that SPENDS MONEY on a provider the pipeline's own budget ceiling does
+        # not cover. ATTICUS_MAX_BUDGET_USD bounds the Claude run; an image is
+        # billed elsewhere. Off means the `illustrate` skill is never copied into
+        # the workspace, so the agent does not learn the capability exists.
+        self.images = (g("ATTICUS_IMAGES", "off") or "off").strip().lower()
+        # One provider for the life of a project — the image skill's own style
+        # consistency rule. `openai-*` picks OPENAI_API_KEY, anything else Gemini.
+        self.image_generator = (g("ATTICUS_IMAGE_GENERATOR",
+                                  "gemini-3-pro-image-preview")
+                                or "").strip()
+        # Bounds spend per recording REGARDLESS of the approval gate, because
+        # ATTICUS_OUTBOX_TRACKED=auto is a reasonable thing to set for GitHub and
+        # must not silently also buy images. 0 removes the cap.
+        self.image_max_per_record = int(g("ATTICUS_IMAGE_MAX_PER_RECORD", "4") or 0)
+        # Per-image wall clock. Generation is a single provider call plus the
+        # skill's own 429 backoff, so this is generous rather than tight.
+        self.image_timeout = int(g("ATTICUS_IMAGE_TIMEOUT", "300") or 300)
+        # `uv` runs the image skill with its two SDKs. Named so a host that keeps
+        # it somewhere other than PATH does not need the handler edited.
+        self.uv_bin = (g("ATTICUS_UV_BIN", "uv") or "uv").strip()
+
         # ---- meeting mode (issue #86, ADR-008) ------------------------------
         # OFF, and turning it on is an explicit act rather than a preference.
         # This is the only feature here whose input is OTHER PEOPLE — a meeting

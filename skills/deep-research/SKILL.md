@@ -105,6 +105,17 @@ credential and the pipeline voices the script after you exit.
 
 Say nothing about audio in the HTML. The pipeline injects the player.
 
+## If the request also asked for images
+
+"Use images", "make it visual", "with illustrations" mean the report is wanted
+*and* artwork. Write the report first, then follow the **`illustrate`** skill.
+
+Read that skill before deciding anything is an image: diagrams, flows and
+charts are inline SVG and always were — free, exact, and already how the good
+reports here look. `illustrate` is for the handful of things that genuinely need
+a picture, each of which costs money and waits for the operator's approval. Do
+not attempt generation yourself; you hold no provider key.
+
 ## Notes
 
 - Include concrete specifics: version numbers, prices, benchmark figures, dates.

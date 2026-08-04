@@ -94,6 +94,7 @@ self-contained HTML file. Name it for the topic.
 | `atticus` | ✅ built — status, cancel and retry for earlier recordings (#82). The only skill that acts on the pipeline itself |
 | `meeting` | ⏸ built but **inert** — needs `ATTICUS_MEETING_MODE=on`, which needs [ADR-008](../docs/decisions/ADR-008-recording-other-people.md) accepted. Not offered to the agent while off |
 | `reminders` | ✅ built — a push at a time, via ntfy and a one-minute timer (#52). Needs NO external service and no credential; one-shot only, and a REMINDER (delivery at a time) is deliberately distinct from a `todo` (no deadline behaviour) |
+| `illustrate` | ✅ built — companion only, never routed to directly. Needs `ATTICUS_IMAGES=on`, which ships **off**: `image.generate` is the only verb that spends money, on a provider `ATTICUS_MAX_BUDGET_USD` does not cover. Diagrams stay inline SVG; this is for pictures that must be drawn |
 | `price-scout` | planned — SPEC W9 |
 | `idea-to-spec` | planned — SPEC W9 |
 | `capture-task` | planned — SPEC W9, needs credentials |
