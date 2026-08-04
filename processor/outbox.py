@@ -394,6 +394,14 @@ def receipt_html(receipts: list[dict]) -> str:
         "text-transform:uppercase;letter-spacing:.05em;font-size:11px;font-weight:600}"
         ".atticus-outbox ul{margin:0;padding-left:1.1rem}"
         ".atticus-outbox li{margin:.25rem 0}"
+        # Links inherit the page's text colour instead of taking the browser
+        # default. This block is injected into a report somebody else styled and
+        # deliberately carries no colours of its own — grey rgba() and inherited
+        # ink work on any theme. An unstyled <a> broke that rule: #0000EE on a
+        # dark agent report measured 2.01:1. Inheriting makes a receipt link
+        # exactly as readable as the text beside it, whatever the page is.
+        ".atticus-outbox a{color:inherit;text-decoration:underline;"
+        "text-underline-offset:2px}"
         ".atticus-outbox .ao-why{opacity:.75}"
         ".atticus-outbox .ao-held .ao-why,.atticus-outbox .ao-refused .ao-why,"
         ".atticus-outbox .ao-failed .ao-why{opacity:.9}</style>\n"

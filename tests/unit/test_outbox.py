@@ -347,3 +347,29 @@ def test_a_handler_reason_is_escaped_not_injected(out, cfg):
     text = page.read_text()
     assert "<script>alert" not in text
     assert "&lt;script&gt;" in text
+
+
+def test_the_receipt_carries_no_colour_of_its_own():
+    """It is injected into a report somebody else styled, and that report may be
+    dark, light, or its own invention. Every colour here is a grey rgba() or
+    inherited ink for that reason — a hex would be right on exactly one theme.
+
+    This is not hypothetical: the vault's own palette leaked into agent reports
+    and produced 1.16:1 white-on-white, and the receipt was the block it was most
+    visible in."""
+    html = outbox.receipt_html([{"status": "done", "summary": "x",
+                                 "url": "https://example.test/1"}])
+    style = html[html.index("<style>"):html.index("</style>")]
+    import re
+    hexes = re.findall(r"#[0-9a-fA-F]{3,8}\b", style)
+    assert not hexes, f"receipt CSS hard-codes {hexes}; it must stay theme-neutral"
+
+
+def test_a_receipt_link_inherits_the_page_ink():
+    """An unstyled <a> takes the browser default #0000EE, which measured 2.01:1
+    on a dark agent report. Inheriting makes it exactly as readable as the text
+    beside it, whatever the page is."""
+    html = outbox.receipt_html([{"status": "done", "summary": "filed",
+                                 "url": "https://example.test/1"}])
+    assert ".atticus-outbox a{color:inherit" in html
+    assert "https://example.test/1" in html

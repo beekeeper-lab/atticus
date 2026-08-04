@@ -183,3 +183,29 @@ def test_every_declared_requirement_names_a_real_config_attribute():
             attr = env.lower().removeprefix("atticus_")
             assert hasattr(c, attr), (
                 f"{d.name} requires {env}, but config.py has no {attr}")
+
+
+def test_illustrate_requires_a_subagent_review_before_spending():
+    """Issue: generated images came back weaker than they needed to be, and the
+    cause was prompting rather than the provider. The skill therefore mandates a
+    draft -> critique-in-a-subagent -> revise loop before the intent file is
+    written, because an image is the one output where a weak prompt costs real
+    money to discover and waits on the operator's approval to retry.
+
+    Pinned as a test because the instruction is the whole mechanism — nothing in
+    the handler can tell a reviewed prompt from an unreviewed one."""
+    body = (REPO / "skills/illustrate/SKILL.md").read_text().lower()
+    assert "subagent" in body
+    assert "agent" in body and "review" in body
+    # The reviewer must be told to judge the prompt WITHOUT the article, which is
+    # what makes it catch underspecification instead of filling it in.
+    assert "cannot see the article" in body
+
+
+def test_the_agent_may_actually_spawn_a_subagent():
+    """The instruction above is inert unless the tool is allowed. ATTICUS_ALLOWED_TOOLS
+    is a filter, so both the current and legacy names are listed and whichever this
+    CLI lacks simply never matches."""
+    from config import Config
+    cfg = Config(env_file=REPO / "ops/.env.example")
+    assert {"Agent", "Task"} & set(cfg.allowed_tools), cfg.allowed_tools

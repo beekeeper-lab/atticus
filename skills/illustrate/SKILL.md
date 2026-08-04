@@ -110,6 +110,53 @@ a file that never arrives.
 - **Do not ask for words in the image.** Labels, captions and diagram text belong
   in your HTML, where they are correct and selectable.
 - **One idea per image.** A description with three clauses produces a muddle.
+- **Name the concrete nouns.** "A worn brass key on dark slate" survives
+  generation; "the idea of access" does not.
+- **Fix the frame.** Say the viewpoint and crop — close-up, wide, overhead, eye
+  level. Left unsaid, you get an arbitrary one and re-rolling costs another
+  charge.
+- **Fix the light.** "Low warm side light" or "flat overcast" does more for how
+  a picture reads than any adjective about mood.
+
+## Then have the prompt reviewed — before anything is paid for
+
+**Draft the description, get it critiqued in a SUBAGENT, revise, and only then
+write the intent file.** Not optional, and not something to do in your own head:
+a prompt reviewed in a separate context comes back better than one the same
+context talks itself into, because the reviewer has not spent the last twenty
+minutes deciding what the report is about and cannot silently supply the missing
+detail from memory. An image is the one thing here where a weak prompt costs real
+money to find out about — and it is the operator's money, and it waits on their
+approval, so a re-roll is not a keystroke.
+
+Spawn the reviewer with the `Agent` tool. Give it the description and nothing
+else — no report, no context — because what you are testing is whether the words
+alone produce the picture:
+
+> Here is a prompt for an AI image generator. You cannot see the article it
+> illustrates, which is the point: judge the prompt only on what it says.
+>
+> `<the description>`
+>
+> Answer in four short parts:
+> 1. Describe the picture you would expect this to produce.
+> 2. What is UNDERSPECIFIED — subject, viewpoint, framing, lighting, palette,
+>    what should be absent? Name what a generator would be free to invent.
+> 3. What is likely to go WRONG — text or lettering it will try to render,
+>    anatomy, an abstraction it cannot draw, a cliché it will default to?
+> 4. Rewrite it as one improved paragraph.
+>
+> Do not be polite about it. A prompt that produces something merely acceptable
+> is a failure — it costs the same as a good one.
+
+Then read part 1 first. **If the picture the reviewer describes is not the
+picture you wanted, the prompt is wrong, however good it looked** — that gap is
+the whole reason to ask. Take the rewrite, or merge it with your own, and use
+that as the `description`.
+
+One review per image is enough. Do not loop: a second round tunes wording that
+the generator will not notice, and each round is agent time the operator pays for
+in a different currency.
 
 ## How many
 
@@ -121,6 +168,17 @@ for images, make none — a report is not improved by decoration nobody wanted.
 The pipeline enforces its own cap and will refuse the rest, which shows up in the
 report as a refusal rather than as an image. Asking for fewer is better than
 being trimmed.
+
+## The order, once more
+
+1. Decide it is genuinely an illustration and not a diagram.
+2. Write the `<figure>` with alt text and a caption that stand on their own.
+3. Draft the description.
+4. **Have it reviewed in a subagent. Revise.**
+5. Write the intent file with the revised description.
+
+Steps 3-5 are per image, and step 4 is the one that is easy to skip and expensive
+to have skipped.
 
 ## What happens after you exit
 
