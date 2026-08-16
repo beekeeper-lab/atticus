@@ -94,6 +94,29 @@ def test_every_role_passes_a_scope_where_it_matters():
         assert f"paths={want}" in src, f"{mod.__name__} must scope its Git"
 
 
+def test_on_demand_audio_commits_the_tree_it_can_write_into(tmp_path):
+    """The scope that fixed the sweep created a second, quieter bug.
+
+    `audio_on_demand.find_doc` resolves ids in BOTH `reports/` and `processed/`,
+    but the processor committed its results with OWNED_PROCESSOR, which excludes
+    reports/. So audio requested on a briefing was generated, billed, and marked
+    done while nothing was staged — it reached the vault only when the next 07:00
+    brief run happened to sweep reports/ under its own message.
+    """
+    import inspect
+
+    import audio_on_demand as aod
+    import pipeline
+
+    (tmp_path / "reports" / "ai-brief-2026-08-12").mkdir(parents=True)
+    assert aod.find_doc(tmp_path, "ai-brief-2026-08-12") is not None, \
+        "find_doc resolves reports/, so the commit scope must cover it"
+
+    src = inspect.getsource(pipeline)
+    assert 'OWNED_PROCESSOR + ["reports"]' in src, \
+        "the on-demand audio commit must stage reports/ as well"
+
+
 # ── the stale error file ──────────────────────────────────────────────────
 def test_publishing_clears_a_stale_error_file(cfg):
     write_record(cfg.vault, status="executed")

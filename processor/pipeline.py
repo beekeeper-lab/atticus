@@ -942,8 +942,19 @@ def main():
         try:
             aod = audio_on_demand.run(cfg, log=log.info)
             if aod["done"] or aod["failed"]:
-                git.commit_push(f"on-demand audio: {aod['done']} done, "
-                                f"{aod['failed']} failed")
+                # NOT `git` — that one is scoped to OWNED_PROCESSOR, and half of
+                # what audio_on_demand can target lives in reports/ (briefings,
+                # hand-authored reports; see find_doc). Committing those with the
+                # processor's scope staged nothing, so the mp3 and its player sat
+                # uncommitted until the next 07:00 brief run swept reports/ and
+                # filed them under an unrelated message. Observed on the audio for
+                # 2026-08-03 and 2026-08-08, committed by the 08-04 and 08-10 brief
+                # runs respectively. The queue said done; the vault had no episode.
+                audio_git = Git(cfg.vault, cfg.git_name, cfg.git_email,
+                                cfg.push_retries, log=log.warn,
+                                paths=OWNED_PROCESSOR + ["reports"])
+                audio_git.commit_push(f"on-demand audio: {aod['done']} done, "
+                                      f"{aod['failed']} failed")
         except VaultSyncError:
             raise
         except Exception as e:                      # noqa: BLE001
