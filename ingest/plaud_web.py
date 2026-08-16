@@ -72,6 +72,29 @@ HARVEST_TIMEOUT_S = 60
 # than any plausible single download.
 DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000
 
+# Requests we must NOT harvest a bearer from. These are the token dance itself:
+# they carry the *refresh* token in order to mint the workspace token, so the
+# header on them is the wrong type for every endpoint we actually call.
+#
+# This is not hypothetical. Harvesting indiscriminately took the first bearer
+# seen, and on a page load where the cached workspace token had gone stale the
+# first request is the refresh POST — so we sent a refresh token to
+# /file/simple/web and got back, accurately, `status=-3901 "token type does not
+# match parse mode"`. It read as an upstream change (that is the exception it
+# raised) and cost 10 days of ingest on 2026-08-06. Two tells that it never was
+# one: a single tick failed this way on 2026-07-29 and the *next* tick succeeded
+# untouched, and the two tokens decode to visibly different lifetimes — ~30 days
+# for the refresh token, 24h for the workspace token.
+TOKEN_EXCHANGE_PATHS = ("/user-app/auth/",)
+
+# Plaud's in-band code for "token type does not match parse mode".
+WRONG_TOKEN_TYPE = -3901
+
+
+def _is_token_exchange(url: str) -> bool:
+    path = url.split("://", 1)[-1].partition("/")[2].partition("?")[0]
+    return any(("/" + path).startswith(p) for p in TOKEN_EXCHANGE_PATHS)
+
 
 class PlaudAPI:
     """Adapter over Plaud's web API.
@@ -106,6 +129,8 @@ class PlaudAPI:
         def on_request(req):
             if found or "api.plaud.ai" not in req.url:
                 return
+            if _is_token_exchange(req.url):
+                return
             auth = (req.headers or {}).get("authorization")
             if auth and auth.lower().startswith("bearer "):
                 found["v"] = auth
@@ -130,7 +155,7 @@ class PlaudAPI:
         self._token = found["v"]
         return self._token
 
-    def _get(self, url, params=None):
+    def _get(self, url, params=None, _reharvested=False):
         resp = self.ctx.request.get(
             url, params=params or {},
             headers={"Authorization": self._bearer(), "Accept": "application/json"},
@@ -154,9 +179,24 @@ class PlaudAPI:
             raise UpstreamChanged(f"non-JSON from {url}: {e}") from e
         # Plaud signals application-level errors in-band with HTTP 200.
         if isinstance(body, dict) and body.get("status") not in (0, None):
-            raise UpstreamChanged(
-                f"api status={body.get('status')} msg={body.get('msg')!r}"
-            )
+            st = body.get("status")
+            # -3901 is the server telling us the bearer is the wrong *type*, not
+            # that it expired. TOKEN_EXCHANGE_PATHS is meant to make that
+            # unreachable; if it happens anyway the cached token is simply the
+            # wrong one, and re-harvesting is the actual remedy. Do it once, so
+            # a bad harvest costs a retry rather than a poll interval — or, as
+            # it did once, ten days.
+            if st == WRONG_TOKEN_TYPE and not _reharvested:
+                self._token = None
+                return self._get(url, params, _reharvested=True)
+            if st == WRONG_TOKEN_TYPE:
+                raise AuthError(
+                    "harvested bearer is the wrong token type even after a "
+                    "re-harvest (api status=-3901). The web app's request order "
+                    "has changed; check TOKEN_EXCHANGE_PATHS against a live "
+                    "page load before re-running recon."
+                )
+            raise UpstreamChanged(f"api status={st} msg={body.get('msg')!r}")
         return body
 
     @staticmethod

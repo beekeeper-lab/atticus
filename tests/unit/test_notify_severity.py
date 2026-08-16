@@ -211,3 +211,63 @@ def test_a_torn_deferred_line_does_not_lose_the_rest(ncfg, wire, monkeypatch):
 def test_an_unknown_severity_falls_back_to_alert_rather_than_silence(ncfg, wire):
     out = nf.alarm(ncfg, "?", severity="apocalyptic")
     assert out["ntfy"] is True and out["calendar"] is False
+
+
+# --- the escalation channel's own failure modes ---------------------------
+#
+# Everything above replaces `calendar_escalate` with a recorder, which is right
+# for testing routing but meant the real `calendar_alert.create` was never once
+# executed by the suite. It shipped documented as "never fatal" and was not:
+# its `from handlers import outlook` sat OUTSIDE the try, and on the ingest host
+# that import chain reaches `handlers/ado.py` → `import requests`, absent from
+# the fetchers venv. So every alarm ingest raised died mid-escalation with a
+# ModuleNotFoundError, taking the poller down with it and leaving `calendar=False`
+# on all three alarms it managed to send between 2026-08-06 and 2026-08-16.
+#
+# An alarm that fails to escalate must still have been an alarm.
+
+import builtins
+
+import calendar_alert
+
+# Captured at import, before any fixture swaps it for a recorder.
+_REAL_ESCALATE = nf.calendar_escalate
+
+
+def test_create_returns_rather_than_raises_when_the_handler_graph_is_absent(
+        monkeypatch):
+    """The ingest host's exact shape: `requests` is not installed."""
+    real_import = builtins.__import__
+
+    def no_requests(name, *a, **k):
+        if name == "requests" or name.split(".")[0] == "handlers":
+            raise ModuleNotFoundError("No module named 'requests'")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_requests)
+    out = calendar_alert.create(None, subject="ingest is down", log=lambda m: None)
+    assert out["created"] is False
+    assert "requests" in out["reason"]
+
+
+def test_a_failed_escalation_does_not_take_the_alarm_down(ncfg, wire, monkeypatch):
+    """The property the outage actually violated, end to end.
+
+    `wire` is deliberately un-stubbed on the calendar side here: this drives the
+    REAL calendar_escalate → calendar_alert.create against the ingest host's
+    import environment. ntfy still goes out, alarm() returns, and the caller
+    lives to keep polling.
+    """
+    real_import = builtins.__import__
+
+    def no_requests(name, *a, **k):
+        if name == "requests" or name.split(".")[0] == "handlers":
+            raise ModuleNotFoundError("No module named 'requests'")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(nf, "calendar_escalate", _REAL_ESCALATE)
+    monkeypatch.setattr(builtins, "__import__", no_requests)
+    out = nf.alarm(ncfg, "upstream changed", severity=nf.CRITICAL,
+                   key="plaud-upstream", streak=9, title="ingest")
+    assert out["ntfy"] is True
+    assert out["calendar"] is False

@@ -51,8 +51,21 @@ def create(cfg, *, subject: str, body: str = "", minutes: int = 15,
     # Imported here, not at module scope: this module is imported by notify.py,
     # which ingest also imports, and ingest must not require the outbox handler
     # graph (or `requests`) merely to send a push.
-    from handlers import outlook
-    from outbox import OutboxError
+    #
+    # Inside the try for the same reason. Deferring the import kept it off
+    # ingest's import path but not out of ingest's *call* path: on an alarm,
+    # ingest reached here, `handlers/__init__` imported `ado`, `ado` imported
+    # `requests` — absent from the fetchers venv — and the ModuleNotFoundError
+    # escaped a function documented above as never raising, killing the poller
+    # mid-alarm. Every escalation this module ever attempted from ingest died
+    # here (`calendar=False` on all of them). An import failure is one more way
+    # the calendar channel can be unavailable, so it returns like the rest.
+    try:
+        from handlers import outlook
+        from outbox import OutboxError
+    except ImportError as e:
+        log(f"    escalation: no calendar alert — {type(e).__name__}: {e}")
+        return {"created": False, "reason": f"{type(e).__name__}: {e}"}
 
     when = datetime.now(UTC) + timedelta(minutes=max(0, int(lead_minutes)))
     req = {
