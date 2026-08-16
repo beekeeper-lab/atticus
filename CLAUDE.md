@@ -41,6 +41,16 @@ See [ADR-002](docs/decisions/ADR-002-plaud-web-fetcher.md). What recon
   request rather than reimplementing Plaud's three-step token dance. **The
   browser refreshes the token for us** — practical session life is the 30-day
   refresh window, not 24h.
+- **Harvest the bearer from a data request, never from the token dance.** A
+  page load whose cached 24h workspace token has gone stale opens with
+  `POST /user-app/auth/workspace/refresh/<ws_id>`, and that request carries the
+  ~30-day *refresh* token. Take it and every call fails
+  `status=-3901 'token type does not match parse mode'` — which is the server
+  being precise, not upstream drifting. Taking the first bearer indiscriminately
+  cost ten days of ingest (2026-08-06 → 08-16) while reporting itself as
+  "upstream changed — re-run recon". `TOKEN_EXCHANGE_PATHS` in `plaud_web.py` is
+  the exclusion list; `/user-app/profile/` is real data and must stay
+  harvestable, so the prefix is `/user-app/auth/` and not `/user-app/`.
 - List: `GET /file/simple/web?skip&limit&is_trash=0&sort_by=start_time&is_desc=true`
 - Audio: `GET /file/temp-url/{id}` → presigned S3 URL. Fetch it **without** an
   Authorization header. Prefer `temp_url` (MP3); `temp_url_opus` is often absent.
