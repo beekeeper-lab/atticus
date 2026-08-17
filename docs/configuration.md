@@ -22,7 +22,7 @@ copies.
 | `ATTICUS_ADO_WORKITEM_TYPE` | `Task` |  |
 | `ATTICUS_ADO_WORKITEM_TYPES` | `Task,Bug,Issue,User Story,Product Backlog Item,Feature,Epic` |  |
 | `ATTICUS_ALARM_THROTTLE_HOURS` | `6` | One alarm per condition per this many hours. The ingest timer rediscovers a dead session every 15 minutes; alarming each time is how you learn to ignore the alarm. |
-| `ATTICUS_ALLOWED_TOOLS` | `WebSearch,WebFetch,Read,Write,Edit,Glob,Grep,Bash` | Tools the agent may use, comma-separated. WebSearch/WebFetch are granted deliberately. Denying them bought NO security: the sandbox leaves the network namespace intact because research needs it, an… |
+| `ATTICUS_ALLOWED_TOOLS` | `WebSearch,WebFetch,Read,Write,Edit,Glob,Grep,Bash,Agent,Task` | Tools the agent may use, comma-separated. WebSearch/WebFetch are granted deliberately. Denying them bought NO security: the sandbox leaves the network namespace intact because research needs it, an… |
 | `ATTICUS_API_BUDGET_USD` | *(empty)* | SUPERSEDED — leave blank. Setting it does nothing except print a warning at startup. It was one pot for transcription AND text-to-speech, which is exactly the bug the two budgets above fix: audio s… |
 | `ATTICUS_APPROVAL_TOPIC_URL` | *(empty)* | ── the approval queue (issue #83) ─────────────────────────────────── Where a DECISION comes back from. A SECOND ntfy topic, not an endpoint on this host, and that is the security design rather tha… |
 | `ATTICUS_APPROVAL_TTL_HOURS` | `24` | How long a held action waits before it expires. Approving a three-day-old "post to Slack" is rarely right. Expired items are REPORTED, never dropped: the operator believes they are still waiting. |
@@ -108,6 +108,14 @@ copies.
 | `ATTICUS_PROJECT_CONTEXT_CHARS` | `2000` | How much of a project's brief.md is prepended to the agent's prompt when a recording names that project (issue #84). Bounded like every other thing that enters a prompt. The block is fenced as REFE… |
 | `ATTICUS_PUSH_RETRIES` | `3` | Both hosts push to the same repo. Bounded retry on rebase conflict before quarantining and notifying. See SPEC §4.3. |
 | `ATTICUS_QUIET_HOURS` | *(empty)* | Local window in which ROUTINE and ALERT notifications are parked instead of sent — "22:00-07:00", crossing midnight is fine. They are never dropped: the 07:00 briefing opens with what arrived overn… |
+| `ATTICUS_RADAR_BODY_CHARS` | `200` |  |
+| `ATTICUS_RADAR_DAYS` | `3` | The briefing's window is 24 hours; this is wider because Radar's low-volume, high-value families barely exist inside one day, and they are the reason to read Radar at all. Measured on 2026-08-17: 1… |
+| `ATTICUS_RADAR_DIR` | *(empty)* | ── Radar as a lead source for the briefing ─────────────────────────── Radar is a SEPARATE pipeline on this host (~/workspace/radar) that collects practitioner signals from 14 sources twice a day: … |
+| `ATTICUS_RADAR_FAMILY_LIMITS` | *(empty)* | Per-family cap AND allowlist, in priority order. A family not named here is not offered to the briefing at all. Weighted towards what Radar has that the briefing's own searching does not: vendor ch… |
+| `ATTICUS_RADAR_LIMIT` | `50` | Total leads after the per-family caps, the body snippet per signal (0 = titles and URLs only), and a hard bound on the whole rendered block. Every block that enters a prompt here is size-capped; th… |
+| `ATTICUS_RADAR_MAX_CHARS` | `24000` |  |
+| `ATTICUS_RADAR_TIMEOUT` | `180` | radar prune VACUUMs at 04:50/06:20/18:20 and holds a write lock while it does, so an export near those times is slow rather than broken. Generous: a timeout costs the briefing its leads for the day… |
+| `ATTICUS_RADAR_UV` | `uv` |  |
 | `ATTICUS_REMINDER_CALENDAR` | `on` | Also drop a short event on the operator's OWN calendar when a reminder is set (issue #66): the operator's verdict on ntfy alone was "too soft among all the other notifications", and a calendar aler… |
 | `ATTICUS_REMINDER_EVENT_MINUTES` | `15` | Length of that event: a block to act on, not a meeting. |
 | `ATTICUS_REMINDER_MAX_DAYS` | `365` | Refuse a due date further out than this. It catches a misparsed year, which would otherwise be stored as a reminder that simply never fires, leaving a line in a JSONL file as the only evidence. 0 r… |
@@ -154,4 +162,4 @@ copies.
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 
-*143 settings.*
+*151 settings.*

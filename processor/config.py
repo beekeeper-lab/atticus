@@ -509,6 +509,62 @@ class Config:
         self.brief_audio = (g("ATTICUS_BRIEF_AUDIO", "false") or "").strip().lower() \
             in ("1", "true", "yes", "on")
 
+        # ---- Radar as a lead source for the briefing (processor/radar.py) ----
+        #
+        # Radar is a SEPARATE pipeline on this host that collects practitioner
+        # signals from 14 sources twice a day. The briefing reads its versioned
+        # export contract and nothing else — never its SQLite store, never its
+        # collectors. Blank disables the whole feature, which is the right state
+        # on a host that has no Radar.
+        self.radar_dir = (g("ATTICUS_RADAR_DIR", "") or "").strip()
+        # `uv run radar export` is the contract's documented entry point. Named
+        # rather than hardcoded for the same reason claude_bin is: systemd user
+        # units run with a PATH that excludes ~/.local/bin, where uv lives.
+        self.radar_uv = (g("ATTICUS_RADAR_UV", "uv") or "uv").strip()
+        # The briefing's window is 24 hours. This is wider because Radar's
+        # low-volume, high-value families barely exist inside 24 hours, and they
+        # are the whole reason to read Radar at all. Measured on 2026-08-17
+        # against a healthy store:
+        #
+        #   days=1   forum 76, jobs 21                       — nothing else
+        #   days=2   + code 5, media 17, manual 2
+        #   days=3   + research 3, vendor 2
+        #   days=4   + research 42, vendor 5
+        #
+        # A vendor changelog publishes when it publishes and Radar collects twice
+        # a day, so a 24-hour view of it is mostly empty. 3 days is where the
+        # boring channels appear without the forum volume tripling again. These
+        # are LEADS: every item is rendered with its own publication date, and
+        # the briefing's own 24-hour rule still decides what gets written.
+        self.radar_days = float(g("ATTICUS_RADAR_DAYS", "3") or 3)
+        # Per-family cap AND allowlist, in priority order: a family not named
+        # here is not offered to the briefing at all. Weighted towards what
+        # Radar has that the briefing's own searching does not — vendor
+        # changelogs, dockets, GitHub issues — and away from the forum volume it
+        # already covers. jobs are a class/blog signal more than a news one, so
+        # they get a token few.
+        self.radar_family_limits = {
+            k: int(v) for k, v in
+            _pairs(g("ATTICUS_RADAR_FAMILY_LIMITS",
+                     "vendor=10,regulatory=8,research=8,code=8,forum=8,"
+                     "media=6,manual=5,jobs=3")).items()
+            if str(v).strip().lstrip("-").isdigit() and int(v) > 0
+        }
+        # Total leads across all families, after the per-family caps. 0 = no
+        # total bound, which is not recommended: this text is the largest
+        # untrusted block in the prompt.
+        self.radar_limit = int(g("ATTICUS_RADAR_LIMIT", "50"))
+        # Body snippet per signal. 0 = titles and URLs only.
+        self.radar_body_chars = int(g("ATTICUS_RADAR_BODY_CHARS", "200"))
+        # Hard bound on the rendered block, whatever the caps above work out to.
+        # Everything entering a prompt in this project is size-capped; this is
+        # the biggest of them and the only one written by strangers.
+        self.radar_max_chars = int(g("ATTICUS_RADAR_MAX_CHARS", "24000"))
+        # radar prune VACUUMs at 04:50/06:20/18:20 and holds a write lock while
+        # it does, so an export near those times is slow rather than broken.
+        # Generous, because the cost of a timeout is a briefing with no leads.
+        self.radar_timeout = int(g("ATTICUS_RADAR_TIMEOUT", "180"))
+
         # Audio overview ("podcast"). Opt-in: the agent only writes
         # output/podcast-script.md when the spoken request asked to listen to the
         # report, so with no script this stage does nothing and costs nothing.
