@@ -50,7 +50,17 @@ ProtectHome=read-only
 # installer's idempotency guard once matched such a comment, concluded its work
 # was done, and left the active line without the vault, after which every commit
 # failed against a read-only vault.
-ReadWritePaths=%h/atticus %h/.claude %h/.cache
+#
+# %h/.local/share/radar is Radar's SQLite store, and the briefing READS it
+# through `uv run radar export` (processor/radar.py, ADR-012). It has to be
+# writable anyway: the store is in WAL mode, so even a pure reader creates the
+# -wal/-shm sidecars, and under ProtectHome=read-only the export dies with
+# "unable to open database file" before it reads a row. Verified with
+# systemd-run on 2026-08-17 — the same command succeeds with this path granted
+# and fails without it. The leading '-' keeps a host with no Radar from failing
+# namespace setup (226/NAMESPACE). Radar's repo itself stays read-only; nothing
+# here runs a collector or a prune.
+ReadWritePaths=%h/atticus %h/.claude %h/.cache -%h/.local/share/radar
 
 # ProtectKernelTunables is DELIBERATELY OFF, and enabling it breaks the agent
 # sandbox outright: it mounts /proc/sys read-only, which locks mount attributes

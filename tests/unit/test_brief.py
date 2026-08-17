@@ -358,3 +358,64 @@ def test_dry_run_builds_the_prompt_and_runs_nothing(cfg, monkeypatch):
     res = brief.run(cfg, today=TODAY, dry_run=True, log=lambda m: None)
     assert res["made"] is False and "covered.json" in res["task"]
     assert not (cfg.vault / "reports").exists()
+
+
+# ── Radar leads (ADR-012) ──────────────────────────────────────────────────
+def test_radar_leads_go_before_the_do_not_repeat_rule():
+    """Placement is deliberate, not cosmetic. The dedup rule is the requirement
+    that has to survive everything else in this prompt, so it keeps the last
+    position; the largest block of stranger-written text does not get it."""
+    task = brief.build_task(
+        [{"date": "2026-08-14", "key": "k", "title": "T", "kind": "new"}],
+        TODAY, radar_block="## Radar signals — leads only\n\nsome leads\n")
+    assert "some leads" in task
+    assert task.index("some leads") < task.index("Already covered")
+
+
+def test_no_radar_means_a_prompt_identical_to_before(cfg, monkeypatch):
+    """Adding a lead source must not change the briefing on a host without one."""
+    monkeypatch.setattr(brief.radar, "leads", lambda *a, **k: ("", {}))
+    with_none = brief.build_task([], TODAY)
+    assert "Radar" not in with_none
+    assert with_none == brief.build_task([], TODAY, radar_block="   ")
+
+
+def test_the_briefing_is_written_even_when_radar_is_broken(cfg, monkeypatch):
+    """Radar is a lead source. It cannot be allowed to cost the operator the one
+    output they read every morning."""
+    def dead(*a, **k):
+        raise RuntimeError("radar exploded")
+    monkeypatch.setattr(brief.radar, "export", dead)
+    cfg.radar_dir = "/nonexistent-but-set"
+    run = _fake_agent(cfg, monkeypatch=monkeypatch)
+    res = brief.run(cfg, today=TODAY, log=lambda m: None)
+    assert res["made"] is True
+    assert res["radar"]["available"] is False
+    assert "Radar" not in run.task
+
+
+def test_radar_leads_reach_the_agents_prompt(cfg, monkeypatch):
+    monkeypatch.setattr(brief.radar, "leads",
+                        lambda *a, **k: ("## Radar signals — leads only\n\n"
+                                         "- a lead\n", {"available": True,
+                                                        "signals": 1}))
+    run = _fake_agent(cfg, monkeypatch=monkeypatch)
+    res = brief.run(cfg, today=TODAY, log=lambda m: None)
+    assert "- a lead" in run.task
+    assert res["radar"]["signals"] == 1
+
+
+def test_what_the_briefing_covered_is_handed_to_radar_for_dedup(cfg, monkeypatch):
+    """The join that stops one Reddit thread being presented twice: the ledger
+    the prompt already carries is the same list radar.py filters against."""
+    seen = {}
+
+    def spy(c, covered=(), **kw):
+        seen["covered"] = covered
+        return "", {}
+    monkeypatch.setattr(brief.radar, "leads", spy)
+    _ledger(cfg, [{"date": "2026-08-14", "key": "k", "title": "T",
+                   "url": "https://reddit.com/r/x/comments/abc/"}])
+    _fake_agent(cfg, monkeypatch=monkeypatch)
+    brief.run(cfg, today=TODAY, log=lambda m: None)
+    assert [r["key"] for r in seen["covered"]] == ["k"]

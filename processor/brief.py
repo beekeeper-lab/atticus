@@ -19,6 +19,12 @@ agent runs sandboxed with no vault access, so it cannot read a ledger of what
 previous briefings covered. The driver reads it here and writes it *into* the
 task, and the agent hands back `covered.json` which the driver appends. That
 round trip is why a briefing on day 30 is still worth opening.
+
+**Radar leads arrive the same way** (`processor/radar.py`, ADR-012): a separate
+pipeline on this host collects practitioner signals from 14 sources, the driver
+reads its export contract and fences the result into the task as untrusted
+reference data. It is an extra place to look, not a change to the briefing — and
+if Radar is missing, stale or broken, the briefing runs without it.
 """
 import argparse
 import json
@@ -32,6 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import execute as ex          # noqa: E402
 import podcast as pod        # noqa: E402
+import radar                  # noqa: E402
 import usage                  # noqa: E402
 from config import Config     # noqa: E402
 from notify import ResultTarget, notify, take_deferred   # noqa: E402
@@ -71,7 +78,7 @@ should say which.
 - You have web access. Use it — a briefing written from memory is worthless, and
   your training data ends well before today.
 {audio}
-## Already covered — this is not news
+{radar}## Already covered — this is not news
 
 {covered}
 """
@@ -139,12 +146,21 @@ def format_covered(items: list[dict]) -> str:
             + "\n".join(lines))
 
 
-def build_task(covered: list[dict], today: date, audio: bool = False) -> str:
+def build_task(covered: list[dict], today: date, audio: bool = False,
+               radar_block: str = "") -> str:
+    """The task prompt.
+
+    Radar's leads go BEFORE the already-covered list, deliberately. The
+    do-not-repeat-yourself rule is the requirement that has to survive
+    everything else in this prompt, so it keeps the last position; the largest
+    block of stranger-written text in the prompt does not get that position.
+    """
     return PREAMBLE.format(
         today=today.isoformat(),
         since=(today - timedelta(days=1)).isoformat(),
         covered=format_covered(covered),
         audio=AUDIO_ASK if audio else "",
+        radar=(radar_block.rstrip() + "\n\n") if radar_block.strip() else "",
     )
 
 
@@ -237,13 +253,17 @@ def run(cfg, *, today: date | None = None, dry_run: bool = False,
 
     covered = load_covered(cfg.vault, today=today)
     want_audio = bool(getattr(cfg, 'brief_audio', False))
-    task = build_task(covered, today, audio=want_audio)
+    # Leads, not sources, and never load-bearing: radar.leads() returns ("",
+    # reason) for every failure mode there is, so this cannot fail the briefing.
+    radar_block, radar_stats = radar.leads(cfg, covered, log=log)
+    task = build_task(covered, today, audio=want_audio, radar_block=radar_block)
     log(f"  briefing {today.isoformat()} — {len(covered)} prior item(s) in context")
 
     if dry_run:
         log("  [dry-run] task prompt follows\n")
         log(task)
-        return {"made": False, "reason": "dry run", "slug": slug, "task": task}
+        return {"made": False, "reason": "dry run", "slug": slug, "task": task,
+                "radar": radar_stats}
 
     # No money gate on the briefing itself. The agent is subscription-billed, so
     # writing a briefing costs no dollars — the ONLY real-money part is the
@@ -330,7 +350,10 @@ def run(cfg, *, today: date | None = None, dry_run: bool = False,
     log("    → notified with link" if pushed else "    ! NOT notified")
     return {"made": True, "slug": slug, "items": len(items), "quiet": quiet,
             "bytes": res["bytes"], "usd": au.get("usd", 0), "notified": pushed,
-            "audio": audio.get("made", False), "audio_usd": audio.get("usd", 0)}
+            "audio": audio.get("made", False), "audio_usd": audio.get("usd", 0),
+            # Carried out of the run so a lead source that quietly stopped
+            # working shows up somewhere other than one line of journal.
+            "radar": radar_stats}
 
 
 def _notify(cfg, today: date, items: list[dict], slug: str, log=print) -> bool:

@@ -166,6 +166,16 @@ Two deploy keys, one per host, both with write access.
   [ADR-011](docs/decisions/ADR-011-projects-are-bounded-pre-fetch.md)). Guessing
   is the failure mode worth designing against, because nobody is present to
   disambiguate.
+- **Radar is a lead source for the briefing, never a source of record.** A
+  separate pipeline on this host (`~/workspace/radar`) collects practitioner
+  signals from 14 sources twice a day; the briefing reads its versioned export
+  contract (`uv run radar export`) and nothing else — never its store, never a
+  collector, never a write. Signals arrive as pipeline-side pre-fetch, fenced as
+  untrusted text, bounded, deduplicated against the covered ledger, and
+  explicitly **leads not citations**: the briefing chases one to a primary source
+  or drops it. Nothing else about the briefing changes, and every Radar failure
+  degrades to "no leads today" rather than costing the morning's output.
+  [ADR-012](docs/decisions/ADR-012-radar-is-a-lead-source.md).
 - **Severity picks the notification channel.** ntfy cannot break through iOS
   Focus — that is their bug and not tunable — so `critical` also books a
   calendar alert, which can. Escalation waits for persistence and has its own
