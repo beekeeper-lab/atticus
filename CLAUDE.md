@@ -210,6 +210,18 @@ Two deploy keys, one per host, both with write access.
 - **Both roles push to one repo.** Every push is `pull --rebase` + bounded
   retry. They own disjoint paths — ingest `inbox/` + `.state/`, processor
   `processed/` + `failures/`.
+- **The Plaud session is a scheduled chore, not a repair.** The ~30-day refresh
+  window dates from the interactive login and is **not extended by use** — the
+  session seeded 2026-07-28 was polled every 15 minutes and expired on schedule
+  anyway, then crash-looped for three days before anyone looked. Re-auth cannot
+  be automated without storing the password ADR-002 exists to avoid, so
+  `login` stamps the date, `session-age` counts down, the heartbeat nudges once
+  a day at ALERT for the last five days, and `ops/reseed-plaud.sh` discharges it
+  in one command from a machine with a display. The nudge is a NOTE, never a
+  heartbeat `problems` entry: a CRITICAL every hour for five days out of thirty
+  is the alarm you learn to ignore. **Do not "fix" this with a VNC server on
+  Forge** — the sandbox shares the network namespace, so a logged-in browser on
+  loopback sits inside the blast radius. [ADR-013](docs/decisions/ADR-013-the-plaud-session-is-a-scheduled-chore.md).
 - **A silent failure is the worst failure.** A dead Plaud session is
   indistinguishable from a quiet weekend: both are "0 new recordings" forever,
   while audio piles up in the cloud. Ingest alarms on it through

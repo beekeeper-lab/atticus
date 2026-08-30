@@ -636,6 +636,16 @@ class Config:
         self.fetcher = g("ATTICUS_FETCHER", "ingest/plaud_web.py")
         self.fetcher_timeout = int(g("ATTICUS_FETCHER_TIMEOUT", "300"))
         self.poll_days = int(g("PLAUD_POLL_DAYS", "2"))
+        # How long to wait between attempts once the Plaud session is proven
+        # dead. Re-seeding needs a human at a browser, so retrying every 15
+        # minutes launches ~96 headless Chromiums a day into the same wall.
+        # 0 disables the backoff and retries on every tick.
+        self.auth_retry_minutes = int(g("PLAUD_AUTH_RETRY_MINUTES", "60"))
+        # Warn this many days before the 30-day refresh window closes. The
+        # window is not extended by use — a session polled every 15 minutes for
+        # 30 days still expires on schedule (2026-08-27) — and the fix needs a
+        # person, so the warning has to arrive while there is still time to act.
+        self.session_warn_days = float(g("PLAUD_SESSION_WARN_DAYS", "5"))
 
         # Execution
         self.claude_bin = g("ATTICUS_CLAUDE_BIN", "claude")

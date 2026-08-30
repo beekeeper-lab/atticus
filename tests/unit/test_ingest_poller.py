@@ -9,6 +9,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -126,3 +127,77 @@ def test_sweep_commits_work_stranded_by_an_interrupted_pass(tmp_path):
                              capture_output=True, text=True).stdout
     assert "stranded.mp3" in tracked
     assert "stranded.json" in tracked
+
+
+# --- the auth-failure backoff ---------------------------------------------
+#
+# The 2026-08-27 outage: the Plaud session expired at 15:17 and the 15-minute
+# timer kept launching headless Chromium into the same wall for three days —
+# ~290 passes at ~9.4s CPU and ~600 MB peak each. Re-seeding needs a person at
+# a browser (ADR-002 stores no password), so there was never anything the retry
+# could have achieved.
+
+@pytest.fixture
+def state(tmp_path, monkeypatch):
+    """Redirect the streak/stamp files away from the real ~/.cache/atticus."""
+    monkeypatch.setattr(poller.nf, "STATE", tmp_path / "state")
+    (tmp_path / "state").mkdir()
+    return tmp_path / "state"
+
+
+def _cfg(**kw):
+    base = {"notify_url": None, "alarm_throttle_hours": 6,
+            "auth_retry_minutes": 60}
+    base.update(kw)
+    return type("C", (), base)()
+
+
+def test_no_backoff_before_the_threshold(state):
+    """The first failures must retry promptly: a transient blip that clears in
+    fifteen minutes should not cost an hour of ingest."""
+    (state / "streak-plaud-auth").write_text("2")
+    (state / poller._AUTH_ATTEMPT).touch()
+    assert poller._auth_backoff_active(_cfg(), lambda m: None) is False
+
+
+def test_backoff_engages_once_the_session_is_proven_dead(state):
+    (state / "streak-plaud-auth").write_text("3")
+    (state / poller._AUTH_ATTEMPT).touch()
+    said = []
+    assert poller._auth_backoff_active(_cfg(), said.append) is True
+    assert "auth backoff" in said[0]
+    assert "reseed-plaud.sh" in said[0]
+
+
+def test_backoff_expires_so_recovery_is_still_detected(state):
+    """A re-seed must be picked up without anyone restarting the unit."""
+    import os
+    (state / "streak-plaud-auth").write_text("40")
+    p = state / poller._AUTH_ATTEMPT
+    p.touch()
+    old = time.time() - 61 * 60
+    os.utime(p, (old, old))
+    assert poller._auth_backoff_active(_cfg(), lambda m: None) is False
+
+
+def test_backoff_can_be_disabled(state):
+    (state / "streak-plaud-auth").write_text("99")
+    (state / poller._AUTH_ATTEMPT).touch()
+    assert poller._auth_backoff_active(_cfg(auth_retry_minutes=0),
+                                       lambda m: None) is False
+
+
+def test_a_first_failure_with_no_stamp_at_all_still_attempts(state):
+    """Streak survives a reboot; the attempt stamp may not. Missing stamp must
+    mean 'go', never 'wait forever'."""
+    (state / "streak-plaud-auth").write_text("10")
+    assert poller._auth_backoff_active(_cfg(), lambda m: None) is False
+
+
+def test_backoff_does_not_bump_the_streak(state):
+    """The streak drives alarm escalation. Counting skipped passes as failures
+    would let a backed-off outage escalate on passes that never ran."""
+    (state / "streak-plaud-auth").write_text("5")
+    (state / poller._AUTH_ATTEMPT).touch()
+    poller._auth_backoff_active(_cfg(), lambda m: None)
+    assert (state / "streak-plaud-auth").read_text() == "5"
