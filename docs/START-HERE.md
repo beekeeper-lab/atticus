@@ -247,9 +247,14 @@ Then prove it works:
 
 You should see your recordings. Practical session life is Plaud's **30-day
 refresh window**, not 24 hours, because the browser refreshes the token for us.
+It is **not extended by use** — a session polled every 15 minutes still expires
+on schedule — so this is a recurring chore. `plaud_web.py session-age` says how
+long is left, and the heartbeat nudges once a day for the last five days
+(ADR-013).
 
-*On a headless host*: `login` needs a display. Run it on a desktop and `rsync`
-`~/.local/share/claude-fetchers/sessions/` across.
+*On a headless host*: `login` needs a display. Seed on a desktop and copy the
+profile across — `ops/reseed-plaud.sh` does the whole thing, including
+verifying the session before and after the copy and restarting ingest.
 
 ---
 
@@ -371,7 +376,7 @@ so if you find alarms drowning in routine pushes, that is what
 
 | symptom | usual cause |
 |---|---|
-| no new recordings, ever | Plaud session expired → re-run `plaud_web.py login`; or you have not foregrounded the phone app |
+| no new recordings, ever | Plaud session expired → `ops/reseed-plaud.sh` on a machine with a display; or you have not foregrounded the phone app |
 | `UPSTREAM CHANGED` in the journal | Plaud changed their API or the token went stale — try `plaud_web.py list --days 1` by hand |
 | agent exits 1 with no output | authentication → step 4b |
 | notification link 404s | the site build has not run yet; check `atticus-vault-site.path` is active |

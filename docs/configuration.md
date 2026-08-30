@@ -159,7 +159,9 @@ copies.
 | `ATTICUS_WAKE_ALIASES` | *(empty)* | Known mishearings of the wake phrase, comma-separated, exact-matched. Observed: "Atticus, research the best Android phone options" transcribed as "Advocates research…" and was silently filed as a n… |
 | `ATTICUS_WAKE_PHRASE` | *(empty)* | Optional wake phrase. Empty = execute every transcript that passes the word count. Set it (e.g. "atticus") and only transcripts starting with it are executed — everything else is filed as an unexec… |
 | `ATTICUS_WAKE_VERDICT_TTL_HOURS` | `168` | How long an adjudicator verdict stays cached. Verdicts used to be cached FOREVER, so a single wrong admit permanently opened that (word, context) pair and later passes logged only "cached verdict …… |
+| `PLAUD_AUTH_RETRY_MINUTES` | `60` | How long to wait between attempts once the Plaud session is proven dead. Re-seeding needs a person at a browser, so the default 15-minute timer otherwise launches ~96 headless Chromiums a day into … |
 | `PLAUD_POLL_DAYS` | `2` | Lookback window for the recording list. The seen ledger handles dedupe, so overlap is free — and it is what makes a missed poll window harmless, so do not trim this to save an API call. |
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
+| `PLAUD_SESSION_WARN_DAYS` | `5` | Warn this many days before the ~30-day refresh window closes. The window is NOT extended by use, and re-seeding needs a person, so the nudge has to arrive while there is still time to act. One ALER… |
 
-*151 settings.*
+*153 settings.*

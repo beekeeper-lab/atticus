@@ -3,6 +3,7 @@
 
     plaud_web.py login                    seed the session (interactive, once)
     plaud_web.py whoami [--json]          session health check
+    plaud_web.py session-age [--json]     days left in the 30-day refresh window
     plaud_web.py list [--days N] [--json] recordings, newest first
     plaud_web.py audio <id> -o <path>     download original audio
 
@@ -386,6 +387,70 @@ def session_seeded():
     return SESSION_DIR.exists() and any(SESSION_DIR.iterdir())
 
 
+# Plaud's refresh token is ~30 days from the interactive login and does NOT
+# roll: the session that died on 2026-08-27 had been exercised every 15 minutes
+# for the whole 30 days and expired on schedule anyway. So the only way to know
+# how much life is left is to remember when we seeded it.
+SEED_STAMP = SESSION_DIR / ".seeded"
+REFRESH_WINDOW_DAYS = 30.0
+
+
+def _write_seed_stamp(when=None):
+    """Record the moment a login completed. Best-effort: failing to write the
+    stamp must never fail the login itself, since the session is what matters
+    and the stamp only drives a courtesy warning."""
+    try:
+        SESSION_DIR.mkdir(parents=True, exist_ok=True)
+        SEED_STAMP.write_text((when or datetime.now(UTC)).isoformat())
+    except OSError:
+        pass
+
+
+def _profile_birth():
+    """Fallback seed time for a profile seeded before the stamp existed.
+
+    Chromium writes these at profile creation and does not rewrite them on an
+    ordinary run — unlike the profile directory's own mtime, which every
+    headless pass touches. Take the OLDEST rather than the first found: a
+    Chromium upgrade does rewrite `Last Version`, and an over-estimated age
+    warns early (harmless) while an under-estimated one warns after the session
+    has already died, which is the failure this whole check exists to prevent.
+
+    Only ever a fallback. `login` stamps the real time, so once Gregg re-seeds
+    this path stops being reached — including a re-seed into the existing
+    profile, which would leave these files at their original creation date.
+    """
+    seen = []
+    for rel in ("Default/Local Storage/leveldb/CURRENT", "Last Version",
+                "first_party_sets.db"):
+        try:
+            seen.append(datetime.fromtimestamp((SESSION_DIR / rel).stat().st_mtime, UTC))
+        except OSError:
+            continue
+    return min(seen) if seen else None
+
+
+def session_age():
+    """(seeded_at, age_days, days_left, source) — or None if nothing is seeded.
+
+    `source` is "stamp" or "profile-birth" so callers can say how confident the
+    number is; a fallback reading is a floor on the age, not a measurement.
+    """
+    if not session_seeded():
+        return None
+    seeded, source = None, "stamp"
+    try:
+        seeded = datetime.fromisoformat(SEED_STAMP.read_text().strip())
+        if seeded.tzinfo is None:
+            seeded = seeded.replace(tzinfo=UTC)
+    except (OSError, ValueError):
+        seeded, source = _profile_birth(), "profile-birth"
+    if seeded is None:
+        return None
+    age = (datetime.now(UTC) - seeded).total_seconds() / 86400
+    return seeded, age, REFRESH_WINDOW_DAYS - age, source
+
+
 # ─────────────────────────────────────────────────────────────────────────
 #  Commands — committed
 # ─────────────────────────────────────────────────────────────────────────
@@ -400,10 +465,50 @@ def cmd_login(args):
         print(f"  {SESSION_DIR}")
         while ctx.pages:
             page.wait_for_timeout(1000)
+        _write_seed_stamp()
         print("Session stored.")
+        print(f"Seeded {datetime.now(UTC).isoformat(timespec='seconds')} — "
+              f"expires in ~{REFRESH_WINDOW_DAYS:.0f} days.")
         return EXIT_OK
     finally:
         close(p, ctx)
+
+
+def cmd_session_age(args):
+    """How much of the 30-day refresh window is left.
+
+    Deliberately does NOT launch a browser: the heartbeat calls this hourly, and
+    a ~500 MB headless Chromium per call to answer a question about a file's
+    timestamp would cost more than the check is worth. `whoami` remains the
+    command that proves the session actually works.
+    """
+    info = session_age()
+    if info is None:
+        # Two different states, and conflating them would send Gregg to re-seed
+        # a session that is working fine: nothing seeded at all, versus a seeded
+        # profile whose age we cannot date. Only the first is an auth problem.
+        seeded = session_seeded()
+        if args.json:
+            print(json.dumps({"seeded": seeded, "age_known": False}))
+        elif seeded:
+            print(f"session present at {SESSION_DIR}, but its age is unknown — "
+                  f"no stamp and no datable profile file. It will be dated from "
+                  f"the next `plaud_web.py login`.")
+        else:
+            print(f"no session at {SESSION_DIR} — run `plaud_web.py login`")
+        return EXIT_OK if seeded else EXIT_AUTH
+    seeded, age, left, source = info
+    if args.json:
+        print(json.dumps({"seeded": True, "seeded_at": seeded.isoformat(),
+                          "age_days": round(age, 2),
+                          "days_left": round(left, 2),
+                          "window_days": REFRESH_WINDOW_DAYS,
+                          "source": source}))
+    else:
+        print(f"seeded   {seeded.isoformat(timespec='seconds')} ({source})")
+        print(f"age      {age:.1f} days")
+        print(f"expires  in {left:.1f} days")
+    return EXIT_OK if left > 0 else EXIT_AUTH
 
 
 def cmd_whoami(args):
@@ -463,6 +568,10 @@ def main():
     w = sub.add_parser("whoami", help="session health check")
     w.add_argument("--json", action="store_true")
 
+    sa = sub.add_parser("session-age",
+                        help="days left in the 30-day refresh window")
+    sa.add_argument("--json", action="store_true")
+
     ls = sub.add_parser("list", help="list recordings")
     ls.add_argument("--days", type=int, default=2)
     ls.add_argument("--json", action="store_true")
@@ -476,6 +585,7 @@ def main():
     args = ap.parse_args()
     handler = {
         "login": cmd_login, "whoami": cmd_whoami,
+        "session-age": cmd_session_age,
         "list": cmd_list, "audio": cmd_audio,
     }[args.cmd]
 

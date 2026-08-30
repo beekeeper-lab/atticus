@@ -94,6 +94,25 @@ def _stub_agent_credential(monkeypatch):
                         lambda: (False, datetime.now(UTC) + timedelta(hours=8)))
 
 
+@pytest.fixture(autouse=True)
+def _stub_plaud_session(monkeypatch, tmp_path):
+    """Same isolation, for the OTHER credential that dies on a clock.
+
+    check_plaud_session() reads the machine's real Chromium profile. Left
+    unstubbed, every test here would report a different session age depending
+    on when Forge was last re-seeded — and on a host whose session is inside
+    the warning window, tests would try to send a real push.
+    """
+    monkeypatch.setenv("PLAUD_SESSION_ROOT", str(tmp_path / "sessions"))
+    (tmp_path / "sessions" / "plaud").mkdir(parents=True)
+    import importlib
+    sys.path.insert(0, str(REPO / "ingest"))
+    pw = importlib.import_module("plaud_web")
+    monkeypatch.setattr(
+        pw, "session_age",
+        lambda: (datetime.now(UTC) - timedelta(days=1), 1.0, 29.0, "stamp"))
+
+
 def _empty_vault(tmp_path) -> Path:
     v = tmp_path / "vault"
     (v / "inbox").mkdir(parents=True)
@@ -313,3 +332,117 @@ def test_a_live_path_watcher_is_quiet(monkeypatch, tmp_path, capsys):
     assert rc == 0
     assert "NOT active" not in out
     assert "atticus-vault-site.path watching" in out
+
+
+# ---- the Plaud session's own clock ---------------------------------------
+#
+# The 2026-08-27 outage was not a detection failure in the usual sense: every
+# check here worked, and the crash-loop check fired correctly. It fired three
+# days LATE, because nothing watched the one clock that was always going to run
+# out. The fix needs a person at a browser, so the warning has to arrive while
+# there is still time to act.
+
+def _plaud_age(monkeypatch, days_left, source="stamp"):
+    import importlib
+    sys.path.insert(0, str(REPO / "ingest"))
+    pw = importlib.import_module("plaud_web")
+    seeded = datetime.now(UTC) - timedelta(days=30.0 - days_left)
+    monkeypatch.setattr(pw, "session_age",
+                        lambda: (seeded, 30.0 - days_left, days_left, source))
+
+
+def test_a_healthy_session_is_just_a_note(monkeypatch, tmp_path, capsys):
+    vault = _empty_vault(tmp_path)
+    monkeypatch.setenv("ATTICUS_VAULT_PATH", str(vault))
+    monkeypatch.setattr(hb.subprocess, "run", FakeSystemctl())
+    _plaud_age(monkeypatch, 21.0)
+    monkeypatch.setattr(sys, "argv", ["heartbeat.py", "--dry-run"])
+    rc = hb.main()
+    out = capsys.readouterr().out
+    assert "plaud session good for 21.0 more days" in out
+    assert rc == 0
+
+
+def test_an_expiring_session_warns_without_failing_the_heartbeat(
+        monkeypatch, tmp_path, capsys):
+    """The whole point of the severity split. Folding this into `problems`
+    would fire a CRITICAL every hour for the last five days of every 30-day
+    window — the "alarm that always fires" this file warns about twice. The box
+    is healthy; a chore is due."""
+    vault = _empty_vault(tmp_path)
+    monkeypatch.setenv("ATTICUS_VAULT_PATH", str(vault))
+    monkeypatch.setattr(hb.subprocess, "run", FakeSystemctl())
+    _plaud_age(monkeypatch, 3.0)
+    monkeypatch.setattr(sys, "argv", ["heartbeat.py", "--dry-run"])
+    rc = hb.main()
+    out = capsys.readouterr().out
+    assert "plaud session expires in 3.0 days" in out
+    assert "BAD" not in out
+    assert rc == 0
+
+
+def test_an_expiring_session_pushes_at_most_once_a_day(monkeypatch, tmp_path):
+    """The shared 6h throttle would send four pushes a day for five days —
+    twenty messages to convey one chore."""
+    vault = _empty_vault(tmp_path)
+    monkeypatch.setenv("ATTICUS_VAULT_PATH", str(vault))
+    monkeypatch.setattr(hb.subprocess, "run", FakeSystemctl())
+    monkeypatch.setattr(hb.nf, "STATE", tmp_path / "state")
+    (tmp_path / "state").mkdir()
+    _plaud_age(monkeypatch, 2.0)
+    sent = []
+    monkeypatch.setattr(hb.nf, "alarm",
+                        lambda *a, **k: (sent.append(k.get("key")),
+                                         (tmp_path / "state" /
+                                          f"alarm-{k.get('key')}").touch(),
+                                         {"ntfy": True, "calendar": False,
+                                          "deferred": False})[-1])
+    monkeypatch.setattr(sys, "argv", ["heartbeat.py"])
+    hb.main()
+    hb.main()
+    assert sent == ["plaud-session-expiring"]
+
+
+def test_an_already_expired_session_does_not_double_up_on_ingest(
+        monkeypatch, tmp_path, capsys):
+    """Ingest's own dead-session alarm owns this case at CRITICAL. Saying it
+    again here, in a second severity, is noise."""
+    vault = _empty_vault(tmp_path)
+    monkeypatch.setenv("ATTICUS_VAULT_PATH", str(vault))
+    monkeypatch.setattr(hb.subprocess, "run", FakeSystemctl())
+    monkeypatch.setattr(hb.nf, "STATE", tmp_path / "state")
+    (tmp_path / "state").mkdir()
+    _plaud_age(monkeypatch, -2.9)
+    sent = []
+    monkeypatch.setattr(hb.nf, "alarm", lambda *a, **k: sent.append(k.get("key"))
+                        or {"ntfy": True, "calendar": False, "deferred": False})
+    monkeypatch.setattr(sys, "argv", ["heartbeat.py"])
+    hb.main()
+    assert "plaud-session-expiring" not in sent
+    assert "plaud session EXPIRED 2.9d ago" in capsys.readouterr().out
+
+
+def test_an_estimated_age_says_so(monkeypatch, tmp_path, capsys):
+    """A profile dated from its creation files is a floor on the age, not a
+    measurement. Reporting it as fact would be a small lie in a message whose
+    whole job is to be trusted."""
+    vault = _empty_vault(tmp_path)
+    monkeypatch.setenv("ATTICUS_VAULT_PATH", str(vault))
+    monkeypatch.setattr(hb.subprocess, "run", FakeSystemctl())
+    _plaud_age(monkeypatch, 2.0, source="profile-birth")
+    monkeypatch.setattr(sys, "argv", ["heartbeat.py", "--dry-run"])
+    hb.main()
+    assert "(estimated from the profile)" in capsys.readouterr().out
+
+
+def test_a_host_without_ingest_is_not_asked_about_a_session(
+        monkeypatch, tmp_path, capsys):
+    """Roles are capabilities, not hostnames. A processor-only host has no
+    Plaud session and must not be nagged to re-seed one."""
+    vault = _empty_vault(tmp_path)
+    monkeypatch.setenv("ATTICUS_VAULT_PATH", str(vault))
+    monkeypatch.setattr(hb.subprocess, "run", FakeSystemctl(loaded=False))
+    _plaud_age(monkeypatch, 1.0)
+    monkeypatch.setattr(sys, "argv", ["heartbeat.py", "--dry-run"])
+    hb.main()
+    assert "plaud session" not in capsys.readouterr().out

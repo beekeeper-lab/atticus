@@ -33,7 +33,7 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, UTC
 from hashlib import sha256
 from pathlib import Path
 
@@ -217,6 +217,54 @@ def _failure_streak(kind: str, bump: bool = True) -> int:
 
 def _clear_streak(kind: str):
     (nf.STATE / f"streak-{kind}").unlink(missing_ok=True)
+
+
+AUTH_BACKOFF_AFTER = 3          # consecutive auth failures before backing off
+_AUTH_ATTEMPT = "last-attempt-plaud-auth"
+
+
+def _auth_backoff_active(cfg, log) -> bool:
+    """True when a dead session has already been proven dead recently.
+
+    Re-seeding needs a human at a browser (ADR-002 stores no password), so a
+    session that died at 15:17 on a Thursday stays dead until someone is free.
+    Meanwhile the 15-minute timer kept launching headless Chromium into the same
+    wall: 96 passes a day, ~9.4s CPU and ~600 MB peak each. The 2026-08-27 outage
+    ran ~290 of them before anyone looked.
+
+    So after AUTH_BACKOFF_AFTER consecutive failures, try hourly instead. This
+    deliberately does NOT quieten anything: the pass still exits EXIT_AUTH, so
+    the unit stays `failed`, the heartbeat keeps reporting it, and the alarm
+    keeps its own schedule. The only thing that stops is the wasted browser
+    launch — detection lag on the recovery side grows from 15 minutes to at most
+    an hour, which is nothing against a fix that needs a person anyway.
+    """
+    streak = _failure_streak("plaud-auth", bump=False)
+    if streak < AUTH_BACKOFF_AFTER:
+        return False
+    minutes = getattr(cfg, "auth_retry_minutes", 60)
+    if minutes <= 0:
+        return False
+    p = nf.STATE / _AUTH_ATTEMPT
+    try:
+        last = datetime.fromtimestamp(p.stat().st_mtime, UTC)
+    except OSError:
+        return False
+    waited = (datetime.now(UTC) - last).total_seconds() / 60
+    if waited >= minutes:
+        return False
+    log(f"auth backoff: {streak} consecutive failures, last attempt "
+        f"{waited:.0f} min ago — next at {minutes} min. Re-seed with "
+        f"`ops/reseed-plaud.sh` (run it on a machine with a display).")
+    return True
+
+
+def _mark_auth_attempt():
+    try:
+        nf.STATE.mkdir(parents=True, exist_ok=True)
+        (nf.STATE / _AUTH_ATTEMPT).touch()
+    except OSError:
+        pass
 
 
 def _alarm_dead_session(cfg, err, log):
@@ -518,6 +566,13 @@ def main():
               log=lambda m: log(f"  ! {m}"), paths=OWNED_INGEST)
     if not args.no_push:
         git.pull()
+
+    # A session already proven dead this hour does not need proving again, and
+    # the proof costs a headless Chromium launch. Exit on the same code the real
+    # failure uses so nothing downstream can mistake this for a healthy pass.
+    if _auth_backoff_active(cfg, log):
+        return EXIT_AUTH
+    _mark_auth_attempt()
 
     try:
         recs = fetcher.list(days)

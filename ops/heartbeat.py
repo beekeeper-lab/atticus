@@ -247,6 +247,68 @@ def main():
                          f"{(when - now).total_seconds() / 3600:.1f}h")
     check("agent-credential", check_agent_credential)
 
+    # 0c. How much of the Plaud refresh window is left?
+    #
+    # The mirror of the check above, for the other credential that dies on a
+    # clock and needs a human to revive it. Plaud's refresh token lasts ~30 days
+    # from the interactive login and is NOT extended by use: the session seeded
+    # 2026-07-28 15:06 was exercised every 15 minutes and died 2026-08-27 15:17
+    # anyway. Nothing noticed until it was already three days dead.
+    #
+    # This is a NOTE and its own alarm, never a `problems` entry, and that is
+    # deliberate. Folding it in would make the heartbeat exit 1 and fire a
+    # CRITICAL every hour for the last five days of every window — the "alarm
+    # that always fires" this file warns about twice elsewhere. The box is
+    # healthy; there is a chore due. When the session actually dies, ingest's
+    # own dead-session alarm and the crash-loop check below both fire, which is
+    # the CRITICAL path and needs no help from here.
+    def check_plaud_session():
+        if not unit_exists("atticus-ingest.service"):
+            return                  # not an ingest host; no session to age
+        sys.path.insert(0, str(REPO / "ingest"))
+        import importlib
+        pw = importlib.import_module("plaud_web")
+        info = pw.session_age()
+        if info is None:
+            notes.append("plaud session age unknown — will be dated from the "
+                         "next `plaud_web.py login`")
+            return
+        seeded, age, left, source = info
+        est = "" if source == "stamp" else " (estimated from the profile)"
+        if left <= 0:
+            # Already expired. A note, not a problem: ingest's own dead-session
+            # alarm and the crash-loop check own this case, and saying it twice
+            # in two severities helps nobody.
+            notes.append(f"plaud session EXPIRED {-left:.1f}d ago{est} — "
+                         f"ingest is alarming separately")
+            return
+        warn_at = getattr(cfg, "session_warn_days", 5.0)
+        if left > warn_at:
+            notes.append(f"plaud session good for {left:.1f} more days")
+            return
+        notes.append(f"plaud session expires in {left:.1f} days{est}")
+        if args.dry_run:
+            return
+        # One nudge a DAY, not one per heartbeat. The shared 6h alarm throttle
+        # would push four times a day for the last five days of every window —
+        # twenty pushes to convey one chore, which is how an operator learns to
+        # swipe this category away. Gate on 24h before calling alarm(); notify()
+        # stamps the same key, so the daily gate is simply the stricter one.
+        if nf.throttled("plaud-session-expiring", 24):
+            return
+        # ALERT, not CRITICAL. A chore with a deadline earns a push; it has not
+        # earned the channel reserved for a pipeline that is already broken, and
+        # quiet hours may properly park it for the morning brief.
+        nf.alarm(
+            cfg,
+            f"Plaud session expires in {left:.1f} days "
+            f"(seeded {seeded.date()}). Re-seeding needs a browser and a "
+            f"person — there is no unattended path.\n\n"
+            f"On a machine with a display:  ops/reseed-plaud.sh",
+            severity=nf.ALERT, title="Atticus - Plaud session expiring",
+            tags="hourglass", key="plaud-session-expiring", log=print)
+    check("plaud-session-age", check_plaud_session)
+
     # 1. Are the timers even scheduled?
     #
     # retention was NOT in this list, and its own unit comment says "a privacy
