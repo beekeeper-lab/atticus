@@ -72,6 +72,7 @@ copies.
 | `ATTICUS_IMAGE_GENERATOR` | `gemini-3-pro-image-preview` | One provider for the life of a project — the image skill's own style consistency rule. `openai-*` uses OPENAI_API_KEY, anything else GEMINI_API_KEY; both are read from ~/.config/ai/env, never from … |
 | `ATTICUS_IMAGE_MAX_PER_RECORD` | `4` | Images one recording may produce, enforced by the handler REGARDLESS of the approval gate. ATTICUS_OUTBOX_TRACKED=auto is a reasonable thing to set so GitHub issues flow unattended, and it must not… |
 | `ATTICUS_IMAGE_TIMEOUT` | `300` | Per-image wall clock, seconds. One provider call plus the skill's 429 backoff. |
+| `ATTICUS_INGEST_HOST` | *(empty)* | Host the re-login copies the Plaud session to (ops/reseed-plaud.sh and the WarDog listener). Set on WarDog only; default `forge`. |
 | `ATTICUS_LIFECYCLE_WITHIN_DAYS` | `7` | How far back a spoken "cancel that" / "what happened to..." can reach, in days (issue #82). Bounded deliberately: a wider window makes ambiguity certain, and the pipeline refuses rather than guessi… |
 | `ATTICUS_LOCAL_TZ` | *(empty)* | ── reminders (issue #52) ───────────────────────────────────────────── "Atticus, remind me at four to call the bank." A reminder is a DELIVERY AT A TIME, which is a different thing from a todo: a t… |
 | `ATTICUS_LOG_LEVEL` | `INFO` | DEBUG \| INFO \| WARNING \| ERROR |
@@ -120,6 +121,7 @@ copies.
 | `ATTICUS_REMINDER_EVENT_MINUTES` | `15` | Length of that event: a block to act on, not a meeting. |
 | `ATTICUS_REMINDER_MAX_DAYS` | `365` | Refuse a due date further out than this. It catches a misparsed year, which would otherwise be stored as a reminder that simply never fires, leaving a line in a JSONL file as the only evidence. 0 r… |
 | `ATTICUS_REMINDER_MAX_LATE_HOURS` | `24` | How late a reminder may still fire after the box was down. Inside the window it is delivered with "this was due at 4:00 PM — 3h 12m ago", because a late reminder is usually still worth having and s… |
+| `ATTICUS_RESEED_TOPIC_URL` | *(empty)* | "Re-login now" button on the Plaud-session pushes (ADR-013). Tapping it POSTs `reseed` to this topic; the listener on WarDog (ops/reseed-listener.py, `./ops/install-reseed-listener.sh`) subscribes … |
 | `ATTICUS_RESULT_NOTIFY_URL` | *(empty)* | ── results ────────────────────────────────────────────────────────── Where finished-recording pushes go. Blank = reuse ATTICUS_NOTIFY_URL. Split them onto a separate topic if pipeline alarms start… |
 | `ATTICUS_SANDBOX` | `on` | Contain the agent in a bwrap mount namespace: no $HOME, no ~/.ssh, no ~/.config/ai/env, no vault. "off" is a real trade, not a formality — without it the agent can read every credential this host h… |
 | `ATTICUS_SANDBOX_NET` | `host` | Sandbox networking. "host" (default) shares the host network namespace, which research needs — but loopback is shared too, so the agent can reach local services including the vault's own web UI and… |
@@ -164,4 +166,4 @@ copies.
 | `PLAUD_SESSION_ROOT` | *(empty)* | Web-fetcher: seeded Playwright session directory. LEAVE BLANK unless the session lives somewhere unusual — the fetcher already defaults to ~/.local/share/claude-fetchers/sessions for the running us… |
 | `PLAUD_SESSION_WARN_DAYS` | `5` | Warn this many days before the ~30-day refresh window closes. The window is NOT extended by use, and re-seeding needs a person, so the nudge has to arrive while there is still time to act. One ALER… |
 
-*153 settings.*
+*155 settings.*

@@ -286,7 +286,8 @@ def _alarm_dead_session(cfg, err, log):
         f"recordings are being pulled ({streak} consecutive passes).\n\n{err}\n\n"
         f"Re-seed it:  plaud_web.py login",
         severity=nf.CRITICAL, key="plaud-auth", streak=streak,
-        title="Atticus ingest — session dead", log=log)
+        title="Atticus ingest — session dead",
+        actions=nf.reseed_actions(cfg), log=log)
     if not cfg.notify_url:
         log("  ! ATTICUS_NOTIFY_URL is unset — this failure alarms nowhere. "
             "Set it; a dead session is otherwise silent.")

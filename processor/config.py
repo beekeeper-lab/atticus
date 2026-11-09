@@ -333,6 +333,9 @@ class Config:
         # topic nobody chose.
         self.approval_topic_url = (g("ATTICUS_APPROVAL_TOPIC_URL", "") or "").strip()
         self.approvals_enabled = bool(self.approval_topic_url)
+        # Topic the "Re-login now" button posts to. WarDog subscribes to it and
+        # opens the Plaud login on its display. Blank = no button, push as before.
+        self.reseed_topic_url = (g("ATTICUS_RESEED_TOPIC_URL", "") or "").strip()
         # How long a held action waits. Approving a three-day-old "post to
         # Slack" is rarely right, and an expired item is reported rather than
         # dropped — the operator believes it is still waiting.
