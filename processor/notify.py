@@ -133,7 +133,7 @@ class ResultTarget:
 
 def notify(cfg, text: str, log=None, key: str | None = None,
            title: str = "Atticus", tags: str = "warning",
-           priority: str = "high") -> bool:
+           priority: str = "high", actions: str = "") -> bool:
     """Returns True if a message was actually sent.
 
     `Title`/`Priority`/`Tags` are ntfy's conventions — without a title the
@@ -170,6 +170,7 @@ def notify(cfg, text: str, log=None, key: str | None = None,
                 # a finished report is good news, not an emergency.
                 "Priority": priority,
                 "Tags": _ascii(tags),
+                **({"Actions": _ascii(actions)} if actions else {}),
             })
         with urllib.request.urlopen(req, timeout=10):  # noqa: S310 — scheme checked above
             pass
@@ -286,7 +287,7 @@ def take_deferred(cfg) -> list[dict]:
 
 def alarm(cfg, text: str, *, severity: str = ALERT, key: str | None = None,
           title: str = "Atticus", tags: str = "warning", streak: int = 1,
-          priority: str | None = None, log=None) -> dict:
+          priority: str | None = None, actions: str = "", log=None) -> dict:
     """Send `text` on the channels its severity earns.
 
     Returns {"ntfy": bool, "calendar": bool, "deferred": bool} so a caller can
@@ -311,7 +312,8 @@ def alarm(cfg, text: str, *, severity: str = ALERT, key: str | None = None,
     prio = priority or {"critical": "urgent", "alert": "high",
                         "routine": "default"}[severity]
     out["ntfy"] = notify(cfg, text, log=say, key=key, title=title,
-                         tags=tags, priority=prio)
+                         tags=tags, priority=prio,
+                         **({"actions": actions} if actions else {}))
 
     if severity != CRITICAL:
         return out
@@ -335,6 +337,20 @@ def alarm(cfg, text: str, *, severity: str = ALERT, key: str | None = None,
         STATE.mkdir(parents=True, exist_ok=True)
         _stamp(ekey).touch()
     return out
+
+
+def reseed_actions(cfg) -> str:
+    """The "Re-login now" button for a Plaud-session push, or "" if unset.
+
+    Tapping it POSTs the word `reseed` to ATTICUS_RESEED_TOPIC_URL. Nothing on
+    Forge listens there: WarDog subscribes outbound and opens the login window
+    on its own display (ops/reseed-listener.py). Forge never gains a browser or
+    an inbound port, which is the whole point of ADR-013.
+    """
+    topic = str(getattr(cfg, "reseed_topic_url", "") or "").strip()
+    if not topic.lower().startswith(("http://", "https://")):
+        return ""
+    return f"http, Re-login now, {topic}, method=POST, body=reseed, clear=true"
 
 
 def notify_with_actions(cfg, text: str, *, title: str, tags: str,

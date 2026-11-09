@@ -124,3 +124,18 @@ def test_clear_lets_the_next_alarm_through(server, monkeypatch, tmp_path):
     nt.clear("dupe")
     assert nt.notify(cfg, "second", key="dupe") is True
     assert len(server.received) == 2
+
+
+def test_reseed_actions_is_blank_without_a_topic():
+    import types
+    from processor import notify as nf
+    assert nf.reseed_actions(types.SimpleNamespace(reseed_topic_url="")) == ""
+    assert nf.reseed_actions(types.SimpleNamespace(reseed_topic_url="file:///x")) == ""
+
+
+def test_reseed_actions_posts_the_word_reseed_to_the_topic():
+    import types
+    from processor import notify as nf
+    a = nf.reseed_actions(types.SimpleNamespace(reseed_topic_url="https://ntfy.sh/t0pic"))
+    assert a.startswith("http, Re-login now, https://ntfy.sh/t0pic")
+    assert "body=reseed" in a

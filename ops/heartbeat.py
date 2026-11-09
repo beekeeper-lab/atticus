@@ -306,7 +306,8 @@ def main():
             f"person — there is no unattended path.\n\n"
             f"On a machine with a display:  ops/reseed-plaud.sh",
             severity=nf.ALERT, title="Atticus - Plaud session expiring",
-            tags="hourglass", key="plaud-session-expiring", log=print)
+            tags="hourglass", key="plaud-session-expiring",
+            actions=nf.reseed_actions(cfg), log=print)
     check("plaud-session-age", check_plaud_session)
 
     # 1. Are the timers even scheduled?

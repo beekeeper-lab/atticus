@@ -463,8 +463,17 @@ def cmd_login(args):
         print(f"Browser open on {WEB_ORIGIN}.")
         print("Log in, then close the window. Session persists to:")
         print(f"  {SESSION_DIR}")
-        while ctx.pages:
-            page.wait_for_timeout(1000)
+        # Closing the window is how the operator says "done", so the browser
+        # going away is the normal exit, not an error. Playwright raises from
+        # wait_for_timeout when that happens, which used to surface as a
+        # "transient" exit 4 and abort ops/reseed-plaud.sh before it verified
+        # or copied anything.
+        try:
+            while ctx.pages:
+                page.wait_for_timeout(1000)
+        except Exception as e:
+            if "closed" not in str(e).lower():
+                raise
         _write_seed_stamp()
         print("Session stored.")
         print(f"Seeded {datetime.now(UTC).isoformat(timespec='seconds')} — "
